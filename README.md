@@ -16,8 +16,8 @@ A single-window native app that shows a beautiful real-time pulse of your day, s
 
 ## Prerequisites
 
-- ActivityWatch must be installed and running. We recommend the [`awatcher`](https://github.com/2e3s/awatcher) Rust replacement on Wayland.
 - Linux with WebKitGTK 4.1 (Ubuntu 22.04+, Fedora 39+, Debian 12+).
+- That's it. Pulse bundles its own copy of [`aw-server-rust`](https://github.com/ActivityWatch/aw-server-rust) and [`awatcher`](https://github.com/2e3s/awatcher) — install one `.deb` and you have everything. If you already have ActivityWatch installed, Pulse detects it and uses your existing setup instead.
 
 ## Build
 

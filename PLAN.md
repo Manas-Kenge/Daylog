@@ -14,52 +14,68 @@ A single-window native desktop app that shows a beautiful, dense, real-time puls
 
 **Constraints locked in office-hours:**
 - Linux-first, single-user, local-only.
-- aw-server (HTTP daemon, port 5600) and aw-awatcher (already installed at `/usr/bin/aw-awatcher`) are external dependencies — we don't fork or modify them.
-- We own only the UI and the local API client.
-- Visual density beats feature density. Distribution (.deb / .AppImage / GitHub Release) is a Phase-1 concern, not a Phase-N afterthought.
+- `aw-server-rust` and `aw-awatcher` binaries are **bundled inside Pulse's `.deb` / `.AppImage`** and managed by systemd user services we install on first launch. We don't fork or modify their source — we ship their binaries (both MPL-2.0).
+- If the user already has ActivityWatch running on `:5600`, Pulse detects it and uses it instead of starting our bundled stack — never two servers fighting for the same port.
+- We own the UI, the local API client, the first-launch setup flow, and the systemd service files.
+- Visual density beats feature density. Distribution is a Phase-0 concern: a single `.deb` install must put a working dashboard in front of a fresh user within 60 seconds.
 
 ---
 
 ## 2. Architecture
 
 ```
-┌────────────────────────────────────────────────────────────┐
-│  Pulse (this project) — single Tauri app                   │
-│                                                            │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │  WebView (WebKitGTK)                                 │  │
-│  │  React 19 + Vite + Tailwind 4 + shadcn/ui            │  │
-│  │  TanStack Query + ECharts + date-fns                 │  │
-│  │  Renders dashboard in our own native window          │  │
-│  └────────────┬─────────────────────────────────────────┘  │
-│               │ Tauri IPC (invoke + events)                │
-│  ┌────────────┴─────────────────────────────────────────┐  │
-│  │  Rust core (src-tauri)                               │  │
-│  │  - HTTP client (reqwest) → aw-server :5600           │  │
-│  │  - Polling loop, emits events to WebView             │  │
-│  │  - Settings persistence (tauri-plugin-store)         │  │
-│  └──────────────────┬───────────────────────────────────┘  │
-└─────────────────────┼──────────────────────────────────────┘
-                      │ HTTP/JSON
-                      ▼
-        ┌──────────────────────────┐
-        │  aw-server (background)  │  ← already running, we don't ship it (yet)
-        │  http://localhost:5600   │
-        │  ~/.local/share/...db    │
-        └──────────▲───────────────┘
-                   │ events
-        ┌──────────┴───────────────┐
-        │  aw-awatcher (background)│  ← already installed, we don't ship it (yet)
-        │  + GNOME extension       │
-        └──────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│  Pulse .deb / .AppImage    (single installable artifact)         │
+│  ──────────────────────────────────────────────────────────      │
+│                                                                  │
+│  ┌────────────────────────────────────────────────────────────┐  │
+│  │ Pulse app (foreground, opens when user clicks the icon)    │  │
+│  │                                                            │  │
+│  │  ┌──────────────────────────────────────────────────────┐  │  │
+│  │  │ WebView (WebKitGTK)                                  │  │  │
+│  │  │ React 19 + Tailwind 4 + shadcn/ui                    │  │  │
+│  │  │ TanStack Query + ECharts                             │  │  │
+│  │  └────────────┬─────────────────────────────────────────┘  │  │
+│  │               │ Tauri IPC                                  │  │
+│  │  ┌────────────┴─────────────────────────────────────────┐  │  │
+│  │  │ Rust core                                            │  │  │
+│  │  │ - HTTP client → :5600                                │  │  │
+│  │  │ - First-launch wizard logic                          │  │  │
+│  │  │ - systemd service install/control                    │  │  │
+│  │  └──────────────────┬───────────────────────────────────┘  │  │
+│  └─────────────────────┼──────────────────────────────────────┘  │
+│                        │ HTTP/JSON                               │
+│                        ▼                                         │
+│  ┌──────────────────────────────────────────────────────────┐    │
+│  │ Bundled background services (systemd --user, persistent) │    │
+│  │ ────────────────────────────────────────────────────     │    │
+│  │  pulse-aw-server.service   → /usr/lib/pulse/aw-server-rust   │
+│  │     listens on localhost:5600                            │    │
+│  │     stores SQLite at ~/.local/share/activitywatch/       │    │
+│  │                                                          │    │
+│  │  pulse-awatcher.service    → /usr/lib/pulse/aw-awatcher  │    │
+│  │     pushes window/AFK events to localhost:5600           │    │
+│  │     (depends on focused-window-dbus extension on GNOME)  │    │
+│  └──────────────────────────────────────────────────────────┘    │
+│                                                                  │
+│  GNOME Shell extension (bundled, copied to system extensions on  │
+│  install; user enables once via the first-launch wizard):        │
+│   /usr/share/gnome-shell/extensions/                             │
+│      focused-window-dbus@flexagoon.com/                          │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
-**Why HTTP through Rust core, not directly from the WebView?** Three reasons:
-1. CORS — aw-server may not allow webview origins. Rust-side calls are origin-free.
-2. Polling logic, retries, and reconnection live in one stable place.
-3. Future sidecar work (Phase 5) needs Rust to spawn the binaries anyway.
+**Two key separations to keep in mind:**
 
-The frontend never sees `localhost:5600`. It only knows about Tauri commands like `get_today_events()` and event channels like `pulse:bucket-updated`.
+1. **Pulse the window vs Pulse the tracker.** The Pulse foreground app is "the dashboard you open." The two systemd services are "the tracker that runs always." Closing the window does not stop tracking. Uninstalling Pulse stops both (we run `systemctl --user disable` in `prerm`).
+2. **Our stack vs an existing AW install.** On first launch, we probe `:5600`. If something answers (the user has their own AW), we use it and never install our services. If nothing answers, we install and enable our bundled services. This is the "don't fight an existing setup" rule — without it, two servers race for the port and one silently loses.
+
+**Why HTTP through the Rust core, not directly from the WebView?** Three reasons:
+1. CORS — `aw-server` doesn't allow arbitrary webview origins. Rust-side calls are origin-free.
+2. Polling logic, retries, reconnection, and the systemd-control commands live in one stable place.
+3. The Rust side already needs to manage sidecar lifecycle anyway.
+
+The frontend never sees `localhost:5600`. It only calls Tauri commands like `aw_today_window()` and listens to events like `pulse:bucket-updated`.
 
 ---
 
@@ -152,11 +168,18 @@ The dashboard window contains exactly these widgets, in this order:
 ```
 
 **Functional requirements:**
+- **First-launch wizard** (shown only on first run, dismissible after success):
+  - Detects whether `:5600` is already answering. If yes → "We found an existing ActivityWatch install. Use it." If no → "Set up tracking" enables our bundled systemd services.
+  - On GNOME Wayland: detects whether `focused-window-dbus@flexagoon.com` is enabled. If not, runs `gnome-extensions enable` for it and prompts a logout/login.
+  - Polls buckets after enabling services until first event arrives (max 15s timeout, with a clear error path).
+  - Skipping the wizard puts the dashboard into a degraded state with a banner explaining what's missing.
 - Auto-refresh every 5 seconds.
 - Connection-state indicator (top right): green = aw-server reachable, amber = retrying, red = down.
 - Window remembers its size and position between launches.
 - Light/dark mode follows GNOME accent color (or manual override in settings).
-- One settings panel: timezone, refresh interval, category rules (initial UI: list editor).
+- Settings panel with two sections:
+  - **General:** timezone, refresh interval, category rules (initial UI: list editor).
+  - **Tracking:** shows which mode is active (bundled / external), service status (`active`/`inactive`/`failed`), `Restart services` button, `Switch to bundled` / `Switch to external` toggle.
 
 **Non-functional:**
 - Cold start to first paint: ≤500ms after window creation.
@@ -172,7 +195,7 @@ The dashboard window contains exactly these widgets, in this order:
 | Cross-platform builds (macOS/Windows) | Linux-first per office-hours premise P2. Multi-OS CI doubles the build matrix. Re-evaluate after v0.1 stars >100. |
 | Tray icon / menubar widget | Linux tray support varies wildly across DEs (XEmbed vs SNI vs AppIndicator). Worth its own design pass. |
 | Notifications / focus alerts | Outside the "passive observer" identity of v0.1. |
-| Bundled `aw-server-rust` sidecar | First-launch UX work. v0.1 assumes user already has AW running (they do — we set it up). |
+| ~~Bundled `aw-server-rust` sidecar~~ | **MOVED INTO v0.1 SCOPE** — see Phase 6. |
 | Multi-day / weekly / monthly views | v0.2. Today first; hard to get density right even for one day. |
 | Categorization rule editor (visual) | v0.1 ships with a JSON-edit list. Visual rule builder is its own feature. |
 | AW bucket creation / event editing | We are read-only against aw-server in v0.1. Period. |
@@ -185,11 +208,11 @@ The dashboard window contains exactly these widgets, in this order:
 
 ## 7. Implementation phases
 
-Each phase is sized to fit one weekend (your time, not CC time). Phases are sequential — no parallel lanes for v0.1.
+Each phase is sized to fit one weekend (your time, not CC time). Phases are sequential — no parallel lanes for v0.1. Total estimate: **8–10 weekends to v0.1.0 release**.
 
-### Phase 0 — System prerequisites (1 evening)
+### Phase 0 — Developer prerequisites (1 evening) — **for you, the developer**
 
-You run these. They need sudo and one logout:
+These are the toolchain you need to *build* Pulse. **End users do not run any of these** — they install one `.deb`. You run these once on your dev machine:
 
 ```bash
 # 1. Install rustup (gives you a current cargo + toolchain).
@@ -294,19 +317,138 @@ Polling: a single `useQuery` per widget, all using the same query key prefix, re
 
 **Exit criteria:** rules persist across app restarts; categorization in widgets reflects rules within one refresh tick.
 
-### Phase 5 — Distribution (1 weekend)
+### Phase 5 — Bundling: AW binaries, systemd services, GNOME extension (2 weekends)
 
-The plan that takes most v0.1 attempts to a graveyard repo if skipped.
+This is the work that converts Pulse from "works on your machine" to "works on a stranger's machine." Skipping this means no real users.
 
-- `tauri.conf.json`: targets `deb`, `appimage`. Set `productName`, `version`, `identifier`, icons (use https://tauri.app/v2/guide/features/icons/).
+**5a. Vendor the binaries at build time.**
+
+Add `scripts/fetch-binaries.sh` that runs as part of `prebuild`:
+
+```bash
+#!/usr/bin/env bash
+# Fetch aw-server-rust + aw-awatcher binaries and place them in
+# src-tauri/binaries/ with Tauri's required target-triple naming.
+set -euo pipefail
+
+TARGET="x86_64-unknown-linux-gnu"
+mkdir -p src-tauri/binaries
+
+# aw-server-rust — pin a specific release
+AWS_VERSION="v0.13.2"
+curl -fL -o /tmp/aws.tar.gz \
+  "https://github.com/ActivityWatch/aw-server-rust/releases/download/$AWS_VERSION/aw-server-rust-$AWS_VERSION-linux-x86_64.tar.gz"
+tar -xzf /tmp/aws.tar.gz -C /tmp
+mv /tmp/aw-server-rust src-tauri/binaries/aw-server-rust-$TARGET
+
+# aw-awatcher — pin a specific release
+AWA_VERSION="v0.3.3"
+curl -fL -o /tmp/awa.deb \
+  "https://github.com/2e3s/awatcher/releases/download/$AWA_VERSION/aw-awatcher_${AWA_VERSION#v}-1_amd64.deb"
+dpkg-deb --fsys-tarfile /tmp/awa.deb | tar -xO ./usr/local/bin/aw-awatcher \
+  > src-tauri/binaries/aw-awatcher-$TARGET
+chmod +x src-tauri/binaries/*
+```
+
+In `tauri.conf.json`:
+```json
+{
+  "bundle": {
+    "externalBin": ["binaries/aw-server-rust", "binaries/aw-awatcher"]
+  }
+}
+```
+
+Verify checksums against pinned values; refuse to build if they don't match. Exact version pins live in `scripts/binaries.lock` so dependabot-style updates are visible in PRs.
+
+**5b. systemd user service files.**
+
+Create `src-tauri/services/pulse-aw-server.service`:
+```ini
+[Unit]
+Description=Pulse activity tracking server
+After=graphical-session.target
+
+[Service]
+ExecStart=/usr/lib/pulse/aw-server-rust --port 5600 --testing false
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target
+```
+
+Create `src-tauri/services/pulse-awatcher.service` (depends on the server starting first):
+```ini
+[Unit]
+Description=Pulse activity watcher
+After=pulse-aw-server.service
+Requires=pulse-aw-server.service
+
+[Service]
+ExecStart=/usr/lib/pulse/aw-awatcher
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target
+```
+
+Tauri's deb generator supports custom files via `bundle.deb.files`. Map them to:
+- `binaries/aw-server-rust-x86_64-unknown-linux-gnu` → `/usr/lib/pulse/aw-server-rust`
+- `binaries/aw-awatcher-x86_64-unknown-linux-gnu` → `/usr/lib/pulse/aw-awatcher`
+- `services/pulse-aw-server.service` → `/usr/lib/systemd/user/pulse-aw-server.service`
+- `services/pulse-awatcher.service` → `/usr/lib/systemd/user/pulse-awatcher.service`
+
+**5c. GNOME extension bundling.**
+
+Download the upstream `focused-window-dbus@flexagoon.com.zip` from extensions.gnome.org at build time, extract, and ship at `/usr/share/gnome-shell/extensions/focused-window-dbus@flexagoon.com/`. The extension is now *available* to the user; the wizard enables it.
+
+**5d. First-launch wizard.**
+
+A new React route mounted on first run (detect via missing settings file). Three steps:
+
+1. **Detect.** Tauri command `tracking_detect()` returns `Existing | None`:
+   - GET `http://127.0.0.1:5600/api/0/info` with 1s timeout.
+   - 200 + valid JSON → `Existing { hostname, version }`.
+   - Anything else → `None`.
+2. **Configure.** Based on detection:
+   - `Existing`: nothing to do; show a "Using your existing ActivityWatch install" confirmation.
+   - `None`: `tracking_install_bundled()` runs `systemctl --user enable --now pulse-aw-server pulse-awatcher`. Captures stderr; surfaces failures to the user with the actual systemd error.
+3. **Verify GNOME extension** (only on `XDG_CURRENT_DESKTOP=*GNOME*` and Wayland):
+   - `gnome-extensions list` parsed, looking for `focused-window-dbus@flexagoon.com`.
+   - If installed but disabled → run `gnome-extensions enable focused-window-dbus@flexagoon.com`. Show "Please log out and back in for tracking to start." (Wayland can't reload extensions live.)
+   - If not installed at all → drop a "Tracking on Wayland may not work — see docs" banner. (This shouldn't happen if the .deb installed correctly, but defensive.)
+
+**5e. Uninstall hygiene.**
+
+`bundle.deb.preRemoveScript`:
+```bash
+#!/bin/sh
+systemctl --user --global stop pulse-aw-server.service pulse-awatcher.service 2>/dev/null || true
+systemctl --user --global disable pulse-aw-server.service pulse-awatcher.service 2>/dev/null || true
+```
+
+We do not delete `~/.local/share/activitywatch/` — that's user data, not ours to remove.
+
+**Exit criteria:**
+- `bun run tauri build` produces a `.deb` containing all the above files.
+- On a fresh Ubuntu 24.04 VM with no prior ActivityWatch: `sudo dpkg -i pulse_*.deb && pulse` opens the wizard, the wizard succeeds, the dashboard shows real data within 30s.
+- On the same VM, `sudo apt remove pulse` removes services cleanly; `pulse-aw-server` no longer in `systemctl --user list-units`.
+
+### Phase 6 — Distribution (1 weekend)
+
+CI, release artifacts, README polish.
+
 - GitHub Actions workflow `.github/workflows/release.yml`:
   - Trigger: push of `v*.*.*` tag.
-  - Matrix: ubuntu-22.04 (LTS, broadest libwebkit2gtk-4.1 compat).
-  - Steps: install deps (same list as Phase 0), `bun install`, `bun run tauri build`, upload `*.deb` and `*.AppImage` to a GH Release.
-- README.md: install one-liner (curl | sudo dpkg -i), screenshot of the dashboard, GIF of polling, one-paragraph explanation of "you must have ActivityWatch already installed".
-- Tag `v0.1.0`, watch the workflow, smoke-test the artifacts on a clean Ubuntu VM (or a Distrobox container) before announcing.
+  - Runs on ubuntu-22.04 (LTS — broadest libwebkit2gtk-4.1 compat at runtime).
+  - Steps: install build deps (Phase 0 list), run `scripts/fetch-binaries.sh`, `bun install`, `bun run tauri build`, upload `*.deb` and `*.AppImage` to a GitHub Release.
+- README.md gets: install one-liner, animated GIF of the wizard + dashboard, screenshot, "Pulse bundles ActivityWatch — no other install required" callout, "Existing AW user? Pulse will detect and use your install" note.
+- Smoke-test the released `.deb` and `.AppImage` on a clean Ubuntu 24.04 install (Distrobox or VM) before announcing.
+- Tag `v0.1.0` only after the smoke test passes.
 
-**Exit criteria:** a fresh Ubuntu user can `wget` your `.deb`, `sudo dpkg -i` it, double-click the icon, and see the dashboard with their data.
+**Exit criteria:** a complete stranger on Ubuntu 24.04 can copy one curl command, get a working dashboard with their data in under 60 seconds.
 
 ---
 
@@ -362,13 +504,19 @@ CRITICAL TESTS (do not skip):
 
 | Failure | Likelihood | Plan |
 |---|---|---|
-| aw-server not running | High (user reboots, service didn't start) | Connection indicator goes red after 3 failed polls. Empty state with "Is ActivityWatch running? `systemctl --user status aw-server`" hint. |
-| aw-server returns 500 / malformed JSON | Low | Toast error with raw response; widget shows last-known-good data. |
+| Bundled `pulse-aw-server.service` fails to start | Medium | Wizard captures stderr from `systemctl --user start`. Surface in UI with copy-button for the error and a "View systemd logs" button that opens `journalctl --user -u pulse-aw-server`. |
+| Port 5600 already in use by something other than AW | Low | Probe response: if `:5600` answers but `/api/0/info` returns non-AW JSON, treat as conflict. Wizard offers to use port 5601 for our bundled stack and stores the chosen port. |
+| User has existing AW install with stale `aw-server` (older API) | Medium | On detect, log the version returned by `/api/0/info`. If `< 0.13.0`, show banner "Your ActivityWatch is older than Pulse expects; consider updating." Don't fail — try anyway. |
+| GNOME Shell extension installed but disabled, user clicks Skip in wizard | Medium | Pulse runs in degraded state. Empty buckets after 30s → banner "No window data is being tracked. Open Settings → Tracking to enable the GNOME extension." |
+| User on KDE / Sway / wlroots — no GNOME extension applicable | Low | Detect compositor via `XDG_CURRENT_DESKTOP`. Skip GNOME steps. awatcher uses wlr-foreign-toplevel (Sway/Hyprland) or KWin script (KDE) automatically. |
+| User uninstalls Pulse but expects AW to keep running | Low | `prerm` script disables our services. Document clearly in README + show toast in app on uninstall confirmation: "This will stop tracking. Your data is preserved at `~/.local/share/activitywatch/`." |
+| Bundled binary version drifts from upstream (security fix not picked up) | Medium | `scripts/binaries.lock` pins versions. Add a quarterly reminder in TODOS.md to bump. Long-term: Renovate config that auto-PRs new aw-server-rust / awatcher releases. |
+| `~/.local/share/activitywatch/` permissions broken (user `sudo`-ed something they shouldn't have) | Low | Server fails to start with permission error. Wizard surfaces the fix command: `sudo chown -R $USER ~/.local/share/activitywatch`. |
+| aw-server returns 500 / malformed JSON during normal use | Low | Toast error with raw response; widget shows last-known-good data. |
 | Categorization regex is invalid (user-edited) | Medium | Validate on save; refuse to persist invalid pattern. Show inline error. |
 | WebKitGTK rendering bug (Tailwind 4 / ECharts) | Medium | Test in `bun run tauri dev` from day one. Don't trust browser-only testing. |
 | Clock skew between local and aw-server timestamps | Low | aw-server uses local clock too; mostly safe. Display all times in the user's local TZ. |
 | Tauri dev/build version mismatch | Low | Pin `@tauri-apps/cli` to exact version in `package.json`; pin `tauri` crate version in `Cargo.toml`. |
-| User doesn't have aw-awatcher running, only aw-server | Medium | Detect empty buckets list and show explicit setup hint linking to AW docs. |
 
 ---
 
@@ -406,9 +554,21 @@ pulse/
 │   ├── Cargo.toml
 │   ├── tauri.conf.json
 │   ├── icons/
+│   ├── binaries/                 ← bundled at build time, gitignored
+│   │   ├── aw-server-rust-x86_64-unknown-linux-gnu
+│   │   └── aw-awatcher-x86_64-unknown-linux-gnu
+│   ├── services/                 ← systemd unit files shipped in .deb
+│   │   ├── pulse-aw-server.service
+│   │   └── pulse-awatcher.service
+│   ├── extensions/               ← bundled GNOME Shell extension
+│   │   └── focused-window-dbus@flexagoon.com.zip
 │   ├── src/
 │   │   ├── main.rs
 │   │   ├── lib.rs                ← Tauri commands
+│   │   ├── tracking/
+│   │   │   ├── mod.rs            ← detect / install / status
+│   │   │   ├── systemd.rs        ← systemctl --user wrappers
+│   │   │   └── gnome.rs          ← gnome-extensions wrappers
 │   │   └── aw/
 │   │       ├── mod.rs            ← HTTP client
 │   │       ├── queries.rs        ← AQL templates
@@ -418,9 +578,12 @@ pulse/
 │           ├── window_events.json
 │           ├── afk_events.json
 │           └── query_response.json
+├── scripts/
+│   ├── fetch-binaries.sh         ← download AW binaries at build time
+│   └── binaries.lock             ← pinned versions + sha256 checksums
 └── .github/
     └── workflows/
-        └── release.yml           ← Phase 5
+        └── release.yml           ← Phase 6
 ```
 
 ---
@@ -446,14 +609,19 @@ pulse/
 ## 13. Definition of done for v0.1
 
 - [ ] `bun run tauri dev` starts cleanly on a fresh clone after Phase 0 prereqs.
-- [ ] All four widgets render real data from a running aw-server.
+- [ ] `scripts/fetch-binaries.sh` fetches and verifies aw-server-rust + aw-awatcher with pinned checksums.
+- [ ] First-launch wizard succeeds end-to-end on a fresh Ubuntu 24.04 VM with no prior AW: detect → install services → enable extension → first event arrives.
+- [ ] First-launch wizard correctly detects an existing AW install on `:5600` and skips bundled-stack install.
+- [ ] All four dashboard widgets render real data from the running aw-server.
 - [ ] Connection state indicator works (green / amber / red).
-- [ ] Settings persist across restarts.
+- [ ] Settings persist across restarts; "Tracking" panel shows correct service status and lets you switch modes.
 - [ ] Category rules apply within one refresh tick.
+- [ ] `apt remove pulse` cleanly disables and stops both systemd services.
 - [ ] All Rust tests pass; all Vitest tests pass.
 - [ ] `bun run tauri build` produces working `.deb` and `.AppImage`.
 - [ ] GitHub Actions release workflow produces both artifacts on tag push.
-- [ ] README has a screenshot, install one-liner, and "you need ActivityWatch" note.
-- [ ] Smoke-tested on a clean Ubuntu 24.04 install (VM or Distrobox).
+- [ ] README: screenshot, install one-liner, GIF of wizard, "Pulse bundles ActivityWatch" callout.
+- [ ] Smoke-tested on a clean Ubuntu 24.04 VM: `wget` → `dpkg -i` → click icon → dashboard within 60s.
+- [ ] License attribution: ActivityWatch (MPL-2.0) and awatcher (MPL-2.0) credited in About dialog and `THIRD-PARTY-NOTICES.md`.
 
-When all 10 boxes are checked, tag `v0.1.0` and post to r/ActivityWatch + HN Show.
+When all 14 boxes are checked, tag `v0.1.0` and post to r/ActivityWatch, r/linux, and HN Show.
