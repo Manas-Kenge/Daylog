@@ -45,6 +45,15 @@ pub struct Bucket {
     pub last_updated: Option<DateTime<Utc>>,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Event {
+    #[serde(default)]
+    pub id: Option<u64>,
+    pub timestamp: DateTime<Utc>,
+    pub duration: f64,
+    pub data: serde_json::Value,
+}
+
 pub struct AwClient {
     base_url: String,
     http: reqwest::Client,
@@ -63,23 +72,26 @@ impl AwClient {
         format!("{}{}", self.base_url, path)
     }
 
-    async fn get_json<T: for<'de> Deserialize<'de>>(&self, path: &str) -> Result<T, AwError> {
-        let url = self.url(path);
-        let resp = self.http.get(&url).send().await.map_err(|e| {
-            if e.is_connect() || e.is_timeout() {
-                AwError::Unreachable(self.base_url.clone())
-            } else {
-                AwError::Network(e.to_string())
-            }
-        })?;
+    fn classify(&self, e: reqwest::Error) -> AwError {
+        if e.is_connect() || e.is_timeout() {
+            AwError::Unreachable(self.base_url.clone())
+        } else {
+            AwError::Network(e.to_string())
+        }
+    }
 
+    async fn decode<T: for<'de> Deserialize<'de>>(&self, resp: reqwest::Response) -> Result<T, AwError> {
         let status = resp.status();
         if !status.is_success() {
             let body = resp.text().await.unwrap_or_default();
             return Err(AwError::BadStatus { status: status.as_u16(), body });
         }
-
         resp.json::<T>().await.map_err(|e| AwError::Decode(e.to_string()))
+    }
+
+    async fn get_json<T: for<'de> Deserialize<'de>>(&self, path: &str) -> Result<T, AwError> {
+        let resp = self.http.get(self.url(path)).send().await.map_err(|e| self.classify(e))?;
+        self.decode(resp).await
     }
 
     pub async fn info(&self) -> Result<ServerInfo, AwError> {
@@ -91,5 +103,73 @@ impl AwClient {
         let mut out: Vec<Bucket> = map.into_values().collect();
         out.sort_by(|a, b| a.id.cmp(&b.id));
         Ok(out)
+    }
+
+    pub async fn events(
+        &self,
+        bucket_id: &str,
+        start: Option<DateTime<Utc>>,
+        end: Option<DateTime<Utc>>,
+        limit: Option<u32>,
+    ) -> Result<Vec<Event>, AwError> {
+        let mut params: Vec<(&str, String)> = Vec::new();
+        if let Some(s) = start {
+            params.push(("start", s.to_rfc3339()));
+        }
+        if let Some(e) = end {
+            params.push(("end", e.to_rfc3339()));
+        }
+        if let Some(l) = limit {
+            params.push(("limit", l.to_string()));
+        }
+        let resp = self
+            .http
+            .get(self.url(&format!("/api/0/buckets/{bucket_id}/events")))
+            .query(&params)
+            .send()
+            .await
+            .map_err(|e| self.classify(e))?;
+        self.decode(resp).await
+    }
+
+    pub async fn query(
+        &self,
+        query: &str,
+        timeperiods: &[String],
+    ) -> Result<Vec<serde_json::Value>, AwError> {
+        let body = serde_json::json!({
+            "query": [query],
+            "timeperiods": timeperiods,
+        });
+        let resp = self
+            .http
+            .post(self.url("/api/0/query/"))
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| self.classify(e))?;
+        self.decode(resp).await
+    }
+}
+
+pub mod queries {
+    pub fn top_apps_today() -> &'static str {
+        r#"
+        afk = query_bucket(find_bucket("aw-watcher-afk_"));
+        events = query_bucket(find_bucket("aw-watcher-window_"));
+        events = filter_period_intersect(events, filter_keyvals(afk, "status", ["not-afk"]));
+        events = merge_events_by_keys(events, ["app"]);
+        events = sort_by_duration(events);
+        RETURN = events;
+        "#
+    }
+
+    pub fn timeline_today() -> &'static str {
+        r#"
+        afk = query_bucket(find_bucket("aw-watcher-afk_"));
+        events = query_bucket(find_bucket("aw-watcher-window_"));
+        events = filter_period_intersect(events, filter_keyvals(afk, "status", ["not-afk"]));
+        RETURN = events;
+        "#
     }
 }
