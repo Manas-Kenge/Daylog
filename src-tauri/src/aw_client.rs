@@ -153,7 +153,7 @@ impl AwClient {
 }
 
 pub mod queries {
-    pub fn top_apps_today() -> &'static str {
+    pub fn top_apps() -> &'static str {
         r#"
         afk = query_bucket(find_bucket("aw-watcher-afk_"));
         events = query_bucket(find_bucket("aw-watcher-window_"));
@@ -164,11 +164,41 @@ pub mod queries {
         "#
     }
 
-    pub fn timeline_today() -> &'static str {
+    pub fn timeline() -> &'static str {
         r#"
         afk = query_bucket(find_bucket("aw-watcher-afk_"));
         events = query_bucket(find_bucket("aw-watcher-window_"));
         events = filter_period_intersect(events, filter_keyvals(afk, "status", ["not-afk"]));
+        RETURN = events;
+        "#
+    }
+
+    pub fn web_top_domains() -> &'static str {
+        r#"
+        afk = query_bucket(find_bucket("aw-watcher-afk_"));
+        events = query_bucket(find_bucket("aw-watcher-web-"));
+        events = split_url_events(events);
+        events = filter_period_intersect(events, filter_keyvals(afk, "status", ["not-afk"]));
+        events = merge_events_by_keys(events, ["$domain"]);
+        events = sort_by_duration(events);
+        RETURN = events;
+        "#
+    }
+
+    pub fn web_top_urls() -> &'static str {
+        r#"
+        afk = query_bucket(find_bucket("aw-watcher-afk_"));
+        events = query_bucket(find_bucket("aw-watcher-web-"));
+        events = filter_period_intersect(events, filter_keyvals(afk, "status", ["not-afk"]));
+        events = merge_events_by_keys(events, ["url"]);
+        events = sort_by_duration(events);
+        RETURN = events;
+        "#
+    }
+
+    pub fn afk_events() -> &'static str {
+        r#"
+        events = query_bucket(find_bucket("aw-watcher-afk_"));
         RETURN = events;
         "#
     }
