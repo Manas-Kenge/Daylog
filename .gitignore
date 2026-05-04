@@ -1,0 +1,29 @@
+# Tauri
+src-tauri/target/
+src-tauri/Cargo.lock
+
+# Node
+node_modules/
+dist/
+.vite/
+
+# Bun
+bun.lockb
+
+# Editors
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+*.deb
+*.AppImage
+*.rpm
+
+# Local
+.env
+.env.local
