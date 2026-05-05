@@ -10,7 +10,9 @@ A native Linux desktop dashboard for ActivityWatch.
 
 A single-window native desktop app that shows a beautiful, dense, real-time pulse of your day, sourced from the local ActivityWatch server you already have running. No browser tab. No sign-in. No cloud. The whole thing fits in one window with poster-quality information density.
 
-**v0.1 hero scenario:** double-click the Pulse icon → a window opens showing today's timeline as a horizontal heatmap, top apps + categories with sparklines, and a live focus-session timer. The screenshot of that window is what the project ships on.
+**v0.1 hero scenario:** double-click the Pulse icon → a window opens showing today's timeline as a horizontal heatmap, top apps + categories with sparklines, and a live focus-session timer. Hit `⌘K` (or `Ctrl+K`) and a Raycast-style command palette appears: type `yesterday`, the dashboard reflects yesterday's data; type an app name, jump straight to its detail. The screenshot we ship on is the dashboard with the palette open mid-typing — keyboard-driven activity awareness, not another point-and-click tracker.
+
+**Why palette-primary, not a sidebar:** AW's existing WebUI is already a dashboard. The reason a power user installs a desktop client instead of bookmarking `localhost:5600` is **surface availability**, not visual density. Visual density is table stakes. The keyboard-summonable palette is the v0.1 differentiation hook; ambient surfaces (topbar applet, pinned mini-window) follow in v0.2.
 
 **Constraints locked in office-hours:**
 - Linux-first, single-user, local-only.
@@ -147,25 +149,76 @@ export interface Bucket { id: string; type: string; client: string; hostname: st
 
 ## 5. v0.1 scope — what ships
 
-The dashboard window contains exactly these widgets, in this order:
+A single-window app with one poster-quality dashboard view and a global command palette. **No sidebar.** Detail views (apps list, hourly patterns, activity log) are reachable via the palette, not via persistent navigation.
 
 ```
-┌────────────────────────────────────────────────────────────────┐
-│ [Pulse]                              today · 14:23 · 5h 18m ▾  │
-├────────────────────────────────────────────────────────────────┤
-│  Today's timeline                                              │
-│  [▓▓░░▓▓▓▓░░▓▓▓▓▓▓░░░░▓▓▓▓ ... ]  <- horizontal heatmap, 24h   │
-│  hover: app + title at that instant                            │
-├────────────────────────────────────────────────────────────────┤
-│  Top apps              │  Top categories     │  Current focus  │
-│  ────────────────      │  ────────────────   │  ─────────────  │
-│  kitty       2h 14m ▁▃▅│  dev work    3h 02m │  ◐ 47 min       │
-│  firefox     1h 03m ▂▄▆│  comms       0h 41m │  ↳ kitty        │
-│  Code        0h 42m ▁▂▃│  reading     0h 33m │     "PLAN.md"   │
-│  Slack       0h 12m ▁▁▂│  uncategor.  1h 02m │                 │
-│  ...                   │                     │                 │
-└────────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────┐
+│ Pulse              today · 14:23 · 5h 18m              [⌘K]        │
+├────────────────────────────────────────────────────────────────────┤
+│  ┌─────────┬─────────┬─────────┬─────────┬─────────┐               │
+│  │ Active  │ Activity│ Switches│ Apps    │ Top cat │  ← KpiStrip   │
+│  │ 5h 18m  │ 64%     │ 142     │ 12      │ dev work│    (5-up)     │
+│  │ ↑ 23m   │ ↑ 4pp   │ ▁▃▅▇    │ ▁▂▃▄    │ 3h 02m  │               │
+│  └─────────┴─────────┴─────────┴─────────┴─────────┘               │
+├────────────────────────────────────────────────────────────────────┤
+│  Today's timeline                                                  │
+│  [▓▓░░▓▓▓▓░░▓▓▓▓▓▓░░░░▓▓▓▓ ... ]  ← horizontal heatmap, 24h       │
+│  hover: app + title at that instant                                │
+├────────────────────────────────────────────────────────────────────┤
+│  Top apps              │  Top categories     │  Current focus      │
+│  ────────────────      │  ────────────────   │  ─────────────      │
+│  kitty       2h 14m ▁▃▅│  dev work    3h 02m │  ◐ 47 min           │
+│  firefox     1h 03m ▂▄▆│  comms       0h 41m │  ↳ kitty            │
+│  Code        0h 42m ▁▂▃│  reading     0h 33m │     "PLAN.md"       │
+│  Slack       0h 12m ▁▁▂│  uncategor.  1h 02m │                     │
+└────────────────────────────────────────────────────────────────────┘
+
+   ↓  user hits ⌘K (or Ctrl+K)
+
+┌────────────────────────────────────┐
+│ ▍ Search Pulse...                  │
+│  • Today                           │
+│  • Yesterday                       │
+│  • This week                       │
+│  • Hourly patterns                 │
+│  • Apps → kitty (2h 14m)           │
+│  • Categories → dev work           │
+│  • Activity log                    │
+│  • Settings → Tracking             │
+│  • ? Show shortcuts                │
+└────────────────────────────────────┘
 ```
+
+**Dashboard composition (`pages/Overview.tsx`, three rows, fits 1280×800 without scroll):**
+
+| Row | Widget(s) | What it shows |
+|---|---|---|
+| 1 | `KpiStrip` (5-up) | Active time (vs yesterday delta) · Activity % · Switches · Unique apps · Top category |
+| 2 | `Timeline` | 24h horizontal heatmap, color-encoded by category, hover reveals app + title |
+| 3 | `TopApps` \| `TopCategories` \| `CurrentFocus` | Three equal columns: top apps with sparklines, top categories with bars, live focus session |
+
+**Five widgets, exactly.** No scroll wall. The dashboard is range-aware: every widget consumes `RangeContext`, so palette commands like `Yesterday` or `This week` re-render the same layout against a different range — there is no separate "week dashboard" or "yesterday dashboard."
+
+**Moved off the dashboard (reachable via palette, not Overview):**
+
+| Widget / page | Detail destination | Palette command |
+|---|---|---|
+| `HourlyDistribution` | `pages/HourlyPatternsPage.tsx` (existing) | `Hourly patterns` |
+| `WebPanel` | `pages/WebPage.tsx` (new; promote `WebPanel`) | `Web` |
+| `ActivityLog` | `pages/ActivityLogPage.tsx` (existing) | `Activity log` |
+| `WeekChart` | **Deleted.** Range-switching to `This week` covers it. | (none) |
+
+Widget files for `HourlyDistribution`, `WebPanel`, `ActivityLog` stay in `components/widgets/` because their detail pages still consume them. Only `WeekChart.tsx` is removed.
+
+**Open layout call:** `CurrentFocus` may move from Row 3 column to a single line in the topbar (`◐ 47 min · kitty · "Sidebar.tsx"`). That frees Row 3 for `TopApps | TopCategories` at 50/50 — bigger, more readable. Try both during palette implementation.
+
+**Command palette (primary navigation):**
+- Built on `cmdk` (via shadcn's `Command` component).
+- Hotkeys: `⌘K` and `Ctrl+K` both bind globally inside the window. `Esc` dismisses. `?` opens shortcut help.
+- Static commands: `Today`, `Yesterday`, `This week`, `This month` (range switch); `Apps`, `Categories`, `Hourly patterns`, `Activity log` (detail views); `Settings → Tracking | Categories | General`.
+- Dynamic commands: each tracked app and category becomes a typeable result (`kitty 2h 14m → jump to detail`).
+- Detail views render in the main pane. Approach undecided between sliding overlay (dashboard stays behind) and route swap; pick during impl.
+- Affordance: a small `⌘K` chip in the topbar. First-launch toast hints at the shortcut. Not a hamburger menu.
 
 **Functional requirements:**
 - **First-launch wizard** (shown only on first run, dismissible after success):
@@ -193,7 +246,10 @@ The dashboard window contains exactly these widgets, in this order:
 | Item | Reason |
 |---|---|
 | Cross-platform builds (macOS/Windows) | Linux-first per office-hours premise P2. Multi-OS CI doubles the build matrix. Re-evaluate after v0.1 stars >100. |
-| Tray icon / menubar widget | Linux tray support varies wildly across DEs (XEmbed vs SNI vs AppIndicator). Worth its own design pass. |
+| Sidebar navigation | Reverted to palette-primary in office-hours after a sidebar scaffold landed in `phase-3-dashboard`. Filling 8+ pages contradicts §1's "visual density beats feature density" rule. Sidebar code removed in Phase 3 rewrite. |
+| Topbar applet (GNOME shell extension showing current focus + today total) | **Explicit v0.2 roadmap.** This is the ambient-surface companion to the palette. Deferred only because cross-DE work (GNOME / KDE / Sway) is its own engineering project and would push v0.1 past the weekend budget. |
+| Pinned mini-window (frameless, always-on-top, 320×120 showing current focus + bar) | **Explicit v0.2 roadmap.** Cross-DE solution to the "pinnable" goal without per-DE widget systems. Same Tauri app, secondary window. |
+| Tray icon / menubar widget | Linux tray support varies wildly across DEs (XEmbed vs SNI vs AppIndicator). The pinned mini-window above is the cross-DE alternative. |
 | Notifications / focus alerts | Outside the "passive observer" identity of v0.1. |
 | ~~Bundled `aw-server-rust` sidecar~~ | **MOVED INTO v0.1 SCOPE** — see Phase 6. |
 | Multi-day / weekly / monthly views | v0.2. Today first; hard to get density right even for one day. |
@@ -296,9 +352,11 @@ Deliverables:
 
 **Exit criteria:** in dev tools console, `await window.__TAURI__.core.invoke('aw_today_window')` returns a sorted list of `{ app, duration }` from your real machine.
 
-### Phase 3 — Dashboard widgets (2-3 weekends)
+### Phase 3 — Dashboard widgets + command palette (3 weekends)
 
-This is the design-heavy phase. Build the four widgets in the v0.1 mockup:
+Two parallel tracks: the four hero widgets, and the palette that replaces sidebar navigation.
+
+**Track A — widgets (build first):**
 
 1. **Today's timeline (horizontal heatmap)** — hardest. Build it first, alone, until it's beautiful. ECharts `heatmap` series with custom tooltip. Color encodes category, height encodes nothing (it's a bar). Hover scrubs to that instant.
 2. **Top apps** with sparklines — `bar` + `line` series.
@@ -307,7 +365,20 @@ This is the design-heavy phase. Build the four widgets in the v0.1 mockup:
 
 Polling: a single `useQuery` per widget, all using the same query key prefix, refetchInterval 5s. TanStack Query dedupes fan-out.
 
-**Exit criteria:** all four widgets render real data, refresh on a 5s tick, tolerate aw-server going down (show amber state, don't crash).
+**Track B — command palette:**
+
+1. `bunx shadcn@latest add command` to bring in the `cmdk`-backed `Command` primitive.
+2. `src/components/palette/CommandPalette.tsx` — modal overlay, search + result list, keyboard navigation.
+3. `src/components/palette/commands.ts` — command registry. Static commands (ranges, detail views, settings) + dynamic providers (apps, categories pulled from current data).
+4. `src/hooks/useHotkey.ts` — global `⌘K` / `Ctrl+K` binding. `Esc` to dismiss. `?` to show shortcut help.
+5. Wire `RangeContext` to range commands. Wire detail commands to swap main pane content (try slide-over first; route-swap fallback).
+6. **Delete** the sidebar scaffold landed in `phase-3-dashboard`: `components/layout/Sidebar.tsx`, `pages/Placeholder.tsx`, `lib/nav.ts`'s `NavId` and `PAGE_TITLES`. Rewrite `App.tsx` to drop the `232px_1fr` grid; main pane is full width.
+
+**Exit criteria:**
+- All four widgets render real data, refresh on a 5s tick, tolerate aw-server going down (show amber state, don't crash).
+- `⌘K` opens the palette anywhere in the window. Typing `yesterday` switches the dashboard to yesterday's data within one frame.
+- Typing an app name shows it as a result with its today-total; selecting it lands on a detail view.
+- No sidebar exists in the rendered DOM.
 
 ### Phase 4 — Settings + categorization (1 weekend)
 
@@ -537,19 +608,32 @@ pulse/
 │   ├── main.tsx
 │   ├── App.tsx
 │   ├── components/
-│   │   ├── ui/                   ← shadcn components live here
+│   │   ├── ui/                   ← shadcn components live here (incl. Command)
+│   │   ├── layout/
+│   │   │   └── Topbar.tsx        ← thin; shows range, totals, ⌘K chip
+│   │   ├── palette/
+│   │   │   ├── CommandPalette.tsx
+│   │   │   └── commands.ts       ← static + dynamic command registry
 │   │   └── widgets/
 │   │       ├── Timeline.tsx
 │   │       ├── TopApps.tsx
 │   │       ├── TopCategories.tsx
 │   │       └── CurrentFocus.tsx
+│   ├── pages/                    ← detail views reachable via palette
+│   │   ├── Overview.tsx          ← default view
+│   │   ├── AppsPage.tsx
+│   │   ├── ActivityLogPage.tsx
+│   │   └── HourlyPatternsPage.tsx
+│   ├── context/
+│   │   └── RangeContext.tsx      ← active time range, palette mutates this
 │   ├── lib/
 │   │   ├── aw.ts                 ← Tauri invoke wrappers
 │   │   ├── aw-types.ts
 │   │   ├── categories.ts         ← rule engine
 │   │   └── utils.ts              ← shadcn cn() lives here
 │   └── hooks/
-│       └── useAw.ts              ← TanStack Query hooks
+│       ├── useAw.ts              ← TanStack Query hooks
+│       └── useHotkey.ts          ← global ⌘K / Ctrl+K binding
 ├── src-tauri/                    ← Rust backend
 │   ├── Cargo.toml
 │   ├── tauri.conf.json
@@ -594,6 +678,9 @@ pulse/
 2. **Category storage location.** App-local store (current plan) or aw-server bucket? Storing in aw-server would make rules portable to the official WebUI. Cost: harder to test, more network calls. *Decision: app-local for v0.1, revisit.*
 3. **Light mode default.** The aesthetic of dense data dashboards leans dark. shadcn default is system-follow. *Decision: follow GNOME for now; verify dark mode renders the heatmap acceptably.*
 4. **Hostname assumption.** Bucket IDs include hostname (`aw-watcher-window_manas`). What if the user changes hostname or has multiple machines? *Decision for v0.1: query `/api/0/buckets/` at startup, pick the first `aw-watcher-window_*` and `aw-watcher-afk_*`. Document the assumption. Multi-host is a v0.2 problem.*
+5. **Detail view: slide-over or route swap?** Slide-over keeps the dashboard visually present; route swap is simpler. Try slide-over first. If transitions feel like blinking, fall back to route swap. *Decide during Phase 3 Track B.*
+6. **Cmd+K vs Ctrl+K on Linux.** Bind both. Cheap.
+7. **Palette dynamic commands at scale.** What does the result list show when a user has 200+ tracked apps? *Decision for v0.1: top 20 by current-range duration; "Show all apps" expands inline. Not a v0.1 blocker.*
 
 ---
 
@@ -612,7 +699,14 @@ pulse/
 - [ ] `scripts/fetch-binaries.sh` fetches and verifies aw-server-rust + aw-awatcher with pinned checksums.
 - [ ] First-launch wizard succeeds end-to-end on a fresh Ubuntu 24.04 VM with no prior AW: detect → install services → enable extension → first event arrives.
 - [ ] First-launch wizard correctly detects an existing AW install on `:5600` and skips bundled-stack install.
-- [ ] All four dashboard widgets render real data from the running aw-server.
+- [ ] All five dashboard widgets render real data from the running aw-server: `KpiStrip`, `Timeline`, `TopApps`, `TopCategories`, `CurrentFocus`.
+- [ ] `Overview.tsx` composes exactly those five widgets in three rows. `HourlyDistribution`, `WebPanel`, `ActivityLog` are not imported by `Overview.tsx`. `WeekChart` is deleted.
+- [ ] All five widgets re-render correctly when `RangeContext` switches (Today / Yesterday / This week / This month).
+- [ ] **No sidebar exists in the rendered DOM.** Single-page dashboard is the default view.
+- [ ] **Command palette opens on `⌘K` and `Ctrl+K`** anywhere in the window. `Esc` dismisses. `?` opens shortcut help.
+- [ ] **Range commands work:** `Today` / `Yesterday` / `This week` / `This month` switch the dashboard within one frame.
+- [ ] **Detail commands work:** `Apps`, `Categories`, `Hourly patterns`, `Activity log` reach the right view via the palette only (no nav UI).
+- [ ] **Dynamic commands work:** typing an app name shows it as a result with its current-range total; selecting it lands on a filtered detail view.
 - [ ] Connection state indicator works (green / amber / red).
 - [ ] Settings persist across restarts; "Tracking" panel shows correct service status and lets you switch modes.
 - [ ] Category rules apply within one refresh tick.
@@ -620,8 +714,19 @@ pulse/
 - [ ] All Rust tests pass; all Vitest tests pass.
 - [ ] `bun run tauri build` produces working `.deb` and `.AppImage`.
 - [ ] GitHub Actions release workflow produces both artifacts on tag push.
-- [ ] README: screenshot, install one-liner, GIF of wizard, "Pulse bundles ActivityWatch" callout.
-- [ ] Smoke-tested on a clean Ubuntu 24.04 VM: `wget` → `dpkg -i` → click icon → dashboard within 60s.
+- [ ] README: screenshot of the dashboard with the palette open mid-typing, install one-liner, GIF of wizard, "Pulse bundles ActivityWatch" callout, "Press ⌘K" hint.
+- [ ] Smoke-tested on a clean Ubuntu 24.04 VM: `wget` → `dpkg -i` → click icon → dashboard within 60s; `⌘K` → `yesterday` → reflects yesterday's data within 10s.
 - [ ] License attribution: ActivityWatch (MPL-2.0) and awatcher (MPL-2.0) credited in About dialog and `THIRD-PARTY-NOTICES.md`.
 
-When all 14 boxes are checked, tag `v0.1.0` and post to r/ActivityWatch, r/linux, and HN Show.
+When all boxes are checked, tag `v0.1.0` and post to r/ActivityWatch, r/linux, and HN Show.
+
+---
+
+## 14. v0.2 roadmap (ambient surfaces)
+
+After v0.1 ships, the next-most-important surface is ambient visibility. Two complementary additions:
+
+1. **Pinned mini-window.** A frameless, always-on-top, 320×120 secondary Tauri window showing current focus + a one-line bar of today's category split. Cross-DE (works on GNOME / KDE / Sway / wlroots). Solves the "pinnable on the desktop" goal without fighting per-DE widget systems. Shares the same Rust core; spawned via `WebviewWindow::new` from a tray-less menu entry or a `--mini` CLI flag.
+2. **GNOME shell topbar applet.** Companion extension that shows current focus + today total in the top bar. Hover reveals a small popover with top 3 apps. Talks to `aw-server` directly over HTTP (same `:5600`). Distributed via extensions.gnome.org and bundled in the `.deb` similar to `focused-window-dbus`.
+
+These were considered for v0.1 and consciously deferred. Cross-DE work for the topbar applet is its own engineering project; the pinned mini-window is straightforward but pushes v0.1 past the weekend budget. They are not optional polish — they are the second and third surfaces of the same product.
