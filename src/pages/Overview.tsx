@@ -17,7 +17,7 @@ export function OverviewPage() {
     <>
       <KpiStrip />
       <Timeline />
-      <section className="grid min-w-0 flex-1 grid-cols-3 items-stretch gap-2.5">
+      <section className="grid min-w-0 grid-cols-3 items-start gap-2.5">
         <TopApps />
         <TopCategories />
         <CurrentFocus />

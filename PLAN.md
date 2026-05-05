@@ -155,11 +155,11 @@ A single-window app with one poster-quality dashboard view and a global command 
 ┌────────────────────────────────────────────────────────────────────┐
 │ Pulse              today · 14:23 · 5h 18m              [⌘K]        │
 ├────────────────────────────────────────────────────────────────────┤
-│  ┌─────────┬─────────┬─────────┬─────────┬─────────┐               │
-│  │ Active  │ Activity│ Switches│ Apps    │ Top cat │  ← KpiStrip   │
-│  │ 5h 18m  │ 64%     │ 142     │ 12      │ dev work│    (5-up)     │
-│  │ ↑ 23m   │ ↑ 4pp   │ ▁▃▅▇    │ ▁▂▃▄    │ 3h 02m  │               │
-│  └─────────┴─────────┴─────────┴─────────┴─────────┘               │
+│  ┌─────────┬─────────┬──────────┬─────────┬──────────┐             │
+│  │ Active  │ Product.│ Longest  │ Started │ Peak hr  │  ← KpiStrip │
+│  │ 5h 18m  │ 3h 02m  │ 47m      │ 09:14   │ 14:00    │    (5-up)   │
+│  │ ↑ 23m   │ 57% act │ Work     │ 5h ago  │ 1h 12m   │             │
+│  └─────────┴─────────┴──────────┴─────────┴──────────┘             │
 ├────────────────────────────────────────────────────────────────────┤
 │  Today's timeline                                                  │
 │  [▓▓░░▓▓▓▓░░▓▓▓▓▓▓░░░░▓▓▓▓ ... ]  ← horizontal heatmap, 24h       │
@@ -193,9 +193,30 @@ A single-window app with one poster-quality dashboard view and a global command 
 
 | Row | Widget(s) | What it shows |
 |---|---|---|
-| 1 | `KpiStrip` (5-up) | Active time (vs yesterday delta) · Activity % · Switches · Unique apps · Top category |
+| 1 | `KpiStrip` (5-up) | Active (vs-yesterday delta) · Productive · Longest focus · Started · Peak hour |
 | 2 | `Timeline` | 24h horizontal heatmap, color-encoded by category, hover reveals app + title |
 | 3 | `TopApps` \| `TopCategories` \| `CurrentFocus` | Three equal columns: top apps with sparklines, top categories with bars, live focus session |
+
+**KPI definitions (which questions each card answers):**
+
+| Card | Question | Source | Notes |
+|---|---|---|---|
+| **Active** | "How long was I at the keyboard today?" | `aw_afk_summary` | Total active seconds. Vs-yesterday delta in a Badge. |
+| **Productive** | "Did I actually do work?" | `useCategorizedEvents` filtered by `PRODUCTIVE_ROOTS` | v0.1: hardcoded to `["Work"]`. Sub-label shows `% of active`. Empty-state hint when zero: *"No 'Work' time — set up category rules"*. |
+| **Longest focus** | "What was my deepest stretch today?" | `useCategorizedEvents` | Biggest uninterrupted run on a single category root, ≥120s floor. Sub-label shows the root. |
+| **Started** | "What time did I actually start work?" | first event in range | Sub-label shows `Nh Nm ago` for context within the working day. |
+| **Peak hour** | "When am I most active?" | `useHourly` | Hour of day with max active duration. Sub-label shows the duration at peak. |
+
+The "Productive" definition is opinionated and configurable later. v0.1 uses a single hardcoded root (`"Work"`) so the metric is honest: if you set up category rules well, the number is meaningful; if you don't, it's near-zero, which is a clear signal that categorization needs setup. Phase 4 settings UI will expose `productive_roots: string[]` (default `["Work"]`) and a per-rule `productive: boolean` flag for cases like work-Slack vs personal-Discord. Constant lives at `src/lib/productive.ts`.
+
+**Dropped from earlier KPI design** (and where the info now lives):
+
+| Old card | Why dropped | Where it lives now |
+|---|---|---|
+| `Activity %` | Just AFK ratio. 100% on a Twitter-all-day session. | Sub-label inside Productive card (`57% of active`). |
+| `Switches` | No threshold for good/bad. Number with no signal. | Visible as color flicker in Timeline. |
+| `Apps unique` | "12 apps" not actionable. | Header chip on `TopApps`. |
+| `Top category` | Duplicates `TopCategories` donut directly below. | `TopCategories` widget. |
 
 **Five widgets, exactly.** No scroll wall. The dashboard is range-aware: every widget consumes `RangeContext`, so palette commands like `Yesterday` or `This week` re-render the same layout against a different range — there is no separate "week dashboard" or "yesterday dashboard."
 
