@@ -1,25 +1,37 @@
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { useEffect, useState } from "react";
+import { Sidebar } from "@/components/layout/Sidebar";
+import { Topbar } from "@/components/layout/Topbar";
+import { OverviewPage } from "@/pages/Overview";
+import { AppsPage } from "@/pages/AppsPage";
+import { ActivityLogPage } from "@/pages/ActivityLogPage";
+import { HourlyPatternsPage } from "@/pages/HourlyPatternsPage";
+import { PlaceholderPage } from "@/pages/Placeholder";
+import { PAGE_TITLES, type NavId } from "@/lib/nav";
 
 function App() {
+  // Lock dark theme for now; theme-following is a later concern.
+  useEffect(() => {
+    document.documentElement.classList.add("dark");
+  }, []);
+
+  const [view, setView] = useState<NavId>("overview");
+
   return (
-    <div className="min-h-screen bg-background text-foreground flex items-center justify-center p-8">
-      <Card className="w-full max-w-md">
-        <CardHeader>
-          <CardTitle>Pulse</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <p className="text-sm text-muted-foreground">
-            shadcn preset wired up. Background, foreground, and card tokens
-            should all be from the preset.
-          </p>
-          <div className="flex gap-2">
-            <Button>Primary</Button>
-            <Button variant="secondary">Secondary</Button>
-            <Button variant="outline">Outline</Button>
-          </div>
-        </CardContent>
-      </Card>
+    <div className="grid grid-cols-[232px_1fr] h-screen w-screen overflow-hidden">
+      <Sidebar active={view} onSelect={setView} />
+      <main className="grid grid-rows-[auto_1fr] min-w-0 min-h-0 bg-background">
+        <Topbar pageTitle={PAGE_TITLES[view]} />
+        <div className="overflow-y-auto px-[14px] pt-[12px] pb-[20px] flex flex-col gap-[10px]">
+          {view === "overview" && <OverviewPage />}
+          {view === "apps" && <AppsPage />}
+          {view === "activity" && <ActivityLogPage />}
+          {view === "hourly" && <HourlyPatternsPage />}
+          {view !== "overview" &&
+            view !== "apps" &&
+            view !== "activity" &&
+            view !== "hourly" && <PlaceholderPage id={view} />}
+        </div>
+      </main>
     </div>
   );
 }
