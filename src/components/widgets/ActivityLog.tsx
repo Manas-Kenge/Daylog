@@ -3,6 +3,9 @@
  */
 
 import { ListBody, ListRow, WidgetCard } from "./Card";
+import { Badge } from "@/components/ui/badge";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Skeleton } from "@/components/ui/skeleton";
 import { useCategorizedEvents } from "@/hooks/useAw";
 import { categoryColor } from "@/lib/category-colors";
 import { fmtClock, fmtDuration } from "@/lib/format";
@@ -10,7 +13,7 @@ import { fmtClock, fmtDuration } from "@/lib/format";
 const TAKE = 12;
 
 export function ActivityLog() {
-  const { data } = useCategorizedEvents();
+  const { data, isLoading } = useCategorizedEvents();
   const sorted = [...(data ?? [])]
     .sort((a, b) => (a.timestamp < b.timestamp ? 1 : -1))
     .slice(0, TAKE);
@@ -20,43 +23,54 @@ export function ActivityLog() {
       title="Recent activity"
       description="Most recent window events"
       action={
-        <span className="mono text-[10.5px] text-muted-foreground tracking-[0.13em] uppercase">
+        <Badge variant="outline" className="font-mono tabular-nums uppercase">
           last {TAKE}
-        </span>
+        </Badge>
       }
     >
-      {sorted.length === 0 ? (
-        <div className="text-muted-foreground text-[12px] py-[16px] text-center">
+      {isLoading ? (
+        <ListBody>
+          {Array.from({ length: 8 }, (_, i) => (
+            <ListRow key={i} cols="50px_9px_1fr_56px">
+              <Skeleton className="h-3 w-10" />
+              <Skeleton className="size-2 rounded-sm" />
+              <Skeleton className="h-3 w-3/4" />
+              <Skeleton className="h-3 w-12 justify-self-end" />
+            </ListRow>
+          ))}
+        </ListBody>
+      ) : sorted.length === 0 ? (
+        <div className="py-4 text-center text-muted-foreground">
           no activity yet
         </div>
       ) : (
-        <div className="max-h-[260px] overflow-y-auto">
+        <ScrollArea className="h-[260px]">
           <ListBody>
             {sorted.map((ev, i) => {
               const data = (ev.data ?? {}) as { app?: string; title?: string };
               return (
                 <ListRow key={i} cols="50px_9px_1fr_56px">
-                  <span className="mono text-muted-foreground text-[11px]">
+                  <span className="font-mono tabular-nums text-muted-foreground">
                     {fmtClock(ev.timestamp)}
                   </span>
                   <span
-                    className="w-[8px] h-[8px] rounded-[2px]"
+                    className="size-2 rounded-sm"
                     style={{ background: categoryColor(ev.category) }}
                   />
-                  <span className="flex gap-[8px] min-w-0 items-baseline">
-                    <span className="font-medium text-[12px]">{data.app ?? "—"}</span>
-                    <span className="text-muted-foreground text-[11px] truncate min-w-0">
+                  <span className="flex min-w-0 items-baseline gap-2">
+                    <span className="font-medium">{data.app ?? "—"}</span>
+                    <span className="min-w-0 truncate text-muted-foreground">
                       {data.title ?? ""}
                     </span>
                   </span>
-                  <span className="mono text-muted-foreground text-[11px] text-right">
+                  <span className="text-right font-mono tabular-nums text-muted-foreground">
                     {fmtDuration(ev.duration)}
                   </span>
                 </ListRow>
               );
             })}
           </ListBody>
-        </div>
+        </ScrollArea>
       )}
     </WidgetCard>
   );

@@ -1,13 +1,21 @@
 /**
  * Hourly patterns · 7-day × 24-hour heatmap. Fetched via 7 parallel
  * `aw_hourly({DaysAgo: n})` queries; each cell is shaded by relative
- * activity intensity. Surfaces "when do I actually work" patterns that
- * Overview's single-day strip can't show.
+ * activity intensity.
  */
 
 import { useMemo } from "react";
 import { useQueries } from "@tanstack/react-query";
 import { format, subDays } from "date-fns";
+import { Badge } from "@/components/ui/badge";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
 import { WidgetCard } from "@/components/widgets/Card";
 import { awHourly } from "@/lib/aw";
 import { DaysAgo, type HourBucket } from "@/lib/aw-types";
@@ -18,7 +26,7 @@ const DAYS = 7;
 interface DayCell {
   date: Date;
   weekday: string;
-  buckets: HourBucket[]; // 24 entries, hour 0..23
+  buckets: HourBucket[];
   total: number;
   isToday: boolean;
 }
@@ -35,7 +43,6 @@ export function HourlyPatternsPage() {
   });
 
   const days: DayCell[] = useMemo(() => {
-    // Oldest first so the grid reads top-to-bottom in chronological order.
     return Array.from({ length: DAYS }, (_, i) => {
       const ago = DAYS - 1 - i;
       const date = subDays(today, ago);
@@ -58,7 +65,6 @@ export function HourlyPatternsPage() {
     ...days.flatMap((d) => d.buckets.map((b) => b.duration)),
   );
 
-  // Per-hour totals across the 7-day window (column footer).
   const hourTotals = useMemo(() => {
     const totals = new Array(24).fill(0);
     for (const d of days) {
@@ -78,13 +84,14 @@ export function HourlyPatternsPage() {
 
   return (
     <>
-      <section className="grid grid-cols-3 gap-[10px]">
-        <SummaryStat label="7-day active total" value={fmtDuration(grandTotal)} />
-        <SummaryStat label="Daily average" value={fmtDuration(avgDay)} />
+      <section className="grid grid-cols-3 gap-2.5">
+        <SummaryStat label="7-day active total" value={fmtDuration(grandTotal)} loading={isLoading} />
+        <SummaryStat label="Daily average" value={fmtDuration(avgDay)} loading={isLoading} />
         <SummaryStat
           label="Peak hour"
           value={`${String(peakHour.hour).padStart(2, "0")}:00`}
           sub={`${fmtDuration(peakHour.total)} across ${DAYS} days`}
+          loading={isLoading}
         />
       </section>
 
@@ -92,26 +99,24 @@ export function HourlyPatternsPage() {
         title="Hour × day heatmap"
         description="Cell intensity = active seconds in that hour"
         action={
-          <span className="mono text-[10.5px] text-muted-foreground tracking-[0.13em] uppercase">
+          <Badge variant="outline" className="font-mono tabular-nums uppercase">
             {DAYS}-day window
-          </span>
+          </Badge>
         }
       >
         {isLoading ? (
-          <div className="text-muted-foreground text-[12px] py-[24px] text-center">
-            loading…
-          </div>
+          <Skeleton className="h-48 w-full rounded-sm" />
         ) : (
           <div className="overflow-x-auto">
             {/* Hour column header */}
             <div
-              className="grid pl-[64px] gap-[2px] mb-[4px]"
+              className="mb-1 grid gap-0.5 pl-16"
               style={{ gridTemplateColumns: "repeat(24, minmax(0, 1fr))" }}
             >
               {Array.from({ length: 24 }, (_, h) => (
                 <div
                   key={h}
-                  className="text-[9.5px] mono text-muted-foreground text-center"
+                  className="text-center font-mono tabular-nums text-[0.625rem] text-muted-foreground"
                 >
                   {h % 3 === 0 ? String(h).padStart(2, "0") : ""}
                 </div>
@@ -122,19 +127,19 @@ export function HourlyPatternsPage() {
             {days.map((d) => (
               <div
                 key={d.date.toISOString()}
-                className="grid items-center gap-[2px] mb-[2px]"
+                className="mb-0.5 grid items-center gap-0.5"
                 style={{
                   gridTemplateColumns: "64px repeat(24, minmax(0, 1fr))",
                 }}
               >
                 <div
                   className={
-                    "flex items-baseline justify-between pr-[8px] text-[11px] " +
+                    "flex items-baseline justify-between pr-2 " +
                     (d.isToday ? "text-foreground" : "text-muted-foreground")
                   }
                 >
                   <span>{d.weekday}</span>
-                  <span className="mono text-[10px] text-muted-foreground">
+                  <span className="font-mono tabular-nums text-[0.625rem] text-muted-foreground">
                     {format(d.date, "MMM d")}
                   </span>
                 </div>
@@ -151,12 +156,12 @@ export function HourlyPatternsPage() {
 
             {/* Column footer · totals across the week */}
             <div
-              className="grid items-center gap-[2px] mt-[6px] pt-[6px] border-t border-border"
+              className="mt-1.5 grid items-center gap-0.5 border-t pt-1.5"
               style={{
                 gridTemplateColumns: "64px repeat(24, minmax(0, 1fr))",
               }}
             >
-              <div className="text-[10px] tracking-[0.13em] uppercase text-muted-foreground font-medium pr-[8px]">
+              <div className="pr-2 font-medium uppercase tracking-wider text-[0.625rem] text-muted-foreground">
                 week
               </div>
               {hourTotals.map((t, h) => (
@@ -170,12 +175,12 @@ export function HourlyPatternsPage() {
             </div>
 
             {/* Legend */}
-            <div className="flex items-center gap-[6px] mt-[16px] text-[10.5px] text-muted-foreground">
+            <div className="mt-4 flex items-center gap-1.5 text-muted-foreground">
               <span>less</span>
               {[0, 0.2, 0.4, 0.6, 0.8, 1].map((step) => (
                 <span
                   key={step}
-                  className="w-[14px] h-[10px] rounded-[2px] border border-border"
+                  className="h-2.5 w-3.5 rounded-sm border"
                   style={{
                     background:
                       step === 0
@@ -209,7 +214,7 @@ function HeatCell({
       : `color-mix(in oklab, var(--chart-1) ${Math.round(intensity * 100)}%, transparent)`;
   return (
     <div
-      className="h-[18px] rounded-[2px] border border-border/30 hover:[box-shadow:0_0_0_1px_var(--brand-coral)] cursor-crosshair"
+      className="h-[18px] cursor-crosshair rounded-sm border border-border/30 hover:[box-shadow:0_0_0_1px_var(--ring)]"
       style={{ background: bg }}
       title={title}
     />
@@ -220,20 +225,30 @@ function SummaryStat({
   label,
   value,
   sub,
+  loading,
 }: {
   label: string;
   value: string;
   sub?: string;
+  loading?: boolean;
 }) {
   return (
-    <div className="bg-card border border-border rounded-[var(--radius-lg)] px-[14px] py-[12px]">
-      <div className="text-[10px] tracking-[0.13em] uppercase text-muted-foreground font-medium">
-        {label}
-      </div>
-      <div className="mono text-[20px] font-semibold tracking-tight mt-[2px]">
-        {value}
-      </div>
-      {sub && <div className="text-[11px] text-muted-foreground mt-[2px]">{sub}</div>}
-    </div>
+    <Card size="sm">
+      <CardHeader>
+        <CardDescription className="font-medium uppercase tracking-wider text-[0.625rem]">
+          {label}
+        </CardDescription>
+        <CardTitle className="font-mono tabular-nums text-xl font-semibold tracking-tight">
+          {loading ? <Skeleton className="h-6 w-24" /> : value}
+        </CardTitle>
+      </CardHeader>
+      {sub && (
+        <CardContent>
+          <span className="text-muted-foreground">
+            {loading ? <Skeleton className="h-3 w-32" /> : sub}
+          </span>
+        </CardContent>
+      )}
+    </Card>
   );
 }

@@ -3,6 +3,7 @@
  */
 
 import { ListBody, ListRow, WidgetCard } from "./Card";
+import { Skeleton } from "@/components/ui/skeleton";
 import { useHasWebWatcher, useTopDomains, useTopUrls } from "@/hooks/useAw";
 import { fmtDuration } from "@/lib/format";
 
@@ -16,8 +17,8 @@ interface Row {
 
 export function WebPanel() {
   const { data: has } = useHasWebWatcher();
-  const { data: domains } = useTopDomains();
-  const { data: urls } = useTopUrls();
+  const { data: domains, isLoading: domainsLoading } = useTopDomains();
+  const { data: urls, isLoading: urlsLoading } = useTopUrls();
 
   if (has === false) return null;
 
@@ -36,36 +37,48 @@ export function WebPanel() {
     <WidgetCard
       title="Web · domains & URLs"
       description="From aw-watcher-web"
-      action={
-        <span className="mono text-[10.5px] text-success tracking-[0.13em] uppercase">
-          live
-        </span>
-      }
     >
       {has === undefined ? (
-        <div className="text-muted-foreground text-[12px] py-[16px] text-center">
+        <div className="py-4 text-center text-muted-foreground">
           checking for web watcher…
         </div>
       ) : (
-        <div className="grid grid-cols-2 gap-[10px]">
-          <Section label="Top domains" rows={domainRows} />
-          <Section label="Top URLs" rows={urlRows} />
+        <div className="grid grid-cols-2 gap-2.5">
+          <Section label="Top domains" rows={domainRows} loading={domainsLoading} />
+          <Section label="Top URLs" rows={urlRows} loading={urlsLoading} />
         </div>
       )}
     </WidgetCard>
   );
 }
 
-function Section({ label, rows }: { label: string; rows: Row[] }) {
+function Section({
+  label,
+  rows,
+  loading,
+}: {
+  label: string;
+  rows: Row[];
+  loading?: boolean;
+}) {
   return (
     <div>
-      <div className="text-[10px] tracking-[0.13em] uppercase text-muted-foreground font-medium px-[6px] mb-[4px]">
+      <div className="mb-1 px-1.5 font-medium uppercase tracking-wider text-muted-foreground">
         {label}
       </div>
-      {rows.length === 0 ? (
-        <div className="text-muted-foreground text-[11.5px] py-[8px] px-[6px]">
-          no data
-        </div>
+      {loading ? (
+        <ListBody>
+          {Array.from({ length: 5 }, (_, i) => (
+            <ListRow key={i} cols="9px_1fr_60px_50px">
+              <Skeleton className="size-2 rounded-sm" />
+              <Skeleton className="h-3 w-3/4" />
+              <Skeleton className="h-3 w-full" />
+              <Skeleton className="h-3 w-10 justify-self-end" />
+            </ListRow>
+          ))}
+        </ListBody>
+      ) : rows.length === 0 ? (
+        <div className="px-1.5 py-2 text-muted-foreground">no data</div>
       ) : (
         <ListBody>
           {rows.map((r) => {
@@ -73,20 +86,20 @@ function Section({ label, rows }: { label: string; rows: Row[] }) {
             const pct = (r.duration / total) * 100;
             return (
               <ListRow key={r.key} cols="9px_1fr_60px_50px">
-                <span className="w-[8px] h-[8px] rounded-[2px] bg-[var(--chart-4)]" />
-                <span
-                  className="font-medium text-[12px] truncate"
-                  title={r.name}
-                >
+                <span className="size-2 rounded-sm bg-[var(--chart-4)]" />
+                <span className="truncate font-medium" title={r.name}>
                   {r.name}
                 </span>
-                <span className="h-[3px] bg-background/50 rounded-[2px] overflow-hidden block">
+                <span className="block h-[3px] overflow-hidden rounded-sm bg-background/50">
                   <span
-                    className="h-full block"
-                    style={{ width: `${pct.toFixed(1)}%`, background: "var(--chart-4)" }}
+                    className="block h-full"
+                    style={{
+                      width: `${pct.toFixed(1)}%`,
+                      background: "var(--chart-4)",
+                    }}
                   />
                 </span>
-                <span className="mono text-muted-foreground text-[11.5px] text-right">
+                <span className="text-right font-mono tabular-nums text-muted-foreground">
                   {fmtDuration(r.duration)}
                 </span>
               </ListRow>

@@ -1,10 +1,20 @@
 /**
- * 5-up KPI tray. Outer container is `bg-secondary p-1.5 rounded-xl` (databuddy
- * "tray" pattern); each card has the area chart spanning the top and a row of
- * [icon · value + label · delta chip] at the bottom.
+ * 5-up KPI tray. Each cell pairs a sparkline with a [icon · value · delta] row.
  */
 
 import { Area, AreaChart, ResponsiveContainer } from "recharts";
+import { HugeiconsIcon } from "@hugeicons/react";
+import {
+  Activity03Icon,
+  ArrowLeftRightIcon,
+  DashboardSquare01Icon,
+  PercentSquareIcon,
+  PieChartIcon,
+} from "@hugeicons/core-free-icons";
+import type { IconSvgElement } from "@hugeicons/react";
+import { Badge } from "@/components/ui/badge";
+import { Card } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   useAfkTodayVsYesterday,
   useCategorizedEvents,
@@ -15,10 +25,9 @@ import {
 import { fmtDuration, fmtPercent } from "@/lib/format";
 import { categoryRoot } from "@/lib/category-colors";
 import { useId, type ReactNode } from "react";
-import { cn } from "@/lib/utils";
 
 interface KpiCardProps {
-  icon: ReactNode;
+  icon: IconSvgElement;
   label: string;
   value: ReactNode;
   delta?: { text: string; tone: "up" | "down" | "flat" };
@@ -31,9 +40,24 @@ function KpiCard({ icon, label, value, delta, spark, loading }: KpiCardProps) {
   const data = spark.values.map((v, i) => ({ x: i, value: v }));
   const hasData = data.some((d) => d.value > 0);
 
+  if (loading) {
+    return (
+      <Card size="sm" className="gap-0 overflow-hidden py-0">
+        <Skeleton className="h-[68px] rounded-none" />
+        <div className="flex items-center gap-2.5 px-3 py-2.5">
+          <Skeleton className="size-7 rounded-sm" />
+          <div className="min-w-0 flex-1 flex flex-col gap-1.5">
+            <Skeleton className="h-4 w-3/4" />
+            <Skeleton className="h-3 w-1/2" />
+          </div>
+        </div>
+      </Card>
+    );
+  }
+
   return (
-    <div className="rounded-[var(--radius)] bg-card overflow-hidden flex flex-col">
-      <div className="h-[68px] -mb-px">
+    <Card size="sm" className="gap-0 overflow-hidden py-0">
+      <div className="-mb-px h-[68px]">
         {hasData ? (
           <ResponsiveContainer width="100%" height="100%">
             <AreaChart data={data} margin={{ top: 4, right: 0, left: 0, bottom: 0 }}>
@@ -54,43 +78,45 @@ function KpiCard({ icon, label, value, delta, spark, loading }: KpiCardProps) {
             </AreaChart>
           </ResponsiveContainer>
         ) : (
-          <div className="h-full w-full" />
+          <div className="size-full" />
         )}
       </div>
 
-      <div className="flex items-center gap-[10px] px-[12px] py-[10px]">
-        <div className="size-[28px] rounded-[var(--radius-sm)] bg-secondary border border-border flex items-center justify-center text-muted-foreground text-[12px] shrink-0">
-          {icon}
+      <div className="flex items-center gap-2.5 px-3 py-2.5">
+        <div className="flex size-7 shrink-0 items-center justify-center rounded-sm border bg-secondary text-muted-foreground">
+          <HugeiconsIcon icon={icon} size={14} />
         </div>
-        <div className="flex-1 min-w-0">
-          <div className="mono text-[18px] font-semibold tracking-tight text-foreground leading-tight truncate">
-            {loading ? "…" : value}
+        <div className="min-w-0 flex-1">
+          <div className="truncate font-mono tabular-nums text-lg font-semibold leading-tight tracking-tight text-foreground">
+            {value}
           </div>
-          <div className="text-[11px] text-muted-foreground truncate">{label}</div>
+          <div className="truncate text-muted-foreground">{label}</div>
         </div>
         {delta && (
-          <div
-            className={cn(
-              "mono text-[10.5px] px-[7px] py-[2px] border rounded-[3px] shrink-0",
-              delta.tone === "up" && "text-success border-success/30",
-              delta.tone === "down" && "text-destructive border-destructive/30",
-              delta.tone === "flat" && "text-muted-foreground border-border",
-            )}
+          <Badge
+            variant={
+              delta.tone === "down"
+                ? "destructive"
+                : delta.tone === "up"
+                  ? "outline"
+                  : "secondary"
+            }
+            className="font-mono tabular-nums"
           >
             {delta.text}
-          </div>
+          </Badge>
         )}
       </div>
-    </div>
+    </Card>
   );
 }
 
 export function KpiStrip() {
   const { today: afkToday, yesterday: afkYest } = useAfkTodayVsYesterday();
-  const { data: hourly } = useHourly();
-  const { data: cats } = useTopCategories();
-  const { data: apps } = useTopApps();
-  const { data: categorized } = useCategorizedEvents();
+  const { data: hourly, isLoading: hourlyLoading } = useHourly();
+  const { data: cats, isLoading: catsLoading } = useTopCategories();
+  const { data: apps, isLoading: appsLoading } = useTopApps();
+  const { data: categorized, isLoading: catzdLoading } = useCategorizedEvents();
 
   // Active
   const activeSec = afkToday.data?.active_seconds ?? 0;
@@ -140,9 +166,9 @@ export function KpiStrip() {
   const topCatPct = topCat && totalCatsSec > 0 ? topCat.duration / totalCatsSec : 0;
 
   return (
-    <section className="grid grid-cols-5 gap-[6px] rounded-[var(--radius-xl)] bg-secondary p-[6px]">
+    <section className="grid grid-cols-5 gap-1.5 rounded-xl bg-secondary p-1.5">
       <KpiCard
-        icon="●"
+        icon={Activity03Icon}
         label={`vs yest · ${activeDelta >= 0 ? "+" : "−"}${fmtDuration(Math.abs(activeDelta))}`}
         value={fmtDuration(activeSec)}
         delta={
@@ -154,10 +180,10 @@ export function KpiStrip() {
             : undefined
         }
         spark={{ values: activeSpark, color: "var(--chart-1)" }}
-        loading={afkToday.isLoading}
+        loading={afkToday.isLoading || hourlyLoading}
       />
       <KpiCard
-        icon="%"
+        icon={PercentSquareIcon}
         label="Activity"
         value={fmtPercent(ratio)}
         delta={
@@ -172,24 +198,27 @@ export function KpiStrip() {
         loading={afkToday.isLoading}
       />
       <KpiCard
-        icon="⇄"
+        icon={ArrowLeftRightIcon}
         label="Switches"
         value={String(switches)}
         spark={{ values: switchesByHour, color: "var(--chart-2)" }}
+        loading={catzdLoading}
       />
       <KpiCard
-        icon="▦"
+        icon={DashboardSquare01Icon}
         label={`Apps · unique`}
         value={String(uniqueApps)}
         spark={{ values: uniqueByHour, color: "var(--chart-4)" }}
+        loading={appsLoading}
       />
       <KpiCard
-        icon="▲"
+        icon={PieChartIcon}
         label={topCat ? `${fmtDuration(topCat.duration)} · ${fmtPercent(topCatPct)}` : "no data"}
         value={
-          <span className="text-[15px]">{topCat ? categoryRoot(topCat.name) : "—"}</span>
+          <span className="text-base">{topCat ? categoryRoot(topCat.name) : "—"}</span>
         }
         spark={{ values: activeSpark, color: "var(--chart-3)" }}
+        loading={catsLoading}
       />
     </section>
   );

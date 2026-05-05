@@ -1,12 +1,15 @@
-import { useEffect, useState } from "react";
-import { Sidebar } from "@/components/layout/Sidebar";
+import { useEffect } from "react";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Topbar } from "@/components/layout/Topbar";
+import { CommandPalette } from "@/components/palette/CommandPalette";
 import { OverviewPage } from "@/pages/Overview";
 import { AppsPage } from "@/pages/AppsPage";
 import { ActivityLogPage } from "@/pages/ActivityLogPage";
 import { HourlyPatternsPage } from "@/pages/HourlyPatternsPage";
-import { PlaceholderPage } from "@/pages/Placeholder";
-import { PAGE_TITLES, type NavId } from "@/lib/nav";
+import { CategoriesPage } from "@/pages/CategoriesPage";
+import { WebPage } from "@/pages/WebPage";
+import { usePage, type PageId } from "@/context/PageContext";
+import { useHotkey } from "@/hooks/useHotkey";
 
 function App() {
   // Lock dark theme for now; theme-following is a later concern.
@@ -14,25 +17,50 @@ function App() {
     document.documentElement.classList.add("dark");
   }, []);
 
-  const [view, setView] = useState<NavId>("overview");
+  const { page, back } = usePage();
+
+  useHotkey({ key: "Escape", preventDefault: false, skipInInputs: true }, () => {
+    if (page !== "overview") back();
+  });
 
   return (
-    <div className="grid grid-cols-[232px_1fr] h-screen w-screen overflow-hidden">
-      <Sidebar active={view} onSelect={setView} />
-      <main className="grid grid-rows-[auto_1fr] min-w-0 min-h-0 bg-background">
-        <Topbar pageTitle={PAGE_TITLES[view]} />
-        <div className="overflow-y-auto px-[14px] pt-[12px] pb-[20px] flex flex-col gap-[10px]">
-          {view === "overview" && <OverviewPage />}
-          {view === "apps" && <AppsPage />}
-          {view === "activity" && <ActivityLogPage />}
-          {view === "hourly" && <HourlyPatternsPage />}
-          {view !== "overview" &&
-            view !== "apps" &&
-            view !== "activity" &&
-            view !== "hourly" && <PlaceholderPage id={view} />}
-        </div>
+    <div className="grid h-screen w-screen grid-rows-[auto_1fr] overflow-hidden bg-background">
+      <Topbar />
+      <main className="flex min-h-0 min-w-0 flex-col gap-2.5 overflow-y-auto px-3.5 pb-5 pt-3">
+        <PageOutlet page={page} />
       </main>
+      <CommandPalette />
     </div>
+  );
+}
+
+function PageOutlet({ page }: { page: PageId }) {
+  switch (page) {
+    case "overview":   return <OverviewPage />;
+    case "apps":       return <AppsPage />;
+    case "activity":   return <ActivityLogPage />;
+    case "hourly":     return <HourlyPatternsPage />;
+    case "categories": return <CategoriesPage />;
+    case "web":        return <WebPage />;
+    case "settings":   return <SettingsPlaceholder />;
+  }
+}
+
+function SettingsPlaceholder() {
+  return (
+    <Card size="sm">
+      <CardHeader>
+        <CardTitle>Settings</CardTitle>
+        <CardDescription>
+          Tracking, category rules, and general preferences live here.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <div className="py-10 text-center text-muted-foreground">
+          Phase 4 — not built yet.
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 

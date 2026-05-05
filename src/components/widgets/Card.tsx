@@ -1,26 +1,21 @@
-/**
- * Pulse widget card. Mirrors databuddy's `DataTable` shape:
- *   <Card>
- *     <Toolbar title description action />
- *     [optional Tabs]
- *     <Body>{children}</Body>
- *   </Card>
- *
- * Outer wrapper is the bordered shell; the body slot is rendered as-is so
- * widgets can opt in or out of the recessed list pattern (`<ListBody>`
- * below) per their content.
- */
-
 import type { ReactNode } from "react";
+import {
+  Card,
+  CardAction,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 
-interface CardProps {
+interface WidgetCardProps {
   title: string;
   description?: ReactNode;
   action?: ReactNode;
   bodyClassName?: string;
   className?: string;
-  children: ReactNode;  
+  children: ReactNode;
 }
 
 export function WidgetCard({
@@ -30,36 +25,21 @@ export function WidgetCard({
   bodyClassName,
   className,
   children,
-}: CardProps) {
+}: WidgetCardProps) {
   return (
-    <section
-      className={cn(
-        "bg-card border border-border rounded-[var(--radius-lg)] overflow-hidden flex flex-col min-w-0",
-        className,
-      )}
-    >
-      <header className="px-[14px] py-[10px] flex items-start justify-between gap-[12px] border-b border-border">
-        <div className="min-w-0">
-          <div className="font-semibold text-[13px] text-foreground tracking-tight">
-            {title}
-          </div>
-          {description && (
-            <div className="text-[11.5px] text-muted-foreground mt-[2px]">
-              {description}
-            </div>
-          )}
-        </div>
-        {action && <div className="shrink-0">{action}</div>}
-      </header>
-      <div className={cn("p-[10px]", bodyClassName)}>{children}</div>
-    </section>
+    <Card size="sm" className={cn("h-full", className)}>
+      <CardHeader className="border-b">
+        <CardTitle>{title}</CardTitle>
+        {description ? <CardDescription>{description}</CardDescription> : null}
+        {action ? <CardAction>{action}</CardAction> : null}
+      </CardHeader>
+      <CardContent className={cn("flex-1 min-h-0", bodyClassName)}>
+        {children}
+      </CardContent>
+    </Card>
   );
 }
 
-/**
- * Recessed list body — `bg-background p-1 rounded-md`, with pill rows inside.
- * Children should be `<ListRow>` siblings.
- */
 export function ListBody({
   children,
   className,
@@ -70,7 +50,7 @@ export function ListBody({
   return (
     <div
       className={cn(
-        "bg-background rounded-[var(--radius-md)] p-[4px] flex flex-col gap-[2px]",
+        "flex flex-col gap-0.5 rounded-md bg-background p-1",
         className,
       )}
     >
@@ -79,14 +59,10 @@ export function ListBody({
   );
 }
 
-/**
- * Single pill row inside a `<ListBody>`. Use the `cols` prop with a Tailwind
- * grid template (e.g. `"9px_1fr_auto_auto"`).
- */
 export function ListRow({
   cols = "9px_1fr_auto_auto",
   className,
-  title: rowTitle,
+  title,
   children,
 }: {
   cols?: string;
@@ -96,9 +72,9 @@ export function ListRow({
 }) {
   return (
     <div
-      title={rowTitle}
+      title={title}
       className={cn(
-        "bg-muted/30 hover:bg-muted/60 rounded-[var(--radius-sm)] transition-colors px-[10px] py-[6px] grid items-center gap-[10px]",
+        "grid items-center gap-2.5 rounded-sm bg-muted/30 px-2.5 py-1.5 transition-colors hover:bg-muted/60",
         className,
       )}
       style={{ gridTemplateColumns: cols.replace(/_/g, " ") }}

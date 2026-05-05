@@ -3,21 +3,29 @@
  * Each row shows a per-hour sparkline + percent of total active time.
  */
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ListBody, ListRow, WidgetCard } from "@/components/widgets/Card";
 import { Sparkline } from "@/components/Sparkline";
+import { Input } from "@/components/ui/input";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useTopApps, useCategorizedEvents } from "@/hooks/useAw";
 import { fmtDuration, fmtPercent } from "@/lib/format";
 import { categoryColor, categoryLabel } from "@/lib/category-colors";
+import { usePage } from "@/context/PageContext";
 
 type SortKey = "duration" | "name";
 
 export function AppsPage() {
   const { data: apps } = useTopApps();
   const { data: categorized } = useCategorizedEvents();
+  const { filter } = usePage();
 
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(filter?.app ?? "");
   const [sort, setSort] = useState<SortKey>("duration");
+
+  useEffect(() => {
+    if (filter?.app) setQuery(filter.app);
+  }, [filter?.app]);
 
   const sparkByApp = useMemo(() => {
     const out = new Map<string, number[]>();
@@ -64,25 +72,34 @@ export function AppsPage() {
       title="Apps"
       description={`${apps?.length ?? 0} unique apps · ${fmtDuration(total)} active total`}
       action={
-        <div className="flex items-center gap-[8px]">
-          <input
+        <div className="flex items-center gap-2">
+          <Input
             type="text"
             placeholder="Search apps…"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            className="bg-card border border-border rounded-[var(--radius-sm)] px-[10px] py-[5px] text-[12px] w-[200px] focus:outline-none focus:ring-1 focus:ring-ring placeholder:text-muted-foreground"
+            className="w-48"
           />
-          <SortToggle value={sort} onChange={setSort} />
+          <ToggleGroup
+            type="single"
+            size="sm"
+            value={sort}
+            onValueChange={(v) => v && setSort(v as SortKey)}
+            aria-label="Sort"
+          >
+            <ToggleGroupItem value="duration">Time</ToggleGroupItem>
+            <ToggleGroupItem value="name">Name</ToggleGroupItem>
+          </ToggleGroup>
         </div>
       }
     >
       {rows.length === 0 ? (
-        <div className="text-muted-foreground text-[12px] py-[24px] text-center">
+        <div className="py-6 text-center text-muted-foreground">
           {query ? `no apps match "${query}"` : "no apps tracked yet"}
         </div>
       ) : (
         <ListBody>
-          <div className="grid grid-cols-[9px_1.4fr_1fr_56px_60px_70px] gap-[10px] px-[10px] pt-[2px] pb-[6px] text-[10px] tracking-[0.13em] uppercase text-muted-foreground font-medium">
+          <div className="grid grid-cols-[9px_1.4fr_1fr_56px_60px_70px] gap-2.5 px-2.5 pt-0.5 pb-1.5 text-[0.625rem] font-medium uppercase tracking-wider text-muted-foreground">
             <span></span>
             <span>App</span>
             <span>Category</span>
@@ -95,18 +112,18 @@ export function AppsPage() {
             return (
               <ListRow key={r.app} cols="9px_1.4fr_1fr_56px_60px_70px">
                 <span
-                  className="w-[8px] h-[8px] rounded-[2px]"
+                  className="size-2 rounded-sm"
                   style={{ background: color }}
                 />
-                <span className="font-medium text-[12.5px] truncate">{r.app}</span>
-                <span className="text-[11.5px] text-muted-foreground truncate">
+                <span className="truncate font-medium">{r.app}</span>
+                <span className="truncate text-muted-foreground">
                   {categoryLabel(r.category)}
                 </span>
                 <Sparkline values={r.spark} color={color} width={56} height={14} />
-                <span className="mono text-muted-foreground text-[11.5px] text-right">
+                <span className="text-right font-mono tabular-nums text-muted-foreground">
                   {fmtPercent(r.pct, 1)}
                 </span>
-                <span className="mono text-foreground text-[11.5px] text-right">
+                <span className="text-right font-mono tabular-nums text-foreground">
                   {fmtDuration(r.duration)}
                 </span>
               </ListRow>
@@ -115,38 +132,5 @@ export function AppsPage() {
         </ListBody>
       )}
     </WidgetCard>
-  );
-}
-
-function SortToggle({
-  value,
-  onChange,
-}: {
-  value: SortKey;
-  onChange: (v: SortKey) => void;
-}) {
-  const options: { id: SortKey; label: string }[] = [
-    { id: "duration", label: "Time" },
-    { id: "name", label: "Name" },
-  ];
-  return (
-    <div className="inline-flex border border-border rounded-[var(--radius-sm)] overflow-hidden bg-card">
-      {options.map((o, i) => (
-        <button
-          key={o.id}
-          type="button"
-          onClick={() => onChange(o.id)}
-          className={
-            "px-[10px] py-[5px] text-[11px] cursor-pointer " +
-            (i < options.length - 1 ? "border-r border-border " : "") +
-            (value === o.id
-              ? "bg-secondary text-foreground"
-              : "text-muted-foreground hover:text-foreground hover:bg-accent")
-          }
-        >
-          {o.label}
-        </button>
-      ))}
-    </div>
   );
 }

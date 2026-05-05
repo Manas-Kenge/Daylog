@@ -13,6 +13,7 @@ import {
   YAxis,
 } from "recharts";
 import { WidgetCard } from "./Card";
+import { Skeleton } from "@/components/ui/skeleton";
 import { useHourlyTodayVsYesterday } from "@/hooks/useAw";
 import { fmtDuration } from "@/lib/format";
 
@@ -42,6 +43,9 @@ export function HourlyDistribution() {
       }
     >
       <div className="h-[120px] w-full">
+        {today.isLoading ? (
+          <Skeleton className="h-full w-full rounded-sm" />
+        ) : (
         <ResponsiveContainer width="100%" height="100%">
           <ComposedChart
             data={data}
@@ -75,8 +79,8 @@ export function HourlyDistribution() {
                 if (!active || !payload?.length) return null;
                 const row = payload[0].payload as ChartRow;
                 return (
-                  <div className="rounded-[var(--radius)] border border-border bg-popover p-2 shadow-lg text-[11px]">
-                    <div className="mono text-foreground font-medium mb-1">
+                  <div className="rounded-md border bg-popover p-2 shadow-lg">
+                    <div className="mb-1 font-mono tabular-nums font-medium text-foreground">
                       {String(row.hour).padStart(2, "0")}:00
                     </div>
                     <div className="flex items-center gap-2">
@@ -85,12 +89,16 @@ export function HourlyDistribution() {
                         style={{ background: "var(--chart-1)" }}
                       />
                       <span className="text-muted-foreground">today</span>
-                      <span className="mono ml-auto font-medium">{fmtDuration(row.today)}</span>
+                      <span className="ml-auto font-mono tabular-nums font-medium">
+                        {fmtDuration(row.today)}
+                      </span>
                     </div>
-                    <div className="flex items-center gap-2 mt-0.5">
+                    <div className="mt-0.5 flex items-center gap-2">
                       <span className="size-2 rounded-full bg-muted-foreground" />
                       <span className="text-muted-foreground">yest</span>
-                      <span className="mono ml-auto font-medium">{fmtDuration(row.yesterday)}</span>
+                      <span className="ml-auto font-mono tabular-nums font-medium">
+                        {fmtDuration(row.yesterday)}
+                      </span>
                     </div>
                   </div>
                 );
@@ -114,6 +122,7 @@ export function HourlyDistribution() {
             />
           </ComposedChart>
         </ResponsiveContainer>
+        )}
       </div>
     </WidgetCard>
   );

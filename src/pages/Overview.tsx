@@ -1,38 +1,26 @@
 /**
- * Overview · the original dashboard composition. Each row composes one or
- * more widgets at full width.
+ * Overview · the v0.1 dashboard. Five widgets, three rows, no scroll at
+ * 1280×800 (per PLAN §5):
+ *   Row 1 — KpiStrip (5-up tray)
+ *   Row 2 — Timeline (full-width hero)
+ *   Row 3 — TopApps | TopCategories | CurrentFocus (equal-height columns)
  */
 
 import { KpiStrip } from "@/components/widgets/KpiStrip";
 import { Timeline } from "@/components/widgets/Timeline";
-import { HourlyDistribution } from "@/components/widgets/HourlyDistribution";
 import { TopApps } from "@/components/widgets/TopApps";
 import { TopCategories } from "@/components/widgets/TopCategories";
-import { WeekChart } from "@/components/widgets/WeekChart";
 import { CurrentFocus } from "@/components/widgets/CurrentFocus";
-import { WebPanel } from "@/components/widgets/WebPanel";
-import { ActivityLog } from "@/components/widgets/ActivityLog";
 
 export function OverviewPage() {
   return (
     <>
       <KpiStrip />
       <Timeline />
-
-      <section className="grid grid-cols-[1.3fr_1fr_1fr] gap-[10px] min-w-0">
-        <HourlyDistribution />
+      <section className="grid min-w-0 flex-1 grid-cols-3 items-stretch gap-2.5">
         <TopApps />
         <TopCategories />
-      </section>
-
-      <section className="grid grid-cols-[1.6fr_1fr] gap-[10px] min-w-0">
-        <WeekChart />
         <CurrentFocus />
-      </section>
-
-      <section className="grid grid-cols-[1.6fr_1fr] gap-[10px] min-w-0">
-        <WebPanel />
-        <ActivityLog />
       </section>
     </>
   );

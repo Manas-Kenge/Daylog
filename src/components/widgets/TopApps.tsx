@@ -5,15 +5,17 @@
 
 import { ListBody, ListRow, WidgetCard } from "./Card";
 import { Sparkline } from "@/components/Sparkline";
+import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
 import { useTopApps, useCategorizedEvents } from "@/hooks/useAw";
 import { fmtDuration } from "@/lib/format";
 import { categoryColor } from "@/lib/category-colors";
 import { useMemo } from "react";
 
-const TAKE = 8;
+const TAKE = 12;
 
 export function TopApps() {
-  const { data: apps } = useTopApps();
+  const { data: apps, isLoading } = useTopApps();
   const { data: categorized } = useCategorizedEvents();
 
   const sparkByApp = useMemo(() => {
@@ -45,12 +47,14 @@ export function TopApps() {
       title="Top apps"
       description="By active time"
       action={
-        <span className="mono text-[10.5px] text-muted-foreground tracking-[0.13em] uppercase">
+        <Badge variant="outline" className="font-mono tabular-nums uppercase">
           {top.length} of {apps?.length ?? 0}
-        </span>
+        </Badge>
       }
     >
-      {top.length === 0 ? (
+      {isLoading ? (
+        <SkeletonRows cols="9px_1fr_56px_60px" />
+      ) : top.length === 0 ? (
         <Empty>no apps tracked yet</Empty>
       ) : (
         <ListBody>
@@ -61,12 +65,12 @@ export function TopApps() {
             return (
               <ListRow key={app} cols="9px_1fr_56px_60px">
                 <span
-                  className="w-[8px] h-[8px] rounded-[2px]"
+                  className="size-2 rounded-sm"
                   style={{ background: color }}
                 />
-                <span className="font-medium text-[12.5px] truncate">{app}</span>
+                <span className="truncate font-medium">{app}</span>
                 <Sparkline values={spark} color={color} width={56} height={14} />
-                <span className="mono text-muted-foreground text-[11.5px] text-right">
+                <span className="text-right font-mono tabular-nums text-muted-foreground">
                   {fmtDuration(row.duration)}
                 </span>
               </ListRow>
@@ -80,8 +84,21 @@ export function TopApps() {
 
 function Empty({ children }: { children: React.ReactNode }) {
   return (
-    <div className="text-muted-foreground text-[12px] py-[16px] text-center">
-      {children}
-    </div>
+    <div className="py-4 text-center text-muted-foreground">{children}</div>
+  );
+}
+
+function SkeletonRows({ cols, rows = 8 }: { cols: string; rows?: number }) {
+  return (
+    <ListBody>
+      {Array.from({ length: rows }, (_, i) => (
+        <ListRow key={i} cols={cols}>
+          <Skeleton className="size-2 rounded-sm" />
+          <Skeleton className="h-3 w-3/4" />
+          <Skeleton className="h-3 w-full" />
+          <Skeleton className="h-3 w-12 justify-self-end" />
+        </ListRow>
+      ))}
+    </ListBody>
   );
 }
