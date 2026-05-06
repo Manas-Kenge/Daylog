@@ -614,9 +614,47 @@ Skipping or failing the wizard puts the dashboard into a degraded state with a b
 
 We never delete `~/.local/share/activitywatch/` automatically — that's the user's tracking history, not ours to remove. Documented in README and shown as a toast on uninstall confirmation.
 
-**5g. CI build matrix.**
+**5g. CI build matrix + container-based distro smoke tests.**
 
-`.github/workflows/release.yml` produces three artifacts per release: `x86_64` × `[appimage, deb, rpm]`. Build on `ubuntu-22.04` (oldest libwebkit2gtk-4.1; runs everywhere newer). Cache `~/.cache/pulse/binaries/` keyed by `hashFiles('scripts/binaries.lock')` so unchanged versions don't re-download. aarch64 builds are deferred to v0.2 since both upstream binaries are x86_64-only today; revisiting will require source builds in CI.
+Two GitHub Actions workflows. Both target `ubuntu-22.04` for the build host (oldest libwebkit2gtk-4.1; binaries with glibc 2.35 run on every supported desktop distro).
+
+`.github/workflows/ci.yml` (push to master + every PR): one job, ~10 min with caching. Runs `cargo check` + `cargo test`, `bunx tsc --noEmit`, `bun run build`, and a full release `tauri build`. The release build catches packaging regressions before merge so we never discover them on tag push.
+
+`.github/workflows/release.yml` (push of `v*.*.*` tag; also `workflow_dispatch` for dry-runs). Three stages:
+
+1. **Build** (one job on `ubuntu-22.04`) — produces `.AppImage`, `.deb`, `.rpm` (all x86_64). Caches `~/.cache/pulse/binaries/` keyed by `hashFiles('scripts/binaries.lock')` so unchanged upstream versions don't re-download.
+
+2. **Smoke matrix** (9 parallel container jobs):
+
+   | Tier | Jobs | Containers | Verifies |
+   |---|---|---|---|
+   | **Hard-fail** | `smoke-deb` × 3 | `ubuntu:22.04`, `ubuntu:24.04`, `debian:12` | `apt install ./*.deb` resolves deps cleanly + `pulse --help` runs |
+   | **Hard-fail** | `smoke-rpm-fedora` | `fedora:41` | `dnf install ./*.rpm` + `pulse --help` |
+   | **Hard-fail** | `smoke-rpm-opensuse` | `opensuse/tumbleweed` | `zypper install` + `pulse --help` |
+   | **Hard-fail** | `smoke-appimage` × 5 | `ubuntu:24.04`, `debian:12`, `fedora:41`, `archlinux:latest`, `opensuse/tumbleweed` | `APPIMAGE_EXTRACT_AND_RUN=1 ./*.AppImage --help` |
+   | **Informational** (`continue-on-error`) | `smoke-appimage-void` | `voidlinux/void-glibc-full` | Confirms AppImage runs on a non-systemd distro |
+   | **Informational** (expected fail) | `smoke-appimage-alpine` | `alpine:latest` | Catches the day Alpine becomes glibc-compatible — emits `::warning::` if it ever passes |
+
+3. **Release job** (gated on all hard-fail smoke jobs; only runs on tag refs) — downloads artifacts, creates GitHub Release via `softprops/action-gh-release@v2` with auto-generated notes.
+
+**Distro coverage by inheritance** — explicit container coverage covers ~35+ derivatives without separate jobs:
+
+| Tested in CI | Covers (via shared base) |
+|---|---|
+| `ubuntu:22.04` / `24.04` | Linux Mint, Pop!_OS, Zorin, elementary OS, KDE Neon, Kubuntu/Xubuntu/Lubuntu, Tuxedo OS, Deepin, Raspberry Pi OS |
+| `debian:12` | Devuan, Kali, MX Linux |
+| `fedora:41` | Rocky Linux, AlmaLinux, RHEL, CentOS Stream, Mageia, Nobara |
+| `opensuse/tumbleweed` | openSUSE Leap |
+| `archlinux:latest` | Manjaro, EndeavourOS, **Omarchy**, Garuda, ArcoLinux |
+| `voidlinux` | Void, Artix |
+
+What CI **cannot** test (deferred to manual VM smoke per Phase 6 exit criteria):
+- The Tauri WebKit window opening — needs a display server.
+- The wizard flow end-to-end.
+- systemd user services actually starting (most containers strip systemd).
+- `gnome-extensions install` running against real GNOME Shell.
+
+aarch64 builds are deferred to v0.2 since both upstream binaries are x86_64-only today; adding aarch64 will require source builds in CI.
 
 **Exit criteria:**
 - AppImage launched on a fresh **Ubuntu 24.04**, **Fedora 41**, and **Arch (current)** VM: wizard succeeds, dashboard shows real data within 30s, tracking continues after closing the Pulse window, and is running again automatically after a logout/login cycle.
@@ -626,23 +664,21 @@ We never delete `~/.local/share/activitywatch/` automatically — that's the use
 - "Pause tracking" toggle in Settings stops awatcher within 1s; "Resume" restarts it; aw-server stays up either way.
 - `apt remove pulse` / `dnf remove pulse` cleanly stop and disable services; `~/.local/share/activitywatch/` is preserved.
 
-### Phase 6 — Distribution (1 weekend)
+### Phase 6 — Release polish + manual VM smoke tests (1 weekend)
 
-CI, release artifacts, README polish.
+The CI/release pipeline itself shipped in Phase 5g; what's left is the polish that turns "the pipeline works" into "we can tag v0.1.0 with confidence":
 
-- GitHub Actions workflow `.github/workflows/release.yml`:
-  - Trigger: push of `v*.*.*` tag.
-  - Runs on `ubuntu-22.04` (LTS — broadest libwebkit2gtk-4.1 compat at runtime).
-  - Build matrix: `x86_64` × `[appimage, deb, rpm]` — three artifacts per release. (aarch64 deferred to v0.2; see Phase 5g.)
-  - Steps: install build deps (Phase 0 list), run `scripts/fetch-binaries.sh`, `bun install`, `bun run tauri build`, upload all three artifacts to a GitHub Release.
-- `README.md` gets: install matrix (`AppImage` as the headline, `.deb` / `.rpm` as alternatives), animated GIF of the wizard + dashboard, screenshot, "Pulse bundles ActivityWatch — no other install required" callout, "Existing AW user? Pulse will detect and use your install" note, "Tracking runs in the background like Screen Time — close Pulse anytime" note.
-- Smoke-test the released artifacts on clean Ubuntu 24.04, Fedora 41, Arch, and Void VMs before announcing (Distrobox or full VM):
-  - AppImage on all four.
-  - `.deb` on Ubuntu via `dpkg -i`.
-  - `.rpm` on Fedora via `dnf install`.
-- Tag `v0.1.0` only after every smoke test passes.
+- **README polish.** Animated GIF of the wizard + dashboard. Screenshot of the dashboard with the palette open mid-typing. "Pulse bundles ActivityWatch — no other install required" callout. "Existing AW user? Pulse detects and uses your install" note. "Tracking runs in the background like Screen Time — close Pulse anytime" note. The `Supported Linux distros` table is already in the README from 5g.
+- **License attribution.** `THIRD-PARTY-NOTICES.md` crediting ActivityWatch (MPL-2.0) and awatcher (MPL-2.0). About dialog references it.
+- **Manual VM smoke tests.** Container CI proves the artifact installs and the binary runs; it can't exercise the full UI flow because containers don't have a display server. Before tagging v0.1.0, smoke-test on real VMs (Distrobox or full VM):
+  - **Ubuntu 24.04** — AppImage and `.deb` paths. Wizard → dashboard within 60s. Close window, wait 2 min, reopen — new events show up.
+  - **Fedora 41** — AppImage and `.rpm` paths. Same flow.
+  - **Arch (current)** — AppImage. Same flow.
+  - **Void Linux** — AppImage. Confirms XDG-autostart fallback installs and the supervisor stays alive.
+- **Tag v0.1.0** only after every VM smoke test passes. The release.yml workflow does the rest (matrix → GitHub Release).
+- **Announce** on r/ActivityWatch, r/linux, HN Show.
 
-**Exit criteria:** a complete stranger on any of the four test distros can download one AppImage, double-click it, and get a working dashboard with their data in under 60 seconds — and tracking keeps running after they close the window.
+**Exit criteria:** a stranger on any of the four test distros can download one AppImage, double-click it, and get a working dashboard with their data in under 60 seconds — and tracking keeps running after they close the window.
 
 ---
 
@@ -796,11 +832,15 @@ pulse/
 ├── scripts/
 │   ├── fetch-binaries.sh         ← download AW binaries at build time (POSIX bash)
 │   ├── bump-binary.sh            ← one-liner to bump a version + recompute sha256
-│   └── binaries.lock             ← pinned versions + sha256, all targets
+│   ├── binaries.lock             ← pinned versions + sha256, all targets
+│   ├── postinst.sh               ← .deb/.rpm post-install hook (try-restart per user)
+│   └── prerm.sh                  ← .deb/.rpm pre-remove hook (stop services per user)
 └── .github/
     ├── renovate.json             ← auto-PR upstream binary releases
     └── workflows/
-        └── release.yml           ← Phase 6 (matrix: 2 archs × 3 formats)
+        ├── ci.yml                ← Phase 5g (push/PR: cargo + tsc + tauri build)
+        └── release.yml           ← Phase 5g (tag: build + 9-distro smoke matrix
+                                                    + GitHub Release upload)
 ```
 
 ---
@@ -851,7 +891,9 @@ pulse/
 - [ ] `pulse --uninstall-tracking` (AppImage path) cleanly disables and stops both services.
 - [ ] All Rust tests pass; all Vitest tests pass.
 - [ ] `bun run tauri build` produces working `.AppImage`, `.deb`, and `.rpm` for `x86_64`.
-- [ ] GitHub Actions release workflow produces all three artifacts on tag push.
+- [ ] `.github/workflows/ci.yml` is green on master and on every PR (cargo check, tests, frontend build, full release `tauri build`).
+- [ ] `.github/workflows/release.yml` produces all three artifacts on tag push and uploads them to a GitHub Release.
+- [ ] All hard-fail smoke jobs in the release matrix pass: `smoke-deb` (ubuntu:22.04 / 24.04 / debian:12), `smoke-rpm-fedora` (fedora:41), `smoke-rpm-opensuse` (opensuse/tumbleweed), `smoke-appimage` (ubuntu:24.04 / debian:12 / fedora:41 / archlinux:latest / opensuse/tumbleweed).
 - [ ] README: screenshot of the dashboard with the palette open mid-typing, AppImage install one-liner (with `.deb` / `.rpm` alternatives), GIF of wizard, "Pulse bundles ActivityWatch" callout, "Tracking runs in the background like Screen Time" note, "Press ⌘K" hint.
 - [ ] Smoke-tested on clean Ubuntu 24.04, Fedora 41, Arch, and Void VMs: download AppImage → `chmod +x` → double-click → dashboard within 60s; `⌘K` → `yesterday` → reflects yesterday's data within 10s; close window, wait 2 minutes, reopen — new events show up.
 - [ ] License attribution: ActivityWatch (MPL-2.0) and awatcher (MPL-2.0) credited in About dialog and `THIRD-PARTY-NOTICES.md`.
