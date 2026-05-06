@@ -1,14 +1,17 @@
 /**
  * Month page · GitHub-style contribution heatmap of daily active total.
  *
- * Trailing 30 days laid out as 5 weekly columns × 7 weekday rows, with
- * fixed 14×14 cells (no more aspect-square explosion). Day-of-week
- * labels on the left, month labels above when a column starts a new
- * month. Today is the most-recent populated cell, highlighted.
+ * Trailing year laid out as ~53 weekly columns × 7 weekday rows, with
+ * fixed 14×14 cells. Month labels above the first column of each month;
+ * weekday labels (Mon/Wed/Fri) on the left. Today is the most-recent
+ * populated cell, highlighted. Days with no activity are left uncolored
+ * so the eye picks up only days with real data.
  *
- * Pulls one `awAfkSummary(DaysAgo(n))` per day. AW is local so 30
- * parallel queries finish well under 100ms; past-day queries dedupe
- * with whatever the topbar / WeekPage / KpiStrip already cached.
+ * Pulls one `awAfkSummary(DaysAgo(n))` per day. Past-day queries dedupe
+ * across pages via the shared `aw_afk_summary_daysago` key, so reopening
+ * MonthPage after WeekPage/topbar pre-warmed the cache is instant.
+ * TODO: consolidate into one Rust command (`aw_daily_active_seconds`)
+ * to drop 365 IPC roundtrips to one.
  */
 
 import { useMemo } from "react";
@@ -24,11 +27,11 @@ import { awAfkSummary } from "@/lib/aw";
 import { DaysAgo, LastNDays } from "@/lib/aw-types";
 import { fmtDuration } from "@/lib/format";
 
-const DAYS = 30;
-const MONTH_RANGE = LastNDays(DAYS);
+const DAYS = 365;
+const MONTH_RANGE = LastNDays(30);
 const PAST_DAY_STALE_MS = 5 * 60_000;
 
-const CELL_PX = 14;
+const CELL_PX = 10;
 const GAP_PX = 3;
 
 const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
@@ -112,14 +115,37 @@ export function MonthPage() {
   const total = cells.reduce((a, c) => a + c.activeSec, 0);
   const maxActive = Math.max(1, ...cells.map((c) => c.activeSec));
 
+  // First 30 entries (n=0..29) = trailing month — same window as the
+  // TopApps/TopCategories/WebPanel grid below. Stats reuse data already
+  // fetched for the heatmap.
+  const monthStats = useMemo(() => {
+    const m = cells.slice(0, 30);
+    const sum = m.reduce((a, c) => a + c.activeSec, 0);
+    const activeDayCount = m.filter((c) => c.activeSec > 0).length;
+    const avg = activeDayCount > 0 ? sum / activeDayCount : 0;
+    let best: DayCell | null = null;
+    for (const c of m) {
+      if (c.activeSec > 0 && (!best || c.activeSec > best.activeSec)) best = c;
+    }
+    // Trailing-edge streak: consecutive active days starting from today.
+    let streak = 0;
+    for (const c of m) {
+      if (c.activeSec > 0) streak++;
+      else break;
+    }
+    return { total: sum, activeDayCount, avg, best, streak };
+  }, [cells]);
+
   return (
     <>
+    <div className="flex min-w-0 flex-wrap items-stretch gap-2.5">
+    <div className="min-w-0 flex-none">
     <WidgetCard
       title="Daily activity"
       description="Active time per day, GitHub-style"
       action={
         <Badge variant="outline" className="font-mono tabular-nums uppercase">
-          {fmtDuration(total)} · {DAYS}-day window
+          {fmtDuration(total)} · last year
         </Badge>
       }
     >
@@ -188,6 +214,18 @@ export function MonthPage() {
         </div>
       )}
     </WidgetCard>
+    </div>
+    <div className="min-w-0 flex-1">
+      <ThisMonthCard
+        loading={isLoading}
+        total={monthStats.total}
+        avg={monthStats.avg}
+        activeDays={monthStats.activeDayCount}
+        best={monthStats.best}
+        streak={monthStats.streak}
+      />
+    </div>
+    </div>
 
     <section className="grid min-w-0 grid-cols-3 items-start gap-2.5">
       <TopApps
@@ -216,18 +254,98 @@ function Cell({ cell, max }: { cell: DayCell | null; max: number }) {
   if (!cell) {
     return <div className="rounded-sm" style={baseStyle} />;
   }
+  const hasData = cell.activeSec > 0;
   const intensity = max > 0 ? Math.min(1, cell.activeSec / max) : 0;
-  const bg =
-    cell.activeSec === 0
-      ? "var(--secondary)"
-      : `color-mix(in oklab, var(--chart-1) ${Math.round(intensity * 100)}%, transparent)`;
+  const bg = hasData
+    ? `color-mix(in oklab, var(--chart-1) ${Math.round(intensity * 100)}%, transparent)`
+    : "transparent";
   const ring = cell.isToday ? "ring-1 ring-foreground/70" : "";
+  const borderClass = hasData ? "border-border/30" : "border-border/15";
   return (
     <div
-      className={`rounded-sm border border-border/30 ${ring}`}
+      className={`rounded-sm border ${borderClass} ${ring}`}
       style={{ ...baseStyle, background: bg }}
       title={`${format(cell.date, "EEE MMM d")} · ${fmtDuration(cell.activeSec)}`}
     />
+  );
+}
+
+function ThisMonthCard({
+  loading,
+  total,
+  avg,
+  activeDays,
+  best,
+  streak,
+}: {
+  loading: boolean;
+  total: number;
+  avg: number;
+  activeDays: number;
+  best: DayCell | null;
+  streak: number;
+}) {
+  return (
+    <WidgetCard
+      title="This month"
+      description="Last 30 days, at a glance"
+      action={
+        <Badge variant="outline" className="font-mono tabular-nums uppercase">
+          {activeDays}/30 active
+        </Badge>
+      }
+    >
+      {loading ? (
+        <Skeleton className="h-32 w-full rounded-sm" />
+      ) : (
+        <dl className="grid grid-cols-1 gap-1.5">
+          <Stat label="Total active" value={fmtDuration(total)} />
+          <Stat
+            label="Daily average"
+            value={activeDays > 0 ? fmtDuration(avg) : "—"}
+            hint={activeDays > 0 ? `over ${activeDays} active days` : undefined}
+          />
+          <Stat
+            label="Best day"
+            value={best ? fmtDuration(best.activeSec) : "—"}
+            hint={best ? format(best.date, "EEE MMM d") : undefined}
+          />
+          <Stat
+            label="Current streak"
+            value={streak > 0 ? `${streak} day${streak === 1 ? "" : "s"}` : "—"}
+            hint={
+              streak === 0
+                ? "no activity today yet"
+                : streak >= 30
+                  ? "all month"
+                  : undefined
+            }
+          />
+        </dl>
+      )}
+    </WidgetCard>
+  );
+}
+
+function Stat({
+  label,
+  value,
+  hint,
+}: {
+  label: string;
+  value: string;
+  hint?: string;
+}) {
+  return (
+    <div className="flex items-baseline justify-between gap-3 rounded-sm bg-muted/30 px-2.5 py-2">
+      <dt className="text-xs text-muted-foreground">{label}</dt>
+      <dd className="flex items-baseline gap-2 text-right">
+        {hint ? (
+          <span className="text-[0.625rem] text-muted-foreground">{hint}</span>
+        ) : null}
+        <span className="font-mono tabular-nums text-sm">{value}</span>
+      </dd>
+    </div>
   );
 }
 
@@ -241,13 +359,13 @@ function Legend({ max }: { max: number }) {
       {[0, 0.2, 0.4, 0.6, 0.8, 1].map((step) => (
         <span
           key={step}
-          className="rounded-sm border border-border/30"
+          className={`rounded-sm border ${step === 0 ? "border-border/15" : "border-border/30"}`}
           style={{
             width: `${CELL_PX}px`,
             height: `${CELL_PX}px`,
             background:
               step === 0
-                ? "var(--secondary)"
+                ? "transparent"
                 : `color-mix(in oklab, var(--chart-1) ${Math.round(step * 100)}%, transparent)`,
           }}
         />

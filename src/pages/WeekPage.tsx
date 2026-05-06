@@ -22,6 +22,7 @@ import {
 } from "recharts";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { FlashIcon } from "@hugeicons/core-free-icons";
+import { Badge } from "@/components/ui/badge";
 import { WidgetCard } from "@/components/widgets/Card";
 import { TopApps } from "@/components/widgets/TopApps";
 import { TopCategories } from "@/components/widgets/TopCategories";
@@ -121,6 +122,30 @@ export function WeekPage() {
     0,
   );
 
+  // "This week" stats. Calendar-week (Mon–Sun); future days are skipped
+  // so the average reflects elapsed days, not the whole week.
+  const weekStats = useMemo(() => {
+    const elapsed = rows.filter((r) => !r.isFuture);
+    const dayTotals = elapsed.map((r) => ({
+      day: r.day,
+      dateLabel: r.dateLabel as string,
+      hours: roots.reduce((a, root) => a + (r[root] as number), 0),
+    }));
+    const total = dayTotals.reduce((a, d) => a + d.hours, 0);
+    const daysElapsed = elapsed.length;
+    const activeDays = dayTotals.filter((d) => d.hours > 0).length;
+    const avg = daysElapsed > 0 ? total / daysElapsed : 0;
+    const best = dayTotals.reduce<{
+      day: string;
+      dateLabel: string;
+      hours: number;
+    } | null>(
+      (b, d) => (d.hours > 0 && (!b || d.hours > b.hours) ? d : b),
+      null,
+    );
+    return { total, avg, daysElapsed, activeDays, best };
+  }, [rows, roots]);
+
   // Highest Work day this week. Pulse is observational so we describe
   // facts ("highest"), not value judgments ("strongest").
   const highestWork = rows.reduce<{ day: string; dateLabel: string; hours: number } | null>(
@@ -137,6 +162,8 @@ export function WeekPage() {
 
   return (
     <>
+      <div className="flex min-w-0 flex-wrap items-stretch gap-2.5">
+      <div className="min-w-0 flex-1">
       <WidgetCard
         title="7-Day Activity Breakdown"
         description="Stacked by category · hours"
@@ -209,6 +236,18 @@ export function WeekPage() {
           </div>
         )}
       </WidgetCard>
+      </div>
+      <div className="min-w-0 w-full md:w-80 lg:w-96">
+        <ThisWeekCard
+          loading={isLoading}
+          total={weekStats.total}
+          avg={weekStats.avg}
+          activeDays={weekStats.activeDays}
+          daysElapsed={weekStats.daysElapsed}
+          best={weekStats.best}
+        />
+      </div>
+      </div>
 
       <section className="grid min-w-0 grid-cols-3 items-start gap-2.5">
         <TopApps
@@ -317,6 +356,74 @@ function EmptyInsight({ children }: { children: React.ReactNode }) {
   return (
     <div className="rounded-md bg-secondary/60 px-3 py-2.5 text-muted-foreground">
       {children}
+    </div>
+  );
+}
+
+function ThisWeekCard({
+  loading,
+  total,
+  avg,
+  activeDays,
+  daysElapsed,
+  best,
+}: {
+  loading: boolean;
+  total: number;
+  avg: number;
+  activeDays: number;
+  daysElapsed: number;
+  best: { day: string; dateLabel: string; hours: number } | null;
+}) {
+  return (
+    <WidgetCard
+      title="This week"
+      description="Mon–Sun, at a glance"
+      action={
+        <Badge variant="outline" className="font-mono tabular-nums uppercase">
+          {activeDays}/{daysElapsed} active
+        </Badge>
+      }
+    >
+      {loading ? (
+        <Skeleton className="h-32 w-full rounded-sm" />
+      ) : (
+        <dl className="grid grid-cols-1 gap-1.5">
+          <Stat label="Total" value={fmtDuration(total * 3600)} />
+          <Stat
+            label="Daily average"
+            value={daysElapsed > 0 ? fmtDuration(avg * 3600) : "—"}
+            hint={daysElapsed > 0 ? `over ${daysElapsed} day${daysElapsed === 1 ? "" : "s"}` : undefined}
+          />
+          <Stat
+            label="Best day"
+            value={best ? fmtDuration(best.hours * 3600) : "—"}
+            hint={best ? `${best.day} · ${best.dateLabel}` : undefined}
+          />
+        </dl>
+      )}
+    </WidgetCard>
+  );
+}
+
+function Stat({
+  label,
+  value,
+  hint,
+}: {
+  label: string;
+  value: string;
+  hint?: string;
+}) {
+  return (
+    <div className="flex items-baseline justify-between gap-3 rounded-sm bg-muted/30 px-2.5 py-2">
+      <dt className="text-xs text-muted-foreground">{label}</dt>
+      <dd className="flex items-baseline gap-2 text-right">
+        {hint ? (
+          <span className="text-[0.625rem] text-muted-foreground">{hint}</span>
+        ) : null}
+        <span className="font-mono tabular-nums text-sm">{value}</span>
+      </dd>
     </div>
   );
 }
