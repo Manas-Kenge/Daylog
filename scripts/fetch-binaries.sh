@@ -55,7 +55,7 @@ fetch_one() {
   resolve "$component" "$version" "$target"
 
   local cached="$CACHE_DIR/$want_sha-$ARCHIVE_NAME"
-  local out="$OUT_DIR/${component}-${target}"
+  local out="$OUT_DIR/${component}"
   local stamp="$out.sha"
 
   # Idempotency check — already extracted with the right archive sha?

@@ -444,7 +444,7 @@ aw-awatcher     v0.3.3   x86_64-unknown-linux-gnu  30b51a94…
 
 **v0.1 is x86_64-Linux only.** Neither upstream publishes aarch64 release artifacts: `aw-server-rust` ships only inside `ActivityWatch/activitywatch`'s linux-x86_64 bundle zip (the `aw-server-rust` repo itself has no GitHub releases at all), and `2e3s/awatcher` ships only `x86_64.zip`. aarch64 (Asahi / Pi / arm laptops) is a v0.2 goal that requires building both from source.
 
-Add `scripts/fetch-binaries.sh` — POSIX bash; deps `curl` + `unzip` + `sha256sum` + `awk`. Reads the lock, downloads the upstream zips, verifies SHA-256 against the lock, extracts the binary we want from each archive, and places it at `src-tauri/binaries/<binary>-<target>` matching Tauri's `externalBin` convention. Cached by archive sha at `~/.cache/pulse/binaries/`; idempotent — re-running with a satisfied lock is a no-op. **No `dpkg-deb`, no `jq`** — script runs on macOS dev machines and any CI runner. Used as a `prebuild` step. Source mapping per component is inline in the script:
+Add `scripts/fetch-binaries.sh` — POSIX bash; deps `curl` + `unzip` + `sha256sum` + `awk`. Reads the lock, downloads the upstream zips, verifies SHA-256 against the lock, extracts the binary we want from each archive, and places it at `src-tauri/binaries/<binary>` for Tauri to bundle as a resource. (No target-triple suffix in the on-disk filename: v0.1 is x86_64-only, so the suffix would just be noise.) Cached by archive sha at `~/.cache/pulse/binaries/`; idempotent — re-running with a satisfied lock is a no-op. **No `dpkg-deb`, no `jq`** — script runs on macOS dev machines and any CI runner. Used as a `prebuild` step. Source mapping per component is inline in the script:
 - `aw-server-rust` → extracted from `activitywatch-<version>-linux-x86_64.zip` (parent bundle).
 - `aw-awatcher` → extracted from `aw-awatcher.zip` (own release).
 
@@ -458,8 +458,9 @@ In `tauri.conf.json`:
   "bundle": {
     "active": true,
     "targets": ["appimage", "deb", "rpm"],
-    "externalBin": ["binaries/aw-server-rust", "binaries/aw-awatcher"],
     "resources": [
+      "binaries/aw-server-rust",
+      "binaries/aw-awatcher",
       "services/pulse-aw-server.service.tmpl",
       "services/pulse-awatcher.service.tmpl",
       "services/pulse-supervisor.sh.tmpl",
@@ -470,7 +471,7 @@ In `tauri.conf.json`:
 }
 ```
 
-`externalBin` causes Tauri to embed the two binaries inside every produced artifact. The Pulse Rust core resolves the actual on-disk path at runtime via `tauri::path::resolve_resource(...)` — never hardcoded.
+The binaries are bundled as `resources` (not `externalBin`) because Pulse never spawns them via `Command::new_sidecar()` — they're owned by systemd / the supervisor, not by Tauri. Resources are accessed at runtime via `app.path().resolve("binaries/aw-server-rust", BaseDirectory::Resource)`, which returns the correct on-disk path inside whatever carrier Pulse is running from (AppImage mount, `/usr/lib/<id>/` for `.deb`/`.rpm`, or `src-tauri/target/...` in dev).
 
 **5b. {BIN_DIR}: where the binaries actually live at runtime.**
 

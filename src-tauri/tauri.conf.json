@@ -31,11 +31,9 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "externalBin": [
-      "binaries/aw-server-rust",
-      "binaries/aw-awatcher"
-    ],
     "resources": [
+      "binaries/aw-server-rust",
+      "binaries/aw-awatcher",
       "services/pulse-aw-server.service.tmpl",
       "services/pulse-awatcher.service.tmpl",
       "services/pulse-supervisor.sh.tmpl",

@@ -2,6 +2,7 @@ mod aggregate;
 mod aw_client;
 mod categories;
 mod time;
+mod tracking;
 
 use aggregate::{
     bucketize_hourly, categorize_events, fetch_afk_events, fetch_window_events, summarize_afk,
@@ -12,6 +13,7 @@ use categories::{CategoryConfig, CategoryError, CategorySummary, Matcher};
 use chrono::{DateTime, Utc};
 use tauri::AppHandle;
 use time::TimeRange;
+use tracking::{BinDir, InstallError};
 
 #[tauri::command]
 async fn aw_info() -> Result<ServerInfo, AwError> {
@@ -162,6 +164,16 @@ async fn aw_top_domains(range: TimeRange) -> Result<Vec<serde_json::Value>, AwEr
 }
 
 #[tauri::command]
+async fn tracking_resolve_bin_dir(app: AppHandle) -> Result<BinDir, InstallError> {
+    tracking::resolve_bin_dir(&app)
+}
+
+#[tauri::command]
+async fn tracking_place_binaries(app: AppHandle) -> Result<BinDir, InstallError> {
+    tracking::place_binaries(&app)
+}
+
+#[tauri::command]
 async fn aw_top_urls(range: TimeRange) -> Result<Vec<serde_json::Value>, AwError> {
     let client = AwClient::new();
     let buckets = client.buckets().await?;
@@ -197,6 +209,8 @@ pub fn run() {
             aw_top_urls,
             categories_get,
             categories_set,
+            tracking_resolve_bin_dir,
+            tracking_place_binaries,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
