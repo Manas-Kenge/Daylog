@@ -13,7 +13,7 @@ use categories::{CategoryConfig, CategoryError, CategorySummary, Matcher};
 use chrono::{DateTime, Utc};
 use tauri::AppHandle;
 use time::TimeRange;
-use tracking::{BinDir, InstallError};
+use tracking::{BinDir, InstallError, LifecycleError, Supervisor, TrackerStatus};
 
 #[tauri::command]
 async fn aw_info() -> Result<ServerInfo, AwError> {
@@ -174,6 +174,42 @@ async fn tracking_place_binaries(app: AppHandle) -> Result<BinDir, InstallError>
 }
 
 #[tauri::command]
+fn tracking_detect_supervisor() -> Supervisor {
+    tracking::detect()
+}
+
+/// Full first-launch install: place binaries → install systemd units (or
+/// XDG autostart) → wait until aw-server answers on :5600.
+#[tauri::command]
+async fn tracking_install_supervisor(app: AppHandle) -> Result<TrackerStatus, LifecycleError> {
+    let bin_dir = tracking::place_binaries(&app)?;
+    tracking::install_supervisor(&app, &bin_dir).await?;
+    tracking::wait_until_live(15).await?;
+    tracking::status(&app).await
+}
+
+#[tauri::command]
+async fn tracking_status(app: AppHandle) -> Result<TrackerStatus, LifecycleError> {
+    tracking::status(&app).await
+}
+
+#[tauri::command]
+async fn tracking_pause(app: AppHandle) -> Result<(), LifecycleError> {
+    tracking::pause(&app).await
+}
+
+#[tauri::command]
+async fn tracking_resume(app: AppHandle) -> Result<(), LifecycleError> {
+    let bin_dir = tracking::resolve_bin_dir(&app)?;
+    tracking::resume(&app, &bin_dir).await
+}
+
+#[tauri::command]
+async fn tracking_stop(app: AppHandle) -> Result<(), LifecycleError> {
+    tracking::stop(&app).await
+}
+
+#[tauri::command]
 async fn aw_top_urls(range: TimeRange) -> Result<Vec<serde_json::Value>, AwError> {
     let client = AwClient::new();
     let buckets = client.buckets().await?;
@@ -211,6 +247,12 @@ pub fn run() {
             categories_set,
             tracking_resolve_bin_dir,
             tracking_place_binaries,
+            tracking_detect_supervisor,
+            tracking_install_supervisor,
+            tracking_status,
+            tracking_pause,
+            tracking_resume,
+            tracking_stop,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
