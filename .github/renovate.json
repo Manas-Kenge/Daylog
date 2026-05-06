@@ -1,0 +1,38 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended", ":dependencyDashboard"],
+  "schedule": ["before 6am on monday"],
+  "labels": ["dependencies"],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "fileMatch": ["^scripts/binaries\\.lock$"],
+      "matchStrings": [
+        "aw-server-rust\\t(?<currentValue>v[\\d.]+)\\t"
+      ],
+      "datasourceTemplate": "github-releases",
+      "depNameTemplate": "ActivityWatch/activitywatch",
+      "extractVersionTemplate": "^(?<version>v[\\d.]+)$"
+    },
+    {
+      "customType": "regex",
+      "fileMatch": ["^scripts/binaries\\.lock$"],
+      "matchStrings": [
+        "aw-awatcher\\t(?<currentValue>v[\\d.]+)\\t"
+      ],
+      "datasourceTemplate": "github-releases",
+      "depNameTemplate": "2e3s/awatcher",
+      "extractVersionTemplate": "^(?<version>v[\\d.]+)$"
+    }
+  ],
+  "packageRules": [
+    {
+      "matchManagers": ["custom.regex"],
+      "commitMessageTopic": "{{depName}}",
+      "commitMessageAction": "bump",
+      "prBodyNotes": [
+        "After merging this version bump, run `scripts/bump-binary.sh {{depName}} {{newValue}}` locally to refresh the SHA-256 in `scripts/binaries.lock`. CI will fail until the SHA matches."
+      ]
+    }
+  ]
+}

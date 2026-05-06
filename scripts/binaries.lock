@@ -1,0 +1,18 @@
+# Pulse bundled binaries — pinned versions and SHA-256 checksums.
+#
+# Format: <component>\t<version>\t<target>\t<archive-sha256>
+# Bump via:  scripts/bump-binary.sh <component> <new-version>
+# Verify via: scripts/fetch-binaries.sh
+#
+# Sources:
+#   aw-server-rust  → extracted from the ActivityWatch/activitywatch
+#                     parent bundle zip (the upstream aw-server-rust
+#                     repo has no own releases at this time)
+#   aw-awatcher     → 2e3s/awatcher release zip
+#
+# v0.1 is x86_64-linux only — neither upstream publishes aarch64
+# release artifacts. aarch64 is a v0.2 goal that requires building
+# from source.
+
+aw-server-rust	v0.13.2	x86_64-unknown-linux-gnu	8f62b10babf8a8f108cbdf7267c02fbc1ce2a970fa9535f230b3416b803e3360
+aw-awatcher	v0.3.3	x86_64-unknown-linux-gnu	30b51a94956e3490d9248a40a8deb6fc7eea9c041a1862ed4c4b23a3e4b633df

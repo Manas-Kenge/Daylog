@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# Pulse tracker supervisor — non-systemd fallback.
+#
+# Runs aw-server-rust + aw-awatcher, restarts either if it dies, and exits
+# when the user's session ends (the parent autostart process is killed).
+# Used on Void / Alpine / Artix / Devuan and any other init that doesn't
+# expose `systemd --user`. On systemd distros, user units are used instead.
+
+set -u
+
+BIN_DIR="{BIN_DIR}"
+LOG_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/pulse"
+mkdir -p "$LOG_DIR"
+LOG_FILE="$LOG_DIR/supervisor.log"
+
+log() {
+  printf '[%s] %s\n' "$(date -Iseconds)" "$*" | tee -a "$LOG_FILE" >&2
+}
+
+trap 'log "supervisor exiting"; kill 0 2>/dev/null || true' EXIT TERM INT
+
+run_loop() {
+  local label="$1" cmd="$2"
+  while true; do
+    log "$label: starting"
+    eval "$cmd" >>"$LOG_FILE" 2>&1 || log "$label: exited $?"
+    sleep 2
+  done
+}
+
+log "supervisor starting (BIN_DIR=$BIN_DIR)"
+run_loop "aw-server-rust" "'$BIN_DIR/aw-server-rust' --port 5600 --testing false" &
+run_loop "aw-awatcher"    "'$BIN_DIR/aw-awatcher'" &
+wait

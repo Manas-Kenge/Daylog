@@ -1,6 +1,7 @@
 # Tauri
 src-tauri/target/
 src-tauri/Cargo.lock
+src-tauri/binaries/
 
 # Node
 node_modules/
