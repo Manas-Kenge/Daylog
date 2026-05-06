@@ -1,13 +1,6 @@
 import { useEffect } from "react";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Topbar } from "@/components/layout/Topbar";
-import { CommandPalette } from "@/components/palette/CommandPalette";
 import { OverviewPage } from "@/pages/Overview";
-import { AppsPage } from "@/pages/AppsPage";
-import { ActivityLogPage } from "@/pages/ActivityLogPage";
-import { HourlyPatternsPage } from "@/pages/HourlyPatternsPage";
-import { CategoriesPage } from "@/pages/CategoriesPage";
-import { WebPage } from "@/pages/WebPage";
 import { WeekPage } from "@/pages/WeekPage";
 import { MonthPage } from "@/pages/MonthPage";
 import { Wizard } from "@/pages/Wizard";
@@ -49,41 +42,16 @@ function App() {
       <main className="flex min-h-0 min-w-0 flex-col gap-2.5 overflow-y-auto px-3.5 pb-5 pt-3">
         <PageOutlet page={page} />
       </main>
-      <CommandPalette />
     </div>
   );
 }
 
 function PageOutlet({ page }: { page: PageId }) {
   switch (page) {
-    case "overview":   return <OverviewPage />;
-    case "apps":       return <AppsPage />;
-    case "activity":   return <ActivityLogPage />;
-    case "hourly":     return <HourlyPatternsPage />;
-    case "categories": return <CategoriesPage />;
-    case "web":        return <WebPage />;
-    case "week":       return <WeekPage />;
-    case "month":      return <MonthPage />;
-    case "settings":   return <SettingsPlaceholder />;
+    case "overview": return <OverviewPage />;
+    case "week":     return <WeekPage />;
+    case "month":    return <MonthPage />;
   }
-}
-
-function SettingsPlaceholder() {
-  return (
-    <Card size="sm">
-      <CardHeader>
-        <CardTitle>Settings</CardTitle>
-        <CardDescription>
-          Tracking, category rules, and general preferences live here.
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        <div className="py-10 text-center text-muted-foreground">
-          Phase 4 — not built yet.
-        </div>
-      </CardContent>
-    </Card>
-  );
 }
 
 export default App;

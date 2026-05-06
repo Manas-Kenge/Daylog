@@ -79,13 +79,34 @@ export function MonthPage() {
     });
   }, [queries, today]);
 
-  // Build the column layout: today's column is rightmost; today's cell
-  // sits at row=today.weekday. Each preceding cell walks the row index
-  // back; on row underflow we move one column left.
+  // Build the column layout. We extend the rightmost edge to the LAST
+  // day of the current month so the calendar reads as "this whole month
+  // is visible" instead of cutting off at today. Days after today
+  // (within the current month) become null cells rendered as empty
+  // placeholders. Walk: end-of-month → today → 1-year-ago.
   const columns = useMemo<Column[]>(() => {
     const cols: Column[] = [];
     let cur: (DayCell | null)[] = Array.from({ length: 7 }, () => null);
-    let row = today.getDay();
+
+    const lastDayOfMonth = new Date(
+      today.getFullYear(),
+      today.getMonth() + 1,
+      0,
+    );
+    const futureDaysThisMonth = lastDayOfMonth.getDate() - today.getDate();
+
+    let row = lastDayOfMonth.getDay();
+    // Reserve space for future days of the current month — cur is already
+    // null at those positions, we just decrement the row pointer.
+    for (let i = 0; i < futureDaysThisMonth; i++) {
+      row--;
+      if (row < 0) {
+        cols.push({ monthLabel: null, cells: cur });
+        cur = Array.from({ length: 7 }, () => null);
+        row = 6;
+      }
+    }
+    // Now place the actual data cells (cells[0] = today, walking back).
     for (const cell of cells) {
       cur[row] = cell;
       row--;
@@ -141,8 +162,8 @@ export function MonthPage() {
     <div className="flex min-w-0 flex-wrap items-stretch gap-2.5">
     <div className="min-w-0 flex-none">
     <WidgetCard
-      title="Daily activity"
-      description="Active time per day, GitHub-style"
+      title="Year heatmap"
+      description="Active time per day"
       action={
         <Badge variant="outline" className="font-mono tabular-nums uppercase">
           {fmtDuration(total)} · last year
@@ -252,18 +273,22 @@ export function MonthPage() {
 function Cell({ cell, max }: { cell: DayCell | null; max: number }) {
   const baseStyle = { width: `${CELL_PX}px`, height: `${CELL_PX}px` };
   if (!cell) {
-    return <div className="rounded-sm" style={baseStyle} />;
+    return (
+      <div
+        className="rounded-sm border border-border/30"
+        style={{ ...baseStyle, background: "var(--secondary)" }}
+      />
+    );
   }
   const hasData = cell.activeSec > 0;
   const intensity = max > 0 ? Math.min(1, cell.activeSec / max) : 0;
   const bg = hasData
     ? `color-mix(in oklab, var(--chart-1) ${Math.round(intensity * 100)}%, transparent)`
-    : "transparent";
+    : "var(--secondary)";
   const ring = cell.isToday ? "ring-1 ring-foreground/70" : "";
-  const borderClass = hasData ? "border-border/30" : "border-border/15";
   return (
     <div
-      className={`rounded-sm border ${borderClass} ${ring}`}
+      className={`rounded-sm border border-border/30 ${ring}`}
       style={{ ...baseStyle, background: bg }}
       title={`${format(cell.date, "EEE MMM d")} · ${fmtDuration(cell.activeSec)}`}
     />
@@ -359,13 +384,13 @@ function Legend({ max }: { max: number }) {
       {[0, 0.2, 0.4, 0.6, 0.8, 1].map((step) => (
         <span
           key={step}
-          className={`rounded-sm border ${step === 0 ? "border-border/15" : "border-border/30"}`}
+          className="rounded-sm border border-border/30"
           style={{
             width: `${CELL_PX}px`,
             height: `${CELL_PX}px`,
             background:
               step === 0
-                ? "transparent"
+                ? "var(--secondary)"
                 : `color-mix(in oklab, var(--chart-1) ${Math.round(step * 100)}%, transparent)`,
           }}
         />

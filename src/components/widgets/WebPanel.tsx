@@ -1,6 +1,6 @@
 /**
- * Top web domains for the dashboard's row-3 slot. Compact, single-column
- * (URLs live on the dedicated /web page — too cramped at 1/3 width).
+ * Top web domains panel. Lives in the Overview right rail and is reused
+ * on Week / Month pages with a `rangeOverride` (last 7 / 30 days).
  *
  * When no aw-watcher-web bucket is detected, the card stays in place and
  * shows an install hint instead of collapsing the layout.

@@ -3,29 +3,8 @@
  * the widget so they can be tested without React.
  */
 
-import type { CategorizedEvent, HourBucket } from "./aw-types";
+import type { CategorizedEvent } from "./aw-types";
 import { categoryRoot } from "./category-colors";
-import { isWork } from "./productive";
-
-/** Sum duration of events whose root is in the Work allowlist. */
-export function workSeconds(events: readonly CategorizedEvent[]): number {
-  let s = 0;
-  for (const ev of events) {
-    if (isWork(ev.category)) s += ev.duration;
-  }
-  return s;
-}
-
-/** Work-time-by-hour spark (24 entries). */
-export function workByHour(events: readonly CategorizedEvent[]): number[] {
-  const out = new Array(24).fill(0);
-  for (const ev of events) {
-    if (!isWork(ev.category)) continue;
-    const h = new Date(ev.timestamp).getHours();
-    if (h >= 0 && h < 24) out[h] += ev.duration;
-  }
-  return out;
-}
 
 /**
  * Longest contiguous focus session today. A "session" = consecutive events
@@ -116,27 +95,3 @@ export function focusByHour(
   return out;
 }
 
-/** First event timestamp today, or null if no events. */
-export function firstActivity(events: readonly CategorizedEvent[]): Date | null {
-  if (events.length === 0) return null;
-  let min = events[0].timestamp;
-  for (const ev of events) if (ev.timestamp < min) min = ev.timestamp;
-  return new Date(min);
-}
-
-/** Hour (0-23) with the most active duration, plus its total. */
-export function peakHour(
-  hourly: readonly HourBucket[],
-): { hour: number; seconds: number } | null {
-  if (hourly.length === 0) return null;
-  let bestH = 0;
-  let bestSec = 0;
-  for (const b of hourly) {
-    if (b.duration > bestSec) {
-      bestSec = b.duration;
-      bestH = b.hour;
-    }
-  }
-  if (bestSec === 0) return null;
-  return { hour: bestH, seconds: bestSec };
-}

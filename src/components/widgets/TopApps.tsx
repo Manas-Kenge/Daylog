@@ -10,7 +10,6 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useTopApps, useCategorizedEvents, useAppIcons } from "@/hooks/useAw";
 import { fmtDuration } from "@/lib/format";
 import { categoryColor } from "@/lib/category-colors";
-import { usePage } from "@/context/PageContext";
 import type { TimeRange } from "@/lib/aw-types";
 import { useMemo, useState } from "react";
 
@@ -39,7 +38,6 @@ export function TopApps({
   const { data: categorized } = useCategorizedEvents(rangeOverride, {
     enabled: showSparklines,
   });
-  const { push } = usePage();
 
   const sparkByApp = useMemo(() => {
     const out = new Map<string, number[]>();
@@ -93,13 +91,7 @@ export function TopApps({
             const pct = maxDuration > 0 ? row.duration / maxDuration : 0;
             const icon = icons?.[app] ?? null;
             return (
-              <ListRow
-                key={app}
-                cols={cols}
-                className="cursor-pointer"
-                title={`Click to view ${app} detail`}
-                onClick={() => push("apps", { app })}
-              >
+              <ListRow key={app} cols={cols}>
                 <AppGlyph icon={icon} color={color} />
                 <span className="truncate font-medium">{app}</span>
                 {showSparklines ? (

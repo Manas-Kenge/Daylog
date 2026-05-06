@@ -7,8 +7,8 @@
  * not trailing 7 days" convention).
  *
  * Pulls one `awHourly(DaysAgo(n))` per applicable weekday — same
- * useQueries pattern as MonthPage. Past-day queries dedupe with whatever
- * the topbar / KpiStrip / WeekPage already cached.
+ * useQueries pattern as MonthPage. Past-day queries share the
+ * `aw_hourly_daysago` key so reopening Overview after WeekPage is instant.
  *
  * Layout uses a single CSS grid with explicit row heights — aspect-ratio
  * cells fight the parent's flex-1/min-h-0 constraints in narrow rails.
