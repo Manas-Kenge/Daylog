@@ -302,7 +302,7 @@ async fn aw_top_urls(range: TimeRange) -> Result<Vec<serde_json::Value>, AwError
 }
 
 /// Synchronous wrapper around `tracking::uninstall()` for the CLI entrypoint
-/// (`pulse --uninstall-tracking`). Spins up a small tokio runtime so we don't
+/// (`daylog --uninstall-tracking`). Spins up a small tokio runtime so we don't
 /// require the caller to be in an async context.
 pub fn uninstall_blocking() -> Result<(), String> {
     let rt = tokio::runtime::Builder::new_current_thread()

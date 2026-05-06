@@ -38,7 +38,7 @@ impl From<std::io::Error> for LifecycleError {
 pub enum Supervisor {
     Systemd,
     XdgAutostart,
-    /// Pulse is using a pre-existing aw-server we don't manage. Constructed
+    /// Daylog is using a pre-existing aw-server we don't manage. Constructed
     /// by the 5e first-launch wizard when `tracking_detect()` finds AW
     /// already running on :5600. Not produced by `lifecycle::detect()`.
     #[allow(dead_code)]
@@ -141,7 +141,7 @@ pub async fn stop() -> Result<(), LifecycleError> {
 }
 
 /// Full removal: stop services, delete unit files / autostart entries, delete
-/// the user-extracted binaries dir. Used by `pulse --uninstall-tracking` (the
+/// the user-extracted binaries dir. Used by `daylog --uninstall-tracking` (the
 /// AppImage user's escape hatch) and the future Settings → "Uninstall tracking"
 /// button. Best-effort — missing files are not errors.
 ///
@@ -155,7 +155,7 @@ pub async fn uninstall() -> Result<(), LifecycleError> {
     let cfg = config_dir()?;
     let _ = std::fs::remove_file(cfg.join("systemd").join("user").join(systemd::SERVER_UNIT));
     let _ = std::fs::remove_file(cfg.join("systemd").join("user").join(systemd::WATCHER_UNIT));
-    let _ = std::fs::remove_file(cfg.join("autostart").join("pulse-tracker.desktop"));
+    let _ = std::fs::remove_file(cfg.join("autostart").join("daylog-tracker.desktop"));
 
     // 3. systemd needs a daemon-reload after removing unit files so it forgets them.
     //    Best-effort; user may not have systemd or the units may already be gone.
@@ -173,14 +173,14 @@ pub async fn uninstall() -> Result<(), LifecycleError> {
     Ok(())
 }
 
-/// `~/.local/share/pulse/bin/` (or under `$XDG_DATA_HOME`). Mirrors the path
+/// `~/.local/share/daylog/bin/` (or under `$XDG_DATA_HOME`). Mirrors the path
 /// `install::place_binaries` uses on the AppImage carrier. Returns `None` if
 /// neither `XDG_DATA_HOME` nor `HOME` is set.
 fn user_bin_dir() -> Option<PathBuf> {
     std::env::var_os("XDG_DATA_HOME")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local").join("share")))
-        .map(|d| d.join("pulse").join("bin"))
+        .map(|d| d.join("daylog").join("bin"))
 }
 
 /// Poll `127.0.0.1:5600/api/0/info` until it answers, or `timeout_secs` elapses.

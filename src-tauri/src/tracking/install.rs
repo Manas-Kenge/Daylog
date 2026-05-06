@@ -49,7 +49,7 @@ pub enum BinDirSource {
 pub struct BinDir {
     pub path: PathBuf,
     pub source: BinDirSource,
-    /// Pulse version that produced the binaries currently at `path`.
+    /// Daylog version that produced the binaries currently at `path`.
     /// `None` when the source is SystemPackage or Development (managed by package manager / cargo).
     pub stamped_version: Option<String>,
 }
@@ -81,8 +81,8 @@ pub fn resolve_bin_dir(app: &AppHandle) -> Result<BinDir, InstallError> {
 }
 
 /// Resolve `{BIN_DIR}` and ensure all bundled binaries are present + executable.
-/// AppImage carrier: extracts to `~/.local/share/pulse/bin/` on first launch and
-/// whenever the running Pulse version differs from the stamped one.
+/// AppImage carrier: extracts to `~/.local/share/daylog/bin/` on first launch and
+/// whenever the running Daylog version differs from the stamped one.
 /// System package or dev: binaries are already in place; no extraction needed.
 pub fn place_binaries(app: &AppHandle) -> Result<BinDir, InstallError> {
     if is_appimage() {
@@ -91,7 +91,7 @@ pub fn place_binaries(app: &AppHandle) -> Result<BinDir, InstallError> {
         Ok(BinDir {
             path: user_bin.clone(),
             source: BinDirSource::AppImageExtracted,
-            stamped_version: Some(pulse_version().to_string()),
+            stamped_version: Some(daylog_version().to_string()),
         })
     } else {
         // .deb / .rpm / dev — binaries are at stable on-disk paths placed by the
@@ -124,7 +124,7 @@ fn detect_non_appimage_source() -> BinDirSource {
     }
 }
 
-fn pulse_version() -> &'static str {
+fn daylog_version() -> &'static str {
     env!("CARGO_PKG_VERSION")
 }
 
@@ -133,7 +133,7 @@ fn user_bin_dir() -> Result<PathBuf, InstallError> {
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local").join("share")))
         .ok_or(InstallError::NoHome)?;
-    Ok(base.join("pulse").join("bin"))
+    Ok(base.join("daylog").join("bin"))
 }
 
 fn resolve_resource(app: &AppHandle, name: &str) -> Result<PathBuf, InstallError> {
@@ -151,7 +151,7 @@ fn ensure_extracted(app: &AppHandle, dest: &Path) -> Result<(), InstallError> {
     fs::create_dir_all(dest)?;
 
     let stamp = dest.join(STAMP_FILENAME);
-    let want = pulse_version();
+    let want = daylog_version();
     let have = fs::read_to_string(&stamp).unwrap_or_default();
 
     if have == want && all_present(dest) {
@@ -175,7 +175,7 @@ fn all_present(dir: &Path) -> bool {
 #[cfg(unix)]
 fn atomic_install(src: &Path, dst: &Path) -> Result<(), InstallError> {
     use std::os::unix::fs::PermissionsExt;
-    // Per-PID tmp name so two simultaneous Pulse processes don't clobber.
+    // Per-PID tmp name so two simultaneous Daylog processes don't clobber.
     let tmp = dst.with_extension(format!("tmp.{}", std::process::id()));
     fs::copy(src, &tmp)?;
     let mut perms = fs::metadata(&tmp)?.permissions();
@@ -187,5 +187,5 @@ fn atomic_install(src: &Path, dst: &Path) -> Result<(), InstallError> {
 
 #[cfg(not(unix))]
 fn atomic_install(_src: &Path, _dst: &Path) -> Result<(), InstallError> {
-    compile_error!("Pulse is Linux-only for v0.1");
+    compile_error!("Daylog is Linux-only for v0.1");
 }
