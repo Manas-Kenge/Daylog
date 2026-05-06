@@ -25,6 +25,7 @@ import { FlashIcon } from "@hugeicons/core-free-icons";
 import { WidgetCard } from "@/components/widgets/Card";
 import { TopApps } from "@/components/widgets/TopApps";
 import { TopCategories } from "@/components/widgets/TopCategories";
+import { WebPanel } from "@/components/widgets/WebPanel";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useTrailingDays } from "@/hooks/useAw";
 import { categoryColor, categoryRoot } from "@/lib/category-colors";
@@ -209,7 +210,7 @@ export function WeekPage() {
         )}
       </WidgetCard>
 
-      <section className="grid min-w-0 grid-cols-2 items-start gap-2.5">
+      <section className="grid min-w-0 grid-cols-3 items-start gap-2.5">
         <TopApps
           rangeOverride={WEEK_RANGE}
           title="Top apps · 7 days"
@@ -219,6 +220,11 @@ export function WeekPage() {
           rangeOverride={WEEK_RANGE}
           title="Top categories · 7 days"
           description="Time per category root, last 7 days"
+        />
+        <WebPanel
+          rangeOverride={WEEK_RANGE}
+          title="Top domains · 7 days"
+          description="Active time per domain, last 7 days"
         />
       </section>
     </>

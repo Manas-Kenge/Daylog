@@ -1,6 +1,7 @@
 mod aggregate;
 mod aw_client;
 mod categories;
+mod icons;
 mod time;
 mod tracking;
 
@@ -275,6 +276,18 @@ async fn tracking_setup_gnome_extension(app: AppHandle) -> Result<ExtensionStatu
     tracking::gnome::setup(&app).await
 }
 
+/// Resolve each app name (X11 WM_CLASS / Wayland app_id, as reported by
+/// `aw-watcher-window` in `data.app`) to a `data:`-URL icon. File I/O runs
+/// in a blocking task to keep the Tauri command pool responsive on cold
+/// cache. Misses return `null` so the frontend can render a letter-chip
+/// fallback without a second roundtrip.
+#[tauri::command]
+async fn app_icons(names: Vec<String>) -> std::collections::HashMap<String, Option<String>> {
+    tokio::task::spawn_blocking(move || icons::resolve_many(&names))
+        .await
+        .unwrap_or_default()
+}
+
 #[tauri::command]
 async fn aw_top_urls(range: TimeRange) -> Result<Vec<serde_json::Value>, AwError> {
     let client = AwClient::new();
@@ -321,6 +334,7 @@ pub fn run() {
             aw_has_web_watcher,
             aw_top_domains,
             aw_top_urls,
+            app_icons,
             categories_get,
             categories_set,
             tracking_resolve_bin_dir,

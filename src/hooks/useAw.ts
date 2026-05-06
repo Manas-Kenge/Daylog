@@ -99,6 +99,24 @@ export function useAfkSummary(includeIntervals = false, rangeOverride?: TimeRang
   });
 }
 
+/**
+ * Resolve `aw-watcher-window` app names to data:URL icons via the XDG
+ * application/icon-theme cascade. Sorted-key memoization keeps the cache
+ * stable across re-renders that produce the same set of apps.
+ *
+ * Icons don't change within a session (theme drift requires app restart),
+ * so we set `staleTime: Infinity` and let the Rust-side cache do the work.
+ */
+export function useAppIcons(names: string[]) {
+  const sorted = [...names].sort();
+  return useQuery({
+    queryKey: ["app_icons", sorted],
+    queryFn: () => aw.appIcons(sorted),
+    staleTime: Infinity,
+    enabled: sorted.length > 0,
+  });
+}
+
 export function useHasWebWatcher() {
   return useQuery({
     queryKey: ["aw_has_web_watcher"],

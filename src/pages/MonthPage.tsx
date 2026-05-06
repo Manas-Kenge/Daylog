@@ -18,6 +18,7 @@ import { Badge } from "@/components/ui/badge";
 import { WidgetCard } from "@/components/widgets/Card";
 import { TopApps } from "@/components/widgets/TopApps";
 import { TopCategories } from "@/components/widgets/TopCategories";
+import { WebPanel } from "@/components/widgets/WebPanel";
 import { Skeleton } from "@/components/ui/skeleton";
 import { awAfkSummary } from "@/lib/aw";
 import { DaysAgo, LastNDays } from "@/lib/aw-types";
@@ -188,7 +189,7 @@ export function MonthPage() {
       )}
     </WidgetCard>
 
-    <section className="grid min-w-0 grid-cols-2 items-start gap-2.5">
+    <section className="grid min-w-0 grid-cols-3 items-start gap-2.5">
       <TopApps
         rangeOverride={MONTH_RANGE}
         showSparklines={false}
@@ -199,6 +200,11 @@ export function MonthPage() {
         rangeOverride={MONTH_RANGE}
         title="Top categories · 30 days"
         description="Time per category root, last 30 days"
+      />
+      <WebPanel
+        rangeOverride={MONTH_RANGE}
+        title="Top domains · 30 days"
+        description="Active time per domain, last 30 days"
       />
     </section>
     </>

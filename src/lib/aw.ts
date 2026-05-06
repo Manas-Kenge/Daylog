@@ -62,6 +62,9 @@ export const awTopDomains = (range: TimeRange) =>
 export const awTopUrls = (range: TimeRange) =>
   invoke<AwEvent<UrlData>[]>("aw_top_urls", { range });
 
+export const appIcons = (names: string[]) =>
+  invoke<Record<string, string | null>>("app_icons", { names });
+
 export const categoriesGet = () => invoke<CategoryConfig>("categories_get");
 export const categoriesSet = (config: CategoryConfig) =>
   invoke<void>("categories_set", { config });

@@ -7,12 +7,12 @@ import { ListBody, ListRow, WidgetCard } from "./Card";
 import { Sparkline } from "@/components/Sparkline";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useTopApps, useCategorizedEvents } from "@/hooks/useAw";
+import { useTopApps, useCategorizedEvents, useAppIcons } from "@/hooks/useAw";
 import { fmtDuration } from "@/lib/format";
 import { categoryColor } from "@/lib/category-colors";
 import { usePage } from "@/context/PageContext";
 import type { TimeRange } from "@/lib/aw-types";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 
 interface TopAppsProps {
   /** Time range to query. Defaults to the active RangeContext (Today). */
@@ -65,9 +65,10 @@ export function TopApps({
 
   const top = (apps ?? []).slice(0, TAKE);
   const maxDuration = top.reduce((a, r) => Math.max(a, r.duration), 0);
+  const { data: icons } = useAppIcons(top.map((r) => r.data.app));
   // Without sparklines we lean a "duration bar" into the row — useful
   // multi-day surface that doesn't collapse to a single number.
-  const cols = showSparklines ? "9px_1fr_56px_60px" : "9px_1fr_72px_60px";
+  const cols = showSparklines ? "16px_1fr_56px_60px" : "16px_1fr_72px_60px";
 
   return (
     <WidgetCard
@@ -90,6 +91,7 @@ export function TopApps({
             const color = categoryColor(catByApp.get(app) ?? []);
             const spark = sparkByApp.get(app) ?? [];
             const pct = maxDuration > 0 ? row.duration / maxDuration : 0;
+            const icon = icons?.[app] ?? null;
             return (
               <ListRow
                 key={app}
@@ -98,10 +100,7 @@ export function TopApps({
                 title={`Click to view ${app} detail`}
                 onClick={() => push("apps", { app })}
               >
-                <span
-                  className="size-2 rounded-sm"
-                  style={{ background: color }}
-                />
+                <AppGlyph icon={icon} color={color} />
                 <span className="truncate font-medium">{app}</span>
                 {showSparklines ? (
                   <Sparkline values={spark} color={color} width={56} height={14} />
@@ -117,6 +116,30 @@ export function TopApps({
         </ListBody>
       )}
     </WidgetCard>
+  );
+}
+
+/**
+ * 16px slot rendering either the resolved app icon or a category-colored
+ * dot fallback. Image errors (corrupt data URL, unsupported MIME the
+ * webview rejects) collapse to the same fallback via `onError`.
+ */
+function AppGlyph({ icon, color }: { icon: string | null; color: string }) {
+  const [failed, setFailed] = useState(false);
+  if (icon && !failed) {
+    return (
+      <img
+        src={icon}
+        alt=""
+        className="size-4 shrink-0 rounded-sm object-contain"
+        onError={() => setFailed(true)}
+      />
+    );
+  }
+  return (
+    <span className="flex size-4 shrink-0 items-center justify-center">
+      <span className="size-2 rounded-sm" style={{ background: color }} />
+    </span>
   );
 }
 
@@ -142,7 +165,7 @@ function SkeletonRows({ cols, rows = 8 }: { cols: string; rows?: number }) {
     <ListBody>
       {Array.from({ length: rows }, (_, i) => (
         <ListRow key={i} cols={cols}>
-          <Skeleton className="size-2 rounded-sm" />
+          <Skeleton className="size-4 rounded-sm" />
           <Skeleton className="h-3 w-3/4" />
           <Skeleton className="h-3 w-full" />
           <Skeleton className="h-3 w-12 justify-self-end" />
