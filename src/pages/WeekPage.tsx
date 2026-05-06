@@ -5,7 +5,7 @@
  * for Thu/Fri/Sat/Sun show as empty (axis label remains, no bar).
  *
  * The bottom callout names the day with the most Work-categorized hours.
- * Pulse is observational — the wording stays descriptive ("highest"),
+ * Daylog is observational — the wording stays descriptive ("highest"),
  * not motivational ("strongest").
  */
 
@@ -146,7 +146,7 @@ export function WeekPage() {
     return { total, avg, daysElapsed, activeDays, best };
   }, [rows, roots]);
 
-  // Highest Work day this week. Pulse is observational so we describe
+  // Highest Work day this week. Daylog is observational so we describe
   // facts ("highest"), not value judgments ("strongest").
   const highestWork = rows.reduce<{ day: string; dateLabel: string; hours: number } | null>(
     (best, r) => {
@@ -225,7 +225,7 @@ export function WeekPage() {
             ) : totalHours === 0 ? (
               <EmptyInsight>
                 No tracked activity yet this week. Pattern callouts appear once
-                Pulse has data.
+                Daylog has data.
               </EmptyInsight>
             ) : (
               <EmptyInsight>

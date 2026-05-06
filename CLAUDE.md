@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-Pulse is a Linux-only Tauri 2 desktop app — a single-window dashboard for [ActivityWatch](https://activitywatch.net). The window is a viewer; the tracker is a separate background daemon Pulse installs on first launch. See `PLAN.md` for the long-form engineering plan and the "Phase N" labels referenced in commit messages.
+Daylog is a Linux-only Tauri 2 desktop app — a single-window dashboard for [ActivityWatch](https://activitywatch.net). The window is a viewer; the tracker is a separate background daemon Daylog installs on first launch. See `PLAN.md` for the long-form engineering plan and the "Phase N" labels referenced in commit messages.
 
 ## Tooling
 
@@ -32,8 +32,8 @@ There is no JS test runner and no JS linter wired in — CI runs `tsc --noEmit`,
 
 ### Three separations to internalise
 
-1. **Window vs tracker.** The Tauri app is a viewer. The tracker (`pulse-aw-server.service` + `pulse-awatcher.service`, or the XDG-autostart supervisor on non-systemd distros) runs at the user-systemd level and survives window close. Code that touches services lives in `src-tauri/src/tracking/` — never reach into systemd from anywhere else.
-2. **Carrier vs runtime path.** AppImage / `.deb` / `.rpm` are carriers. Unit files always reference a stable `{BIN_DIR}` resolved at runtime: `~/.local/share/pulse/bin/` (AppImage; Pulse extracts on first launch and on version drift) or `/usr/lib/pulse/bin/` (deb/rpm; placed by the package manager). Templates in `src-tauri/services/*.tmpl` use `{BIN_DIR}` as a placeholder; substitution happens in `tracking::render_template`.
+1. **Window vs tracker.** The Tauri app is a viewer. The tracker (`daylog-aw-server.service` + `daylog-awatcher.service`, or the XDG-autostart supervisor on non-systemd distros) runs at the user-systemd level and survives window close. Code that touches services lives in `src-tauri/src/tracking/` — never reach into systemd from anywhere else.
+2. **Carrier vs runtime path.** AppImage / `.deb` / `.rpm` are carriers. Unit files always reference a stable `{BIN_DIR}` resolved at runtime: `~/.local/share/daylog/bin/` (AppImage; Daylog extracts on first launch and on version drift) or `/usr/lib/daylog/bin/` (deb/rpm; placed by the package manager). Templates in `src-tauri/services/*.tmpl` use `{BIN_DIR}` as a placeholder; substitution happens in `tracking::render_template`.
 3. **Our stack vs existing AW.** First-launch probe (`tracking_detect`) hits `:5600`. If something answers, we treat it as `Supervisor::External` and never install our services. Don't add code paths that race against an existing aw-server.
 
 ### Frontend → Rust → aw-server
@@ -67,7 +67,7 @@ Adding a new aw query usually means: write Rust command in `lib.rs` → register
   - `lifecycle.rs` — supervisor abstraction (`Systemd` | `XdgAutostart` | `External`); `install_supervisor`, `status`, `pause`, `resume`, `stop`, `uninstall`. `pause` semantics differ per supervisor (documented in the source).
   - `systemd.rs`, `xdg_autostart.rs` — concrete supervisors. `detect()` picks one based on `/run/systemd/system`.
   - `gnome.rs` — install + enable the `focused-window-dbus@flexagoon.com` shell extension. Only relevant on GNOME-Wayland; `applicable: false` everywhere else.
-- `main.rs` — handles CLI flags (`--help`, `--uninstall-tracking`) before delegating to `pulse_lib::run()`. The uninstall path uses `pulse_lib::uninstall_blocking` so AppImage users have an escape hatch without a running app.
+- `main.rs` — handles CLI flags (`--help`, `--uninstall-tracking`) before delegating to `daylog_lib::run()`. The uninstall path uses `daylog_lib::uninstall_blocking` so AppImage users have an escape hatch without a running app.
 
 ### First launch
 
@@ -85,7 +85,7 @@ To upgrade an upstream component, run `scripts/bump-binary.sh <component> <versi
 
 - `.github/workflows/ci.yml` runs on every push/PR: cargo check + test, `tsc --noEmit`, vite build, and a full `tauri build` (slow but catches packaging regressions). All on `ubuntu-22.04` so the artifact glibc baseline stays at 2.35.
 - `.github/workflows/release.yml` triggers on `v*.*.*` tags. It builds artifacts once and smoke-tests them in containers across the deb family (Ubuntu/Debian), rpm family (Fedora/openSUSE), and AppImage across deb/rpm/Arch/openSUSE — plus informational runs on Void (non-systemd) and Alpine (musl, expected to fail). The `release` job that publishes the GitHub Release only runs on actual tag pushes.
-- The smoke matrix runs `pulse --help` and `pulse --uninstall-tracking` against the installed binary. If you add a CLI flag in `main.rs`, extend the smoke commands.
+- The smoke matrix runs `daylog --help` and `daylog --uninstall-tracking` against the installed binary. If you add a CLI flag in `main.rs`, extend the smoke commands.
 
 ## Conventions worth knowing
 

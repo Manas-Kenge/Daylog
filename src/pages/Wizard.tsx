@@ -103,7 +103,7 @@ function renderStep(state: State, h: Handlers) {
     case "detecting":
       return (
         <WizardShell
-          title="Welcome to Pulse"
+          title="Welcome to Daylog"
           description="Looking for ActivityWatch on this machine…"
           body={<Spinner label="Probing localhost:5600" />}
         />
@@ -115,13 +115,13 @@ function renderStep(state: State, h: Handlers) {
           title="Using your existing ActivityWatch install"
           description={
             <>
-              Pulse detected ActivityWatch <code>{state.info.version}</code> already running on{" "}
+              Daylog detected ActivityWatch <code>{state.info.version}</code> already running on{" "}
               <code>{state.info.hostname}</code>. We'll use that instead of installing a second copy.
             </>
           }
           body={
             <p className="text-sm text-muted-foreground">
-              Tracking continues to be managed by your existing setup. Pulse just renders the data.
+              Tracking continues to be managed by your existing setup. Daylog just renders the data.
             </p>
           }
           footer={<Button onClick={h.finish}>Continue to dashboard</Button>}
@@ -132,7 +132,7 @@ function renderStep(state: State, h: Handlers) {
       return (
         <WizardShell
           title="Set up tracking"
-          description="Pulse will install a small, always-on tracker that runs whenever you're logged in. Like Screen Time on macOS."
+          description="Daylog will install a small, always-on tracker that runs whenever you're logged in. Like Screen Time on macOS."
           body={
             <ul className="space-y-1 text-sm text-muted-foreground">
               <li>• Runs as a user-level service (no root needed).</li>
@@ -173,10 +173,10 @@ function renderStep(state: State, h: Handlers) {
       return (
         <WizardShell
           title="One more step for GNOME on Wayland"
-          description="GNOME on Wayland doesn't expose window titles to background processes. Pulse can install a small extension that fixes this — locally, no root."
+          description="GNOME on Wayland doesn't expose window titles to background processes. Daylog can install a small extension that fixes this — locally, no root."
           body={
             <p className="text-sm text-muted-foreground">
-              The extension is bundled inside Pulse; installing it doesn't reach the network.
+              The extension is bundled inside Daylog; installing it doesn't reach the network.
             </p>
           }
           footer={
@@ -202,7 +202,7 @@ function renderStep(state: State, h: Handlers) {
       return (
         <WizardShell
           title="Extension setup failed"
-          description="Pulse couldn't install the GNOME extension. You can skip this step — tracking will work, but window titles may be missing on GNOME-Wayland sessions."
+          description="Daylog couldn't install the GNOME extension. You can skip this step — tracking will work, but window titles may be missing on GNOME-Wayland sessions."
           error={state.error}
           body={null}
           footer={<Button onClick={h.skipGnome}>Continue anyway</Button>}
@@ -213,7 +213,7 @@ function renderStep(state: State, h: Handlers) {
       return (
         <WizardShell
           title="GNOME extensions support is disabled"
-          description="Pulse couldn't find the gnome-extensions command. Your GNOME-Wayland session may not show window titles. Tracking still works for time totals."
+          description="Daylog couldn't find the gnome-extensions command. Your GNOME-Wayland session may not show window titles. Tracking still works for time totals."
           body={
             <p className="text-sm text-muted-foreground">
               You can revisit this in Settings → Tracking once GNOME extensions are available.
@@ -227,10 +227,10 @@ function renderStep(state: State, h: Handlers) {
       return (
         <WizardShell
           title="Almost there — please log out and back in"
-          description="GNOME-Wayland can't reload extensions live. Once you log back in, Pulse will start receiving window-title data automatically."
+          description="GNOME-Wayland can't reload extensions live. Once you log back in, Daylog will start receiving window-title data automatically."
           body={
             <p className="text-sm text-muted-foreground">
-              You can keep using Pulse now; window titles will start appearing after the next login.
+              You can keep using Daylog now; window titles will start appearing after the next login.
             </p>
           }
           footer={<Button onClick={h.finish}>Open dashboard</Button>}
@@ -241,7 +241,7 @@ function renderStep(state: State, h: Handlers) {
       return (
         <WizardShell
           title="All set"
-          description="Pulse is tracking your activity. Open the dashboard whenever you want to see what you've done today."
+          description="Daylog is tracking your activity. Open the dashboard whenever you want to see what you've done today."
           body={null}
           footer={<Button onClick={h.finish}>Open dashboard</Button>}
         />

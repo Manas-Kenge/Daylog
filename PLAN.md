@@ -1,4 +1,4 @@
-# Pulse — Engineering Plan
+# Daylog — Engineering Plan
 
 A native Linux desktop dashboard for ActivityWatch.
 
@@ -8,7 +8,7 @@ A native Linux desktop dashboard for ActivityWatch.
 
 ## 1.0 Post-CEO-review addendum (2026-05-06)
 
-After a `/plan-ceo-review` session, the dashboard scope was deliberately expanded under a re-affirmed observational thesis. The *thesis* didn't change — Pulse remains observational, not nudging — but the *KPI surface* was reshaped to lean harder into pattern-discovery, the unique-to-Pulse wedge that cloud trackers can't match (no round-trip latency) and ActivityWatch can't deliver (no UI).
+After a `/plan-ceo-review` session, the dashboard scope was deliberately expanded under a re-affirmed observational thesis. The *thesis* didn't change — Daylog remains observational, not nudging — but the *KPI surface* was reshaped to lean harder into pattern-discovery, the unique-to-Daylog wedge that cloud trackers can't match (no round-trip latency) and ActivityWatch can't deliver (no UI).
 
 Locked decisions:
 
@@ -21,7 +21,7 @@ Locked decisions:
 7. **Mini-window pulled forward from v0.2 → v0.1.** `--mini` CLI flag and palette command spawn a frameless 320×120 always-on-top secondary `WebviewWindow`. Cross-DE always-on-top is acknowledged-fiddly; ship without always-on-top first if the per-DE work overruns.
 8. **"Productive" terminology renamed to "Time in Work"** wherever it persists. The judgment frame ("productive" implies the rest is unproductive) is replaced with descriptive language. `productive_roots` → `work_roots` rename in `lib/productive.ts` follows from this.
 
-Out-of-scope, re-confirmed: Focus Score gauges, productive-time goals, app-usage limits, weekly streaks, Pomodoro timers. These are nudging mechanics. Pulse measures; it does not intervene. If anyone asks for these post-launch the answer is "RescueTime is over there."
+Out-of-scope, re-confirmed: Focus Score gauges, productive-time goals, app-usage limits, weekly streaks, Pomodoro timers. These are nudging mechanics. Daylog measures; it does not intervene. If anyone asks for these post-launch the answer is "RescueTime is over there."
 
 The sections below remain the implementation source of truth. §5 (Overview composition), §6 (deferred items), §13 (definition of done), and §14 (v0.2 roadmap) have been updated to reflect this addendum.
 
@@ -29,17 +29,17 @@ The sections below remain the implementation source of truth. §5 (Overview comp
 
 ## 1. Vision
 
-A single-window native desktop app that shows a beautiful, dense, real-time pulse of your day, sourced from the local ActivityWatch server you already have running. No browser tab. No sign-in. No cloud. The whole thing fits in one window with poster-quality information density.
+A single-window native desktop app that shows a beautiful, dense, real-time view of your day, sourced from the local ActivityWatch server you already have running. No browser tab. No sign-in. No cloud. The whole thing fits in one window with poster-quality information density.
 
-**v0.1 hero scenario:** double-click the Pulse icon → a window opens showing today's timeline as a horizontal heatmap, top apps + categories with sparklines, and a live focus-session timer. Hit `⌘K` (or `Ctrl+K`) and a Raycast-style command palette appears: type `yesterday`, the dashboard reflects yesterday's data; type an app name, jump straight to its detail. The screenshot we ship on is the dashboard with the palette open mid-typing — keyboard-driven activity awareness, not another point-and-click tracker.
+**v0.1 hero scenario:** double-click the Daylog icon → a window opens showing today's timeline as a horizontal heatmap, top apps + categories with sparklines, and a live focus-session timer. Hit `⌘K` (or `Ctrl+K`) and a Raycast-style command palette appears: type `yesterday`, the dashboard reflects yesterday's data; type an app name, jump straight to its detail. The screenshot we ship on is the dashboard with the palette open mid-typing — keyboard-driven activity awareness, not another point-and-click tracker.
 
 **Why palette-primary, not a sidebar:** AW's existing WebUI is already a dashboard. The reason a power user installs a desktop client instead of bookmarking `localhost:5600` is **surface availability**, not visual density. Visual density is table stakes. The keyboard-summonable palette is the v0.1 differentiation hook; ambient surfaces (topbar applet, pinned mini-window) follow in v0.2.
 
 **Constraints locked in office-hours:**
 - Linux-first, single-user, local-only. **Universal across distros** — Ubuntu, Debian, Fedora, Arch, openSUSE, Pop, Mint, Manjaro, Void, Alpine, etc. — not Debian-only.
-- `aw-server-rust` and `aw-awatcher` binaries are **bundled inside Pulse's AppImage, `.deb`, and `.rpm` artifacts** and managed at runtime by user-scope systemd services (or an XDG-autostart supervisor on non-systemd distros), installed on first launch. We don't fork or modify their source; we ship their binaries (both MPL-2.0).
-- **Pulse the tracker is a background daemon, not a Tauri sidecar.** It starts when the user logs in and stops when the user logs out — the macOS Screen Time model. Closing the Pulse window does not stop tracking; the window is just a viewer that connects to `localhost:5600` when opened.
-- If the user already has ActivityWatch running on `:5600`, Pulse detects it and uses it instead of starting our bundled stack — never two servers fighting for the same port.
+- `aw-server-rust` and `aw-awatcher` binaries are **bundled inside Daylog's AppImage, `.deb`, and `.rpm` artifacts** and managed at runtime by user-scope systemd services (or an XDG-autostart supervisor on non-systemd distros), installed on first launch. We don't fork or modify their source; we ship their binaries (both MPL-2.0).
+- **Daylog the tracker is a background daemon, not a Tauri sidecar.** It starts when the user logs in and stops when the user logs out — the macOS Screen Time model. Closing the Daylog window does not stop tracking; the window is just a viewer that connects to `localhost:5600` when opened.
+- If the user already has ActivityWatch running on `:5600`, Daylog detects it and uses it instead of starting our bundled stack — never two servers fighting for the same port.
 - We own the UI, the local API client, the first-launch setup flow, and the unit/autostart templates.
 - Visual density beats feature density. Distribution is a Phase-0 concern: a single AppImage download must put a working dashboard in front of a fresh user within 60 seconds, on any modern Linux distro.
 
@@ -49,11 +49,11 @@ A single-window native desktop app that shows a beautiful, dense, real-time puls
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
-│  Pulse AppImage / .deb / .rpm    (one of three carrier formats)      │
+│  Daylog AppImage / .deb / .rpm    (one of three carrier formats)      │
 │  ──────────────────────────────────────────────────────────────      │
 │                                                                      │
 │  ┌────────────────────────────────────────────────────────────────┐  │
-│  │ Pulse app (foreground; runs only when the user opens it)       │  │
+│  │ Daylog app (foreground; runs only when the user opens it)       │  │
 │  │                                                                │  │
 │  │  ┌──────────────────────────────────────────────────────────┐  │  │
 │  │  │ WebView (WebKitGTK)                                      │  │  │
@@ -73,23 +73,23 @@ A single-window native desktop app that shows a beautiful, dense, real-time puls
 │  ┌────────────────────────────────────────────────────────────────┐  │
 │  │ Background tracker (always running while the user is logged in)│  │
 │  │ ────────────────────────────────────────────────────────────   │  │
-│  │  pulse-aw-server.service   →  {BIN_DIR}/aw-server-rust         │  │
+│  │  daylog-aw-server.service   →  {BIN_DIR}/aw-server-rust         │  │
 │  │     listens on localhost:5600                                  │  │
 │  │     stores SQLite at ~/.local/share/activitywatch/             │  │
 │  │                                                                │  │
-│  │  pulse-awatcher.service    →  {BIN_DIR}/aw-awatcher            │  │
+│  │  daylog-awatcher.service    →  {BIN_DIR}/aw-awatcher            │  │
 │  │     pushes window/AFK events to localhost:5600                 │  │
 │  │     (depends on focused-window-dbus on GNOME-Wayland only)     │  │
 │  │                                                                │  │
 │  │  Unit files:    ~/.config/systemd/user/   (always user-level)  │  │
-│  │  Fallback:      ~/.config/autostart/pulse-tracker.desktop      │  │
+│  │  Fallback:      ~/.config/autostart/daylog-tracker.desktop      │  │
 │  │                 + supervisor.sh loop  (non-systemd distros)    │  │
 │  └────────────────────────────────────────────────────────────────┘  │
 │                                                                      │
 │  {BIN_DIR} resolves at runtime:                                      │
-│   - AppImage:       ~/.local/share/pulse/bin/                        │
-│                     (Pulse extracts on first launch + version drift) │
-│   - .deb / .rpm:    /usr/lib/pulse/bin/                              │
+│   - AppImage:       ~/.local/share/daylog/bin/                        │
+│                     (Daylog extracts on first launch + version drift) │
+│   - .deb / .rpm:    /usr/lib/daylog/bin/                              │
 │                     (placed by the package manager)                  │
 │                                                                      │
 │  GNOME-Wayland only (installed user-level on first launch):          │
@@ -100,7 +100,7 @@ A single-window native desktop app that shows a beautiful, dense, real-time puls
 
 **Three key separations to keep in mind:**
 
-1. **Pulse the window vs Pulse the tracker.** The foreground app is "the dashboard you open." The two background services (or the supervisor process on non-systemd distros) are "the tracker that runs always." Closing the window does not stop tracking. Uninstalling Pulse stops both — `.deb` and `.rpm` pre-remove hooks call `systemctl --user stop` for each logged-in user; AppImage users get a `pulse --uninstall-tracking` CLI flag.
+1. **Daylog the window vs Daylog the tracker.** The foreground app is "the dashboard you open." The two background services (or the supervisor process on non-systemd distros) are "the tracker that runs always." Closing the window does not stop tracking. Uninstalling Daylog stops both — `.deb` and `.rpm` pre-remove hooks call `systemctl --user stop` for each logged-in user; AppImage users get a `daylog --uninstall-tracking` CLI flag.
 2. **Carrier vs runtime path.** The package format (AppImage / .deb / .rpm) is just a carrier for the binaries. The *runtime path* the services point at is always stable and never the AppImage mount — we resolve `{BIN_DIR}` per the table above and the unit files always reference that resolved path. Re-extraction happens automatically on AppImage version change.
 3. **Our stack vs an existing AW install.** On first launch, we probe `:5600`. If something answers (the user has their own AW), we use it and never install our services. If nothing answers, we install and enable our bundled tracker. This is the "don't fight an existing setup" rule — without it, two servers race for the port and one silently loses.
 
@@ -109,7 +109,7 @@ A single-window native desktop app that shows a beautiful, dense, real-time puls
 2. Polling logic, retries, reconnection, and the systemd-control commands live in one stable place.
 3. The Rust side already needs to install/control the tracker (systemd or XDG-autostart) and probe `:5600` on launch — keeping all server-touching code in one place avoids divergence.
 
-The frontend never sees `localhost:5600`. It only calls Tauri commands like `aw_today_window()` and listens to events like `pulse:bucket-updated`.
+The frontend never sees `localhost:5600`. It only calls Tauri commands like `aw_today_window()` and listens to events like `daylog:bucket-updated`.
 
 ---
 
@@ -185,7 +185,7 @@ A single-window app with one poster-quality dashboard view and a global command 
 
 ```
 ┌────────────────────────────────────────────────────────────────────┐
-│ Pulse              today · 14:23 · 5h 18m              [⌘K]        │
+│ Daylog              today · 14:23 · 5h 18m              [⌘K]        │
 ├────────────────────────────────────────────────────────────────────┤
 │ ┌────────┬──────────┬──────────┬──────────┬───────────────────┐    │
 │ │ Active │ Best win │ Longest  │ Cadence  │ Pattern shift     │    │
@@ -213,7 +213,7 @@ A single-window app with one poster-quality dashboard view and a global command 
    ↓  user hits ⌘K (or Ctrl+K)
 
 ┌────────────────────────────────────┐
-│ ▍ Search Pulse...                  │
+│ ▍ Search Daylog...                  │
 │  • Today                           │
 │  • Yesterday                       │
 │  • This week                       │
@@ -327,12 +327,12 @@ Anomaly thresholds need empirical tuning. Start dumb: Z-score against trailing 1
 | Flatpak / Snap | **Deferred to v0.2.** Sandboxing fights our use case (D-Bus access, Wayland foreign-toplevel, talking to localhost:5600, GNOME extension install). Each portal is its own rabbit hole. AppImage covers the universal-Linux requirement without the sandbox tax. |
 | AUR / nix / pacman / ebuild packages | **Community.** We don't ship distro-native packages beyond `.deb` and `.rpm`. We make the build reproducible (`bun run tauri build` after `scripts/fetch-binaries.sh`); packagers do the rest. |
 | ~~Multi-day / weekly / monthly views~~ | **MOVED INTO v0.1 SCOPE** post-CEO-review (§1.0). `Week` (7-day stacked bars) and `Month` (calendar heatmap) palette destinations. |
-| Goal targets / app-usage limits / streaks / Pomodoro | **Re-confirmed NOT in scope** post-CEO-review. Behavioral nudging is a separate product. Pulse measures; it does not intervene. If users ask, the answer is "RescueTime is over there." |
+| Goal targets / app-usage limits / streaks / Pomodoro | **Re-confirmed NOT in scope** post-CEO-review. Behavioral nudging is a separate product. Daylog measures; it does not intervene. If users ask, the answer is "RescueTime is over there." |
 | Categorization rule editor (visual) | v0.1 ships with a JSON-edit list. Visual rule builder is its own feature. |
 | AW bucket creation / event editing | We are read-only against aw-server in v0.1. Period. |
 | GNOME Shell extension companion | Lateral path discussed in office-hours; revisit in v0.2 once the dashboard is done. |
 | Cloud sync / multi-device | Violates premise P2 (local-only). |
-| Goals / limits / "you've used Twitter for 2h" | Behavioral nudging is a separate product. Pulse v0.1 is observational. |
+| Goals / limits / "you've used Twitter for 2h" | Behavioral nudging is a separate product. Daylog v0.1 is observational. |
 | Browser activity (aw-watcher-web) | Requires user to install Firefox/Chrome extension separately. Add a "you can also install this" hint in settings, but don't ship the extension. |
 
 ---
@@ -343,7 +343,7 @@ Each phase is sized to fit one weekend (your time, not CC time). Phases are sequ
 
 ### Phase 0 — Developer prerequisites (1 evening) — **for you, the developer**
 
-These are the toolchain you need to *build* Pulse. **End users do not run any of these** — they install one `.deb`. You run these once on your dev machine:
+These are the toolchain you need to *build* Daylog. **End users do not run any of these** — they install one `.deb`. You run these once on your dev machine:
 
 ```bash
 # 1. Install rustup (gives you a current cargo + toolchain).
@@ -379,17 +379,17 @@ bun --version      # already 1.3.x
 
 ```bash
 cd ~/dev/projects
-# Create the Tauri app inside the existing pulse/ directory.
+# Create the Tauri app inside the existing daylog/ directory.
 # create-tauri-app is interactive; pick:
-#   - app name: pulse
-#   - identifier: com.pulse.app  (or your domain)
+#   - app name: daylog
+#   - identifier: com.manas-kenge.daylog  (or your domain)
 #   - frontend: TypeScript / JavaScript
 #   - flavor: React
 #   - package manager: bun
 bun create tauri-app
 
 # Then add Tailwind 4 + shadcn:
-cd pulse
+cd daylog
 bun add -d tailwindcss @tailwindcss/vite
 bunx shadcn@latest init   # pick: TypeScript, default style, slate, CSS variables
 bunx shadcn@latest add button card badge separator dialog input label tabs
@@ -465,14 +465,14 @@ Polling: a single `useQuery` per widget, all using the same query key prefix, re
 
 ### Phase 5 — Always-on tracking + universal-Linux bundling (2 weekends)
 
-This phase converts Pulse from "works on your machine" to "works on any Linux distro a stranger is running, in the Screen Time model — track always, view on demand." It delivers four things:
+This phase converts Daylog from "works on your machine" to "works on any Linux distro a stranger is running, in the Screen Time model — track always, view on demand." It delivers four things:
 
 1. A way to *carry* the binaries inside any package format (AppImage, `.deb`, `.rpm`).
 2. A first-launch wizard that *installs* the tracker as a session-scoped background daemon on **any** Linux distro (systemd or not).
 3. The optional GNOME-Wayland extension, installed user-level on detection.
 4. Predictable update + uninstall paths across all three carrier formats.
 
-The Pulse window is just an HTTP client of `localhost:5600` — closing it does not stop tracking. The two binaries (`aw-server-rust` + `aw-awatcher`) run for the duration of the user's login session and stop at logout.
+The Daylog window is just an HTTP client of `localhost:5600` — closing it does not stop tracking. The two binaries (`aw-server-rust` + `aw-awatcher`) run for the duration of the user's login session and stop at logout.
 
 **5a. Vendor the binaries.**
 
@@ -485,7 +485,7 @@ aw-awatcher     v0.3.3   x86_64-unknown-linux-gnu  30b51a94…
 
 **v0.1 is x86_64-Linux only.** Neither upstream publishes aarch64 release artifacts: `aw-server-rust` ships only inside `ActivityWatch/activitywatch`'s linux-x86_64 bundle zip (the `aw-server-rust` repo itself has no GitHub releases at all), and `2e3s/awatcher` ships only `x86_64.zip`. aarch64 (Asahi / Pi / arm laptops) is a v0.2 goal that requires building both from source.
 
-Add `scripts/fetch-binaries.sh` — POSIX bash; deps `curl` + `unzip` + `sha256sum` + `awk`. Reads the lock, downloads the upstream zips, verifies SHA-256 against the lock, extracts the binary we want from each archive, and places it at `src-tauri/binaries/<binary>` for Tauri to bundle as a resource. (No target-triple suffix in the on-disk filename: v0.1 is x86_64-only, so the suffix would just be noise.) Cached by archive sha at `~/.cache/pulse/binaries/`; idempotent — re-running with a satisfied lock is a no-op. **No `dpkg-deb`, no `jq`** — script runs on macOS dev machines and any CI runner. Used as a `prebuild` step. Source mapping per component is inline in the script:
+Add `scripts/fetch-binaries.sh` — POSIX bash; deps `curl` + `unzip` + `sha256sum` + `awk`. Reads the lock, downloads the upstream zips, verifies SHA-256 against the lock, extracts the binary we want from each archive, and places it at `src-tauri/binaries/<binary>` for Tauri to bundle as a resource. (No target-triple suffix in the on-disk filename: v0.1 is x86_64-only, so the suffix would just be noise.) Cached by archive sha at `~/.cache/daylog/binaries/`; idempotent — re-running with a satisfied lock is a no-op. **No `dpkg-deb`, no `jq`** — script runs on macOS dev machines and any CI runner. Used as a `prebuild` step. Source mapping per component is inline in the script:
 - `aw-server-rust` → extracted from `activitywatch-<version>-linux-x86_64.zip` (parent bundle).
 - `aw-awatcher` → extracted from `aw-awatcher.zip` (own release).
 
@@ -502,17 +502,17 @@ In `tauri.conf.json`:
     "resources": [
       "binaries/aw-server-rust",
       "binaries/aw-awatcher",
-      "services/pulse-aw-server.service.tmpl",
-      "services/pulse-awatcher.service.tmpl",
-      "services/pulse-supervisor.sh.tmpl",
-      "services/pulse-tracker.desktop.tmpl",
+      "services/daylog-aw-server.service.tmpl",
+      "services/daylog-awatcher.service.tmpl",
+      "services/daylog-supervisor.sh.tmpl",
+      "services/daylog-tracker.desktop.tmpl",
       "extensions/focused-window-dbus@flexagoon.com.zip"
     ]
   }
 }
 ```
 
-The binaries are bundled as `resources` (not `externalBin`) because Pulse never spawns them via `Command::new_sidecar()` — they're owned by systemd / the supervisor, not by Tauri. Resources are accessed at runtime via `app.path().resolve("binaries/aw-server-rust", BaseDirectory::Resource)`, which returns the correct on-disk path inside whatever carrier Pulse is running from (AppImage mount, `/usr/lib/<id>/` for `.deb`/`.rpm`, or `src-tauri/target/...` in dev).
+The binaries are bundled as `resources` (not `externalBin`) because Daylog never spawns them via `Command::new_sidecar()` — they're owned by systemd / the supervisor, not by Tauri. Resources are accessed at runtime via `app.path().resolve("binaries/aw-server-rust", BaseDirectory::Resource)`, which returns the correct on-disk path inside whatever carrier Daylog is running from (AppImage mount, `/usr/lib/<id>/` for `.deb`/`.rpm`, or `src-tauri/target/...` in dev).
 
 **5b. {BIN_DIR}: where the binaries actually live at runtime.**
 
@@ -520,19 +520,19 @@ Format-dependent, because AppImage mounts ephemerally:
 
 | Carrier | `{BIN_DIR}` (resolved at first launch) | Owner |
 |---|---|---|
-| AppImage | `~/.local/share/pulse/bin/` — Pulse extracts the bundled binaries here on first launch and on every version change | User |
-| `.deb`, `.rpm` | `/usr/lib/pulse/bin/` — the package manager places them at install time | System |
+| AppImage | `~/.local/share/daylog/bin/` — Daylog extracts the bundled binaries here on first launch and on every version change | User |
+| `.deb`, `.rpm` | `/usr/lib/daylog/bin/` — the package manager places them at install time | System |
 
 Resolution logic (`src-tauri/src/tracking/install.rs`):
-1. Detect the install method: if `/usr/lib/pulse/bin/aw-server-rust` exists, that's our `{BIN_DIR}`. Else assume AppImage.
-2. AppImage path: read the embedded binary version (compile-time constant), compare against `~/.local/share/pulse/bin/.version`. If missing or stale, copy the binaries from `tauri::path::resolve_resource("binaries/aw-server-rust")` etc. into the user dir, write the new `.version`, `chmod +x`.
+1. Detect the install method: if `/usr/lib/daylog/bin/aw-server-rust` exists, that's our `{BIN_DIR}`. Else assume AppImage.
+2. AppImage path: read the embedded binary version (compile-time constant), compare against `~/.local/share/daylog/bin/.version`. If missing or stale, copy the binaries from `tauri::path::resolve_resource("binaries/aw-server-rust")` etc. into the user dir, write the new `.version`, `chmod +x`.
 3. Always render unit/desktop templates with the resolved `{BIN_DIR}`.
 
 This decouples the *carrier* (the package format) from the *runtime path* (always stable, never the AppImage mount). AppImage updates work cleanly: new AppImage launches → detects version drift → re-extracts → restarts services.
 
 **5c. Tracker lifecycle: systemd primary, XDG-autostart fallback.**
 
-The two binaries run as **user-scope** services that start at login and stop at logout. We never use system-scope services — that requires root and contradicts Pulse's per-user model. We do **not** call `loginctl enable-linger`: tracking is tied to the active user session, matching Screen Time's semantics. A tracker that runs while you're logged out is wrong.
+The two binaries run as **user-scope** services that start at login and stop at logout. We never use system-scope services — that requires root and contradicts Daylog's per-user model. We do **not** call `loginctl enable-linger`: tracking is tied to the active user session, matching Screen Time's semantics. A tracker that runs while you're logged out is wrong.
 
 Detection (`src-tauri/src/tracking/lifecycle.rs`):
 ```rust
@@ -546,12 +546,12 @@ fn supervisor() -> Supervisor {
 }
 ```
 
-**On systemd distros** (~98% of Linux desktops — Ubuntu/Debian/Fedora/Arch/openSUSE/Pop/Mint/Manjaro), Pulse renders these templates to `~/.config/systemd/user/`:
+**On systemd distros** (~98% of Linux desktops — Ubuntu/Debian/Fedora/Arch/openSUSE/Pop/Mint/Manjaro), Daylog renders these templates to `~/.config/systemd/user/`:
 
 ```ini
-# pulse-aw-server.service.tmpl  ({BIN_DIR} interpolated at install time)
+# daylog-aw-server.service.tmpl  ({BIN_DIR} interpolated at install time)
 [Unit]
-Description=Pulse activity tracking server
+Description=Daylog activity tracking server
 After=graphical-session.target
 
 [Service]
@@ -564,11 +564,11 @@ WantedBy=default.target
 ```
 
 ```ini
-# pulse-awatcher.service.tmpl
+# daylog-awatcher.service.tmpl
 [Unit]
-Description=Pulse activity watcher
-After=pulse-aw-server.service
-Requires=pulse-aw-server.service
+Description=Daylog activity watcher
+After=daylog-aw-server.service
+Requires=daylog-aw-server.service
 
 [Service]
 ExecStart={BIN_DIR}/aw-awatcher
@@ -581,25 +581,25 @@ WantedBy=default.target
 
 Install steps:
 1. Resolve `{BIN_DIR}` per 5b.
-2. Render templates to `~/.config/systemd/user/pulse-{aw-server,awatcher}.service`.
+2. Render templates to `~/.config/systemd/user/daylog-{aw-server,awatcher}.service`.
 3. `systemctl --user daemon-reload`.
-4. `systemctl --user enable --now pulse-aw-server pulse-awatcher`.
+4. `systemctl --user enable --now daylog-aw-server daylog-awatcher`.
 5. Wait until `127.0.0.1:5600/api/0/info` answers (max 15s; clear error path on timeout).
 
-**On non-systemd distros** (Void, Alpine, Artix, Devuan), Pulse installs an XDG autostart entry and a small supervisor script:
+**On non-systemd distros** (Void, Alpine, Artix, Devuan), Daylog installs an XDG autostart entry and a small supervisor script:
 
 ```desktop
-# ~/.config/autostart/pulse-tracker.desktop
+# ~/.config/autostart/daylog-tracker.desktop
 [Desktop Entry]
 Type=Application
-Name=Pulse Tracker
-Exec={BIN_DIR}/pulse-supervisor.sh
+Name=Daylog Tracker
+Exec={BIN_DIR}/daylog-supervisor.sh
 X-GNOME-Autostart-enabled=true
 NoDisplay=true
 ```
 
 ```bash
-# pulse-supervisor.sh.tmpl  (rendered into {BIN_DIR}/pulse-supervisor.sh)
+# daylog-supervisor.sh.tmpl  (rendered into {BIN_DIR}/daylog-supervisor.sh)
 #!/usr/bin/env bash
 # Run aw-server + awatcher; restart either if it dies; exit on session end.
 set -u
@@ -612,11 +612,11 @@ wait
 
 XDG autostart is honored by every Linux desktop environment (GNOME, KDE, XFCE, Cinnamon, MATE, Sway, Hyprland), so this fallback works everywhere systemd isn't.
 
-Both paths reach the same end state: aw-server + awatcher running for the duration of the user's session. The Pulse UI doesn't know or care which is in use; it queries a Tauri command `tracking_status()` returning `{ supervisor: "systemd" | "xdg-autostart" | "external", state: "active" | "inactive" | "failed", since: ISO8601 }`.
+Both paths reach the same end state: aw-server + awatcher running for the duration of the user's session. The Daylog UI doesn't know or care which is in use; it queries a Tauri command `tracking_status()` returning `{ supervisor: "systemd" | "xdg-autostart" | "external", state: "active" | "inactive" | "failed", since: ISO8601 }`.
 
 **5d. GNOME-Wayland extension (optional, detected at first run).**
 
-`aw-awatcher` handles X11 and wlroots-Wayland (Sway/Hyprland) and KDE-Wayland natively. **GNOME-Wayland is the only case** that needs `focused-window-dbus@flexagoon.com`. The bundled extension zip ships inside Pulse; no internet access required at first launch.
+`aw-awatcher` handles X11 and wlroots-Wayland (Sway/Hyprland) and KDE-Wayland natively. **GNOME-Wayland is the only case** that needs `focused-window-dbus@flexagoon.com`. The bundled extension zip ships inside Daylog; no internet access required at first launch.
 
 Detection: `XDG_CURRENT_DESKTOP=*GNOME*` **and** `XDG_SESSION_TYPE=wayland`. Otherwise skip everything in this section.
 
@@ -636,7 +636,7 @@ A new React route mounted on first run (detect via missing settings file). Five 
 3. If `None`: `tracking_install_bundled()`:
    - Resolve `{BIN_DIR}` per 5b; place binaries.
    - Pick supervisor per 5c (`systemd` vs `xdg-autostart`).
-   - Render templates, install, start. Capture stderr; surface failures with the actual error and a "Copy" + "View logs" affordance (`journalctl --user -u pulse-aw-server` for systemd, `~/.local/share/pulse/supervisor.log` for XDG).
+   - Render templates, install, start. Capture stderr; surface failures with the actual error and a "Copy" + "View logs" affordance (`journalctl --user -u daylog-aw-server` for systemd, `~/.local/share/daylog/supervisor.log` for XDG).
 4. `tracking_wait_until_live(15s)` — polls until ready or timeout.
 5. `tracking_setup_gnome_extension()` per 5d (no-op outside GNOME-Wayland).
 
@@ -646,12 +646,12 @@ Skipping or failing the wizard puts the dashboard into a degraded state with a b
 
 | Action | What happens |
 |---|---|
-| AppImage replaced with a newer version | On next launch, Pulse compares the embedded binary version against `~/.local/share/pulse/bin/.version`. If they differ, re-extracts binaries and runs `systemctl --user restart pulse-*` (or kills + relaunches the supervisor on the XDG path). |
-| `.deb` upgraded via `apt` / `.rpm` upgraded via `dnf` | `postinst` runs `systemctl --user --machine=$USER@.host daemon-reload && systemctl --user --machine=$USER@.host restart pulse-*` for each logged-in user. |
-| Settings → "Pause tracking" | `systemctl --user stop pulse-awatcher` (or kills awatcher in supervisor). aw-server stays running so historical queries still work. |
+| AppImage replaced with a newer version | On next launch, Daylog compares the embedded binary version against `~/.local/share/daylog/bin/.version`. If they differ, re-extracts binaries and runs `systemctl --user restart daylog-*` (or kills + relaunches the supervisor on the XDG path). |
+| `.deb` upgraded via `apt` / `.rpm` upgraded via `dnf` | `postinst` runs `systemctl --user --machine=$USER@.host daemon-reload && systemctl --user --machine=$USER@.host restart daylog-*` for each logged-in user. |
+| Settings → "Pause tracking" | `systemctl --user stop daylog-awatcher` (or kills awatcher in supervisor). aw-server stays running so historical queries still work. |
 | Settings → "Stop background tracking" | Stops + disables both services / removes the autostart entry. Leaves binaries in place so a re-enable is a single click. |
-| AppImage trashed | Services keep running until the next logout, then never start again (binaries still in `~/.local/share/pulse/bin/`). `pulse --uninstall-tracking` cleans up fully. |
-| `apt remove pulse` / `dnf remove pulse` | Pre-remove hook runs `systemctl --user --machine=$USER@.host stop pulse-*` and `disable` for each logged-in user. |
+| AppImage trashed | Services keep running until the next logout, then never start again (binaries still in `~/.local/share/daylog/bin/`). `daylog --uninstall-tracking` cleans up fully. |
+| `apt remove daylog` / `dnf remove daylog` | Pre-remove hook runs `systemctl --user --machine=$USER@.host stop daylog-*` and `disable` for each logged-in user. |
 
 We never delete `~/.local/share/activitywatch/` automatically — that's the user's tracking history, not ours to remove. Documented in README and shown as a toast on uninstall confirmation.
 
@@ -663,15 +663,15 @@ Two GitHub Actions workflows. Both target `ubuntu-22.04` for the build host (old
 
 `.github/workflows/release.yml` (push of `v*.*.*` tag; also `workflow_dispatch` for dry-runs). Three stages:
 
-1. **Build** (one job on `ubuntu-22.04`) — produces `.AppImage`, `.deb`, `.rpm` (all x86_64). Caches `~/.cache/pulse/binaries/` keyed by `hashFiles('scripts/binaries.lock')` so unchanged upstream versions don't re-download.
+1. **Build** (one job on `ubuntu-22.04`) — produces `.AppImage`, `.deb`, `.rpm` (all x86_64). Caches `~/.cache/daylog/binaries/` keyed by `hashFiles('scripts/binaries.lock')` so unchanged upstream versions don't re-download.
 
 2. **Smoke matrix** (9 parallel container jobs):
 
    | Tier | Jobs | Containers | Verifies |
    |---|---|---|---|
-   | **Hard-fail** | `smoke-deb` × 3 | `ubuntu:22.04`, `ubuntu:24.04`, `debian:12` | `apt install ./*.deb` resolves deps cleanly + `pulse --help` runs |
-   | **Hard-fail** | `smoke-rpm-fedora` | `fedora:41` | `dnf install ./*.rpm` + `pulse --help` |
-   | **Hard-fail** | `smoke-rpm-opensuse` | `opensuse/tumbleweed` | `zypper install` + `pulse --help` |
+   | **Hard-fail** | `smoke-deb` × 3 | `ubuntu:22.04`, `ubuntu:24.04`, `debian:12` | `apt install ./*.deb` resolves deps cleanly + `daylog --help` runs |
+   | **Hard-fail** | `smoke-rpm-fedora` | `fedora:41` | `dnf install ./*.rpm` + `daylog --help` |
+   | **Hard-fail** | `smoke-rpm-opensuse` | `opensuse/tumbleweed` | `zypper install` + `daylog --help` |
    | **Hard-fail** | `smoke-appimage` × 5 | `ubuntu:24.04`, `debian:12`, `fedora:41`, `archlinux:latest`, `opensuse/tumbleweed` | `APPIMAGE_EXTRACT_AND_RUN=1 ./*.AppImage --help` |
    | **Informational** (`continue-on-error`) | `smoke-appimage-void` | `voidlinux/void-glibc-full` | Confirms AppImage runs on a non-systemd distro |
    | **Informational** (expected fail) | `smoke-appimage-alpine` | `alpine:latest` | Catches the day Alpine becomes glibc-compatible — emits `::warning::` if it ever passes |
@@ -698,18 +698,18 @@ What CI **cannot** test (deferred to manual VM smoke per Phase 6 exit criteria):
 aarch64 builds are deferred to v0.2 since both upstream binaries are x86_64-only today; adding aarch64 will require source builds in CI.
 
 **Exit criteria:**
-- AppImage launched on a fresh **Ubuntu 24.04**, **Fedora 41**, and **Arch (current)** VM: wizard succeeds, dashboard shows real data within 30s, tracking continues after closing the Pulse window, and is running again automatically after a logout/login cycle.
+- AppImage launched on a fresh **Ubuntu 24.04**, **Fedora 41**, and **Arch (current)** VM: wizard succeeds, dashboard shows real data within 30s, tracking continues after closing the Daylog window, and is running again automatically after a logout/login cycle.
 - Same test on a fresh **Void Linux** VM (non-systemd): XDG-autostart fallback engages, supervisor script keeps both binaries alive across induced kills, dashboard shows real data within 30s.
 - `.deb` smoke-tested via `dpkg -i` on Ubuntu; `.rpm` via `dnf install` on Fedora — same end state as the AppImage path.
 - AppImage replacement: install vN, log a few events, replace with vN+1, relaunch — old data still queryable, services running the new binaries, no manual steps.
 - "Pause tracking" toggle in Settings stops awatcher within 1s; "Resume" restarts it; aw-server stays up either way.
-- `apt remove pulse` / `dnf remove pulse` cleanly stop and disable services; `~/.local/share/activitywatch/` is preserved.
+- `apt remove daylog` / `dnf remove daylog` cleanly stop and disable services; `~/.local/share/activitywatch/` is preserved.
 
 ### Phase 6 — Release polish + manual VM smoke tests (1 weekend)
 
 The CI/release pipeline itself shipped in Phase 5g; what's left is the polish that turns "the pipeline works" into "we can tag v0.1.0 with confidence":
 
-- **README polish.** Animated GIF of the wizard + dashboard. Screenshot of the dashboard with the palette open mid-typing. "Pulse bundles ActivityWatch — no other install required" callout. "Existing AW user? Pulse detects and uses your install" note. "Tracking runs in the background like Screen Time — close Pulse anytime" note. The `Supported Linux distros` table is already in the README from 5g.
+- **README polish.** Animated GIF of the wizard + dashboard. Screenshot of the dashboard with the palette open mid-typing. "Daylog bundles ActivityWatch — no other install required" callout. "Existing AW user? Daylog detects and uses your install" note. "Tracking runs in the background like Screen Time — close Daylog anytime" note. The `Supported Linux distros` table is already in the README from 5g.
 - **License attribution.** `THIRD-PARTY-NOTICES.md` crediting ActivityWatch (MPL-2.0) and awatcher (MPL-2.0). About dialog references it.
 - **Manual VM smoke tests.** Container CI proves the artifact installs and the binary runs; it can't exercise the full UI flow because containers don't have a display server. Before tagging v0.1.0, smoke-test on real VMs (Distrobox or full VM):
   - **Ubuntu 24.04** — AppImage and `.deb` paths. Wizard → dashboard within 60s. Close window, wait 2 min, reopen — new events show up.
@@ -775,15 +775,15 @@ CRITICAL TESTS (do not skip):
 
 | Failure | Likelihood | Plan |
 |---|---|---|
-| Bundled `pulse-aw-server.service` fails to start | Medium | Wizard captures stderr from `systemctl --user start`. Surface in UI with copy-button for the error and a "View systemd logs" button that opens `journalctl --user -u pulse-aw-server`. On the XDG fallback path, show `~/.local/share/pulse/supervisor.log` instead. |
+| Bundled `daylog-aw-server.service` fails to start | Medium | Wizard captures stderr from `systemctl --user start`. Surface in UI with copy-button for the error and a "View systemd logs" button that opens `journalctl --user -u daylog-aw-server`. On the XDG fallback path, show `~/.local/share/daylog/supervisor.log` instead. |
 | Port 5600 already in use by something other than AW | Low | Probe response: if `:5600` answers but `/api/0/info` returns non-AW JSON, treat as conflict. Wizard offers to use port 5601 for our bundled stack and stores the chosen port. |
-| User has existing AW install with stale `aw-server` (older API) | Medium | On detect, log the version returned by `/api/0/info`. If `< 0.13.0`, show banner "Your ActivityWatch is older than Pulse expects; consider updating." Don't fail — try anyway. |
-| GNOME Shell extension installed but disabled, user clicks Skip in wizard | Medium | Pulse runs in degraded state. Empty buckets after 30s → banner "No window data is being tracked. Open Settings → Tracking to enable the GNOME extension." |
+| User has existing AW install with stale `aw-server` (older API) | Medium | On detect, log the version returned by `/api/0/info`. If `< 0.13.0`, show banner "Your ActivityWatch is older than Daylog expects; consider updating." Don't fail — try anyway. |
+| GNOME Shell extension installed but disabled, user clicks Skip in wizard | Medium | Daylog runs in degraded state. Empty buckets after 30s → banner "No window data is being tracked. Open Settings → Tracking to enable the GNOME extension." |
 | User on KDE / Sway / wlroots — no GNOME extension applicable | Low | Detect compositor via `XDG_CURRENT_DESKTOP` + `XDG_SESSION_TYPE`. Skip GNOME steps entirely. awatcher uses wlr-foreign-toplevel (Sway/Hyprland), KWin protocol (KDE), or X11 directly. |
 | Non-systemd distro (Void, Alpine, Artix, Devuan) | Low | `/run/systemd/system` absent → wizard takes the XDG-autostart fallback per Phase 5c. Same end state, different supervisor. |
-| User uninstalls Pulse but expects AW to keep running | Low | `.deb` / `.rpm` pre-remove hook disables our services for each logged-in user. AppImage users get `pulse --uninstall-tracking`. README documents the difference + toast in app on uninstall confirmation: "This will stop tracking. Your data is preserved at `~/.local/share/activitywatch/`." |
-| AppImage extraction to `~/.local/share/pulse/bin/` fails (disk full / permissions) | Low | Wizard surfaces the actual `io::Error` with path. Retry button and "Open file manager at this path" affordance. Without the extraction, the unit files would point at the AppImage mount and break on next run, so we fail loud rather than fall back. |
-| User manually deletes `~/.local/share/pulse/bin/` while services are running | Very Low | Services fail on next restart. Pulse detects missing binaries on next launch and re-extracts (idempotent path). Logged to telemetry-free local log. |
+| User uninstalls Daylog but expects AW to keep running | Low | `.deb` / `.rpm` pre-remove hook disables our services for each logged-in user. AppImage users get `daylog --uninstall-tracking`. README documents the difference + toast in app on uninstall confirmation: "This will stop tracking. Your data is preserved at `~/.local/share/activitywatch/`." |
+| AppImage extraction to `~/.local/share/daylog/bin/` fails (disk full / permissions) | Low | Wizard surfaces the actual `io::Error` with path. Retry button and "Open file manager at this path" affordance. Without the extraction, the unit files would point at the AppImage mount and break on next run, so we fail loud rather than fall back. |
+| User manually deletes `~/.local/share/daylog/bin/` while services are running | Very Low | Services fail on next restart. Daylog detects missing binaries on next launch and re-extracts (idempotent path). Logged to telemetry-free local log. |
 | Bundled binary version drifts from upstream (security fix not picked up) | Medium | `scripts/binaries.lock` pins versions. Renovate config auto-PRs upstream releases weekly with updated SHA-256. |
 | `~/.local/share/activitywatch/` permissions broken (user `sudo`-ed something they shouldn't have) | Low | Server fails to start with permission error. Wizard surfaces the fix command: `sudo chown -R $USER ~/.local/share/activitywatch`. |
 | aw-server returns 500 / malformed JSON during normal use | Low | Toast error with raw response; widget shows last-known-good data. |
@@ -797,7 +797,7 @@ CRITICAL TESTS (do not skip):
 ## 10. Project layout (after Phase 1)
 
 ```
-pulse/
+daylog/
 ├── PLAN.md                       ← this file
 ├── README.md                     ← Phase 5
 ├── package.json
@@ -845,10 +845,10 @@ pulse/
 │   │   ├── aw-server-rust-x86_64-unknown-linux-gnu
 │   │   └── aw-awatcher-x86_64-unknown-linux-gnu
 │   ├── services/                 ← templates rendered at install time
-│   │   ├── pulse-aw-server.service.tmpl
-│   │   ├── pulse-awatcher.service.tmpl
-│   │   ├── pulse-supervisor.sh.tmpl       ← XDG-autostart fallback
-│   │   └── pulse-tracker.desktop.tmpl     ← XDG-autostart fallback
+│   │   ├── daylog-aw-server.service.tmpl
+│   │   ├── daylog-awatcher.service.tmpl
+│   │   ├── daylog-supervisor.sh.tmpl       ← XDG-autostart fallback
+│   │   └── daylog-tracker.desktop.tmpl     ← XDG-autostart fallback
 │   ├── extensions/               ← bundled GNOME Shell extension (Wayland only)
 │   │   └── focused-window-dbus@flexagoon.com.zip
 │   ├── src/
@@ -902,7 +902,7 @@ pulse/
 
 - **Does not vendor any ActivityWatch code.** Not the WebUI, not the server, not the watchers. The HTTP API on `localhost:5600` is the entire interface. No fork, no clone, no `git submodule`.
 - **Does not promise cross-platform.** macOS/Windows are explicit non-goals for v0.1.
-- **Does not include a tray icon or notifications.** Pulse the *window* is a foreground app — close it and it goes away. Pulse the *tracker*, however, is explicitly a background daemon (user-scope systemd, with XDG-autostart fallback on non-systemd distros) — it runs whenever you're logged in, and is what makes the Screen Time model possible.
+- **Does not include a tray icon or notifications.** Daylog the *window* is a foreground app — close it and it goes away. Daylog the *tracker*, however, is explicitly a background daemon (user-scope systemd, with XDG-autostart fallback on non-systemd distros) — it runs whenever you're logged in, and is what makes the Screen Time model possible.
 - **Does not generate insights or summaries.** v0.1 is observational. No "you spent too much time on Reddit" — that's a different product.
 
 ---
@@ -915,7 +915,7 @@ pulse/
 - [ ] First-launch wizard succeeds end-to-end on a fresh Ubuntu 24.04, Fedora 41, and Arch VM with no prior AW: detect → place binaries at `{BIN_DIR}` → install systemd unit → enable extension (GNOME-Wayland only) → first event arrives.
 - [ ] First-launch wizard succeeds end-to-end on a fresh Void Linux VM (non-systemd): XDG-autostart fallback engages, supervisor script keeps both binaries alive, first event arrives.
 - [ ] First-launch wizard correctly detects an existing AW install on `:5600` and skips bundled-stack install.
-- [ ] Tracking continues running after the Pulse window is closed; reopening Pulse shows stats covering the entire login session.
+- [ ] Tracking continues running after the Daylog window is closed; reopening Daylog shows stats covering the entire login session.
 - [ ] After a logout/login cycle, services restart automatically; no manual intervention required.
 - [ ] All five Overview widgets render real data from the running aw-server: `KpiStrip` (Active · Best Window · Longest stretch · Cadence · Pattern shift), `Timeline` (hero row, with AFK stripes + yesterday-ghost), `TopApps`, `TopCategories`, `NotableToday`.
 - [ ] Each KPI card carries a "vs trailing-7-day median" sub-text (suppressed with `building baseline (N/7 days)` placeholder when <7 days of history).
@@ -925,7 +925,7 @@ pulse/
 - [ ] All five Overview widgets re-render correctly when `RangeContext` switches (Today / Yesterday / This week / This month).
 - [ ] Click-to-filter wiring: clicking a donut segment, app row, or category badge opens the palette with the term pre-typed.
 - [ ] AFK is visible everywhere: low-opacity stripes in Timeline, idle-gap count in Cadence, AFK subtracted from Active. Active KPI degrades to "—" with a tooltip when no AFK bucket exists.
-- [ ] Mini-window: `pulse --mini` (and the `Mini` palette command) spawns a frameless 320×120 secondary window showing current focus + a one-line category bar. Always-on-top is best-effort per-DE; documented gap if a DE doesn't honor the hint.
+- [ ] Mini-window: `daylog --mini` (and the `Mini` palette command) spawns a frameless 320×120 secondary window showing current focus + a one-line category bar. Always-on-top is best-effort per-DE; documented gap if a DE doesn't honor the hint.
 - [ ] **No sidebar exists in the rendered DOM.** Single-page dashboard is the default view.
 - [ ] **Command palette opens on `⌘K` and `Ctrl+K`** anywhere in the window. `Esc` dismisses. `?` opens shortcut help.
 - [ ] **Range commands work:** `Today` / `Yesterday` / `This week` / `This month` switch the dashboard within one frame.
@@ -934,14 +934,14 @@ pulse/
 - [ ] Connection state indicator works (green / amber / red).
 - [ ] Settings persist across restarts; "Tracking" panel shows correct service status and lets you switch modes.
 - [ ] Category rules apply within one refresh tick.
-- [ ] `apt remove pulse` and `dnf remove pulse` cleanly disable and stop both services for each logged-in user.
-- [ ] `pulse --uninstall-tracking` (AppImage path) cleanly disables and stops both services.
+- [ ] `apt remove daylog` and `dnf remove daylog` cleanly disable and stop both services for each logged-in user.
+- [ ] `daylog --uninstall-tracking` (AppImage path) cleanly disables and stops both services.
 - [ ] All Rust tests pass; all Vitest tests pass.
 - [ ] `bun run tauri build` produces working `.AppImage`, `.deb`, and `.rpm` for `x86_64`.
 - [ ] `.github/workflows/ci.yml` is green on master and on every PR (cargo check, tests, frontend build, full release `tauri build`).
 - [ ] `.github/workflows/release.yml` produces all three artifacts on tag push and uploads them to a GitHub Release.
 - [ ] All hard-fail smoke jobs in the release matrix pass: `smoke-deb` (ubuntu:22.04 / 24.04 / debian:12), `smoke-rpm-fedora` (fedora:41), `smoke-rpm-opensuse` (opensuse/tumbleweed), `smoke-appimage` (ubuntu:24.04 / debian:12 / fedora:41 / archlinux:latest / opensuse/tumbleweed).
-- [ ] README: screenshot of the dashboard with the palette open mid-typing, AppImage install one-liner (with `.deb` / `.rpm` alternatives), GIF of wizard, "Pulse bundles ActivityWatch" callout, "Tracking runs in the background like Screen Time" note, "Press ⌘K" hint.
+- [ ] README: screenshot of the dashboard with the palette open mid-typing, AppImage install one-liner (with `.deb` / `.rpm` alternatives), GIF of wizard, "Daylog bundles ActivityWatch" callout, "Tracking runs in the background like Screen Time" note, "Press ⌘K" hint.
 - [ ] Smoke-tested on clean Ubuntu 24.04, Fedora 41, Arch, and Void VMs: download AppImage → `chmod +x` → double-click → dashboard within 60s; `⌘K` → `yesterday` → reflects yesterday's data within 10s; close window, wait 2 minutes, reopen — new events show up.
 - [ ] License attribution: ActivityWatch (MPL-2.0) and awatcher (MPL-2.0) credited in About dialog and `THIRD-PARTY-NOTICES.md`.
 
