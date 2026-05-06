@@ -1,19 +1,17 @@
 /**
- * Productive-time classification.
+ * "Time in Work" classification.
  *
- * For v0.1, we treat a single category root as "productive": "Work".
- * Anything categorized under Work/* counts; everything else (Comms,
- * Browsing, Media, Uncategorized) does NOT count, because we can't
- * tell e.g. Slack-for-work from Discord-for-play, or research-browsing
- * from Twitter-browsing, without per-rule classification.
+ * For v0.1, a single category root counts as Work: "Work". Anything under
+ * Work/* counts; everything else does not, because we can't tell
+ * e.g. Slack-for-work from Discord-for-play without per-rule classification.
  *
- * Future: replace with a user-editable allowlist persisted via
- * tauri-plugin-store, and add a `productive: boolean` field on
- * category rules so e.g. work-Slack and personal-Discord can diverge.
+ * Renamed from `productive` post-CEO-review (PLAN.md §1.0). Pulse is
+ * observational; "productive" implies the rest of the day was unproductive,
+ * which we don't claim. The v0.2 settings UI will let users edit `WORK_ROOTS`.
  */
 
-export const PRODUCTIVE_ROOTS: readonly string[] = ["Work"];
+export const WORK_ROOTS: readonly string[] = ["Work"];
 
-export function isProductive(category: readonly string[]): boolean {
-  return category.length > 0 && PRODUCTIVE_ROOTS.includes(category[0]);
+export function isWork(category: readonly string[]): boolean {
+  return category.length > 0 && WORK_ROOTS.includes(category[0]);
 }

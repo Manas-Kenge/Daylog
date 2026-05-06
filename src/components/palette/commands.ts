@@ -56,6 +56,8 @@ export const NAV_COMMANDS: PaletteCommand[] = [
   { id: "nav-apps",       label: "Apps",            icon: DashboardSquare01Icon, group: "Navigate", action: { type: "navigate", page: "apps" } },
   { id: "nav-categories", label: "Categories",      icon: PieChartIcon,          group: "Navigate", action: { type: "navigate", page: "categories" } },
   { id: "nav-hourly",     label: "Hourly patterns", icon: Clock01Icon,           group: "Navigate", action: { type: "navigate", page: "hourly" } },
+  { id: "nav-week",       label: "Week",            icon: Calendar03Icon,        group: "Navigate", action: { type: "navigate", page: "week" } },
+  { id: "nav-month",      label: "Month",           icon: Calendar01Icon,        group: "Navigate", action: { type: "navigate", page: "month" } },
   { id: "nav-activity",   label: "Activity log",    icon: Note01Icon,            group: "Navigate", action: { type: "navigate", page: "activity" } },
   { id: "nav-web",        label: "Web",             icon: GlobalIcon,            group: "Navigate", action: { type: "navigate", page: "web" } },
 ];

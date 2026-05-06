@@ -13,6 +13,8 @@ export type PageId =
   | "hourly"
   | "web"
   | "categories"
+  | "week"
+  | "month"
   | "settings";
 
 export const PAGE_TITLES: Record<PageId, string> = {
@@ -22,6 +24,8 @@ export const PAGE_TITLES: Record<PageId, string> = {
   hourly: "Hourly patterns",
   web: "Web",
   categories: "Categories",
+  week: "Week",
+  month: "Month",
   settings: "Settings",
 };
 

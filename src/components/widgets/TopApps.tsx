@@ -10,13 +10,36 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useTopApps, useCategorizedEvents } from "@/hooks/useAw";
 import { fmtDuration } from "@/lib/format";
 import { categoryColor } from "@/lib/category-colors";
+import { usePage } from "@/context/PageContext";
+import type { TimeRange } from "@/lib/aw-types";
 import { useMemo } from "react";
+
+interface TopAppsProps {
+  /** Time range to query. Defaults to the active RangeContext (Today). */
+  rangeOverride?: TimeRange;
+  /** Show per-app per-hour sparklines. Defaults true on single-day ranges,
+   *  false on multi-day ranges (the categorized-events query gets heavy
+   *  fast, and the 24-bucket sparkline reads as noise across N days). */
+  showSparklines?: boolean;
+  title?: string;
+  description?: string;
+}
 
 const TAKE = 12;
 
-export function TopApps() {
-  const { data: apps, isLoading } = useTopApps();
-  const { data: categorized } = useCategorizedEvents();
+export function TopApps({
+  rangeOverride,
+  showSparklines = true,
+  title = "Top apps",
+  description = "By active time",
+}: TopAppsProps = {}) {
+  const { data: apps, isLoading } = useTopApps(rangeOverride);
+  // Skip the categorized-events fetch entirely when sparklines are off
+  // — saves a potentially heavy query for the multi-day Month view.
+  const { data: categorized } = useCategorizedEvents(rangeOverride, {
+    enabled: showSparklines,
+  });
+  const { push } = usePage();
 
   const sparkByApp = useMemo(() => {
     const out = new Map<string, number[]>();
@@ -41,11 +64,15 @@ export function TopApps() {
   }, [categorized]);
 
   const top = (apps ?? []).slice(0, TAKE);
+  const maxDuration = top.reduce((a, r) => Math.max(a, r.duration), 0);
+  // Without sparklines we lean a "duration bar" into the row — useful
+  // multi-day surface that doesn't collapse to a single number.
+  const cols = showSparklines ? "9px_1fr_56px_60px" : "9px_1fr_72px_60px";
 
   return (
     <WidgetCard
-      title="Top apps"
-      description="By active time"
+      title={title}
+      description={description}
       action={
         <Badge variant="outline" className="font-mono tabular-nums uppercase">
           {top.length} of {apps?.length ?? 0}
@@ -53,7 +80,7 @@ export function TopApps() {
       }
     >
       {isLoading ? (
-        <SkeletonRows cols="9px_1fr_56px_60px" />
+        <SkeletonRows cols={cols} />
       ) : top.length === 0 ? (
         <Empty>no apps tracked yet</Empty>
       ) : (
@@ -62,14 +89,25 @@ export function TopApps() {
             const app = row.data.app;
             const color = categoryColor(catByApp.get(app) ?? []);
             const spark = sparkByApp.get(app) ?? [];
+            const pct = maxDuration > 0 ? row.duration / maxDuration : 0;
             return (
-              <ListRow key={app} cols="9px_1fr_56px_60px">
+              <ListRow
+                key={app}
+                cols={cols}
+                className="cursor-pointer"
+                title={`Click to view ${app} detail`}
+                onClick={() => push("apps", { app })}
+              >
                 <span
                   className="size-2 rounded-sm"
                   style={{ background: color }}
                 />
                 <span className="truncate font-medium">{app}</span>
-                <Sparkline values={spark} color={color} width={56} height={14} />
+                {showSparklines ? (
+                  <Sparkline values={spark} color={color} width={56} height={14} />
+                ) : (
+                  <DurationBar pct={pct} color={color} />
+                )}
                 <span className="text-right font-mono tabular-nums text-muted-foreground">
                   {fmtDuration(row.duration)}
                 </span>
@@ -79,6 +117,17 @@ export function TopApps() {
         </ListBody>
       )}
     </WidgetCard>
+  );
+}
+
+function DurationBar({ pct, color }: { pct: number; color: string }) {
+  return (
+    <div className="h-1.5 w-full overflow-hidden rounded-full bg-secondary">
+      <div
+        className="h-full rounded-full transition-[width]"
+        style={{ width: `${Math.max(2, pct * 100)}%`, background: color }}
+      />
+    </div>
   );
 }
 

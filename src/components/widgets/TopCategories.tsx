@@ -15,10 +15,23 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { useTopCategories } from "@/hooks/useAw";
 import { fmtDuration } from "@/lib/format";
-import { categoryColor } from "@/lib/category-colors";
+import { categoryColor, categoryRoot } from "@/lib/category-colors";
+import { usePage } from "@/context/PageContext";
+import type { TimeRange } from "@/lib/aw-types";
 
-export function TopCategories() {
-  const { data, isLoading } = useTopCategories();
+interface TopCategoriesProps {
+  rangeOverride?: TimeRange;
+  title?: string;
+  description?: string;
+}
+
+export function TopCategories({
+  rangeOverride,
+  title = "Top categories",
+  description = "Time per category",
+}: TopCategoriesProps = {}) {
+  const { data, isLoading } = useTopCategories(rangeOverride);
+  const { push } = usePage();
   const total = (data ?? []).reduce((a, c) => a + c.duration, 0);
 
   const rows = (data ?? []).map((cat) => ({
@@ -27,7 +40,10 @@ export function TopCategories() {
     sub: cat.name[1],
     duration: cat.duration,
     color: categoryColor(cat.name),
+    root: categoryRoot(cat.name),
   }));
+
+  const filterByRoot = (root: string) => push("categories", { category: root });
 
   const config: ChartConfig = Object.fromEntries(
     rows.map((r) => [r.key, { label: r.label, color: r.color }]),
@@ -35,8 +51,8 @@ export function TopCategories() {
 
   return (
     <WidgetCard
-      title="Top categories"
-      description="Time per category"
+      title={title}
+      description={description}
       action={
         <Badge variant="outline" className="font-mono tabular-nums uppercase">
           {fmtDuration(total)} total
@@ -104,6 +120,11 @@ export function TopCategories() {
                 outerRadius={72}
                 strokeWidth={2}
                 stroke="var(--card)"
+                onClick={(slice: unknown) => {
+                  const r = (slice as { root?: string }).root;
+                  if (r) filterByRoot(r);
+                }}
+                style={{ cursor: "pointer" }}
               >
                 {rows.map((r) => (
                   <Cell key={r.key} fill={r.color} />
@@ -116,9 +137,12 @@ export function TopCategories() {
             {rows.map((r) => {
               const pct = total > 0 ? (r.duration / total) * 100 : 0;
               return (
-                <div
+                <button
+                  type="button"
                   key={r.key}
-                  className="grid grid-cols-[9px_1fr_auto_auto] items-center gap-2.5 rounded-sm bg-muted/30 px-2.5 py-1.5"
+                  onClick={() => filterByRoot(r.root)}
+                  className="grid grid-cols-[9px_1fr_auto_auto] cursor-pointer items-center gap-2.5 rounded-sm bg-muted/30 px-2.5 py-1.5 text-left transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                  title={`Click to filter by ${r.label}`}
                 >
                   <span
                     className="size-2 rounded-sm"
@@ -138,7 +162,7 @@ export function TopCategories() {
                   <span className="min-w-14 text-right font-mono tabular-nums text-muted-foreground">
                     {fmtDuration(r.duration)}
                   </span>
-                </div>
+                </button>
               );
             })}
           </div>

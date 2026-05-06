@@ -64,17 +64,37 @@ export function ListRow({
   className,
   title,
   children,
+  onClick,
 }: {
   cols?: string;
   className?: string;
   title?: string;
   children: ReactNode;
+  /** When provided, the row becomes a button-shaped focusable element so
+   *  click-to-filter wiring is keyboard-accessible (PLAN.md §1.0 wedge). */
+  onClick?: () => void;
 }) {
+  const interactive = onClick != null;
   return (
     <div
       title={title}
+      role={interactive ? "button" : undefined}
+      tabIndex={interactive ? 0 : undefined}
+      onClick={onClick}
+      onKeyDown={
+        interactive
+          ? (e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                onClick!();
+              }
+            }
+          : undefined
+      }
       className={cn(
         "grid items-center gap-2.5 rounded-sm bg-muted/30 px-2.5 py-1.5 transition-colors hover:bg-muted/60",
+        interactive &&
+          "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
         className,
       )}
       style={{ gridTemplateColumns: cols.replace(/_/g, " ") }}

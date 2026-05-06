@@ -214,7 +214,7 @@ function HeatCell({
       : `color-mix(in oklab, var(--chart-1) ${Math.round(intensity * 100)}%, transparent)`;
   return (
     <div
-      className="h-[18px] cursor-crosshair rounded-sm border border-border/30 hover:[box-shadow:0_0_0_1px_var(--ring)]"
+      className="h-[18px] rounded-sm border border-border/30 hover:[box-shadow:0_0_0_1px_var(--ring)]"
       style={{ background: bg }}
       title={title}
     />

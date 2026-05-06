@@ -1,13 +1,14 @@
 /**
- * 5-up KPI tray. The five most-asked questions about a tracked day:
- *  1. Active   — total active seconds (vs yesterday)
- *  2. Productive — time in the "Work" root (configurable later)
- *  3. Longest focus — biggest uninterrupted run on a single category
- *  4. Started — first event of the day
- *  5. Peak hour — hour of day with most activity
+ * 5-up KPI tray. Discovery-shaped, not score-shaped (PLAN.md §1.0).
  *
- * Sparklines render through shadcn ChartContainer with config-driven
- * colors and tooltips, so the visual pipeline matches TopCategories.
+ *  1. Active        — total active seconds, vs trailing-7-day median
+ *  2. Best Window   — densest 3h focus window of the day
+ *  3. Longest       — biggest uninterrupted run on a single category
+ *  4. Cadence       — start → end (or 'now') + idle gap count
+ *  5. Pattern shift — largest category-time delta vs trailing baseline
+ *
+ * Each card carries a "vs typical" sub-line gated on ≥1 effective baseline
+ * day; below that we show a build-up placeholder.
  */
 
 import { Area, AreaChart, Bar, BarChart, Cell, ReferenceLine, Tooltip } from "recharts";
@@ -28,20 +29,24 @@ import {
 } from "@/components/ui/chart";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
-  useAfkTodayVsYesterday,
+  useAfkSummary,
   useCategorizedEvents,
   useHourly,
+  useTrailingDays,
 } from "@/hooks/useAw";
-import { fmtClock, fmtDuration, fmtPercent } from "@/lib/format";
+import { fmtClock, fmtDuration } from "@/lib/format";
 import {
   firstActivity,
   focusByHour,
   longestFocus,
-  peakHour,
-  productiveByHour,
-  productiveSeconds,
 } from "@/lib/kpi";
-import { useId, type ReactNode } from "react";
+import { bestWindow } from "@/lib/best-window";
+import { cadence } from "@/lib/cadence";
+import { trailingStats } from "@/lib/baselines";
+import { dominantShift } from "@/lib/anomaly";
+import { categoryRoot } from "@/lib/category-colors";
+import type { CategorizedEvent } from "@/lib/aw-types";
+import { useId, useMemo, type ReactNode } from "react";
 
 interface SparkProps {
   values: number[];
@@ -49,24 +54,23 @@ interface SparkProps {
   color: string;
   format: (v: number) => string;
   shape?: "area" | "bar";
-  /** x-index (0-23) to mark visually. Area: vertical dashed line at that x.
-   *  Bar: that bar gets a brighter fill (foreground color). */
+  /** Single index to mark visually. Area: vertical dashed line. Bar:
+   *  brighter fill at that index. */
   markX?: number | null;
+  /** Inclusive range [start, end] to highlight in a bar spark. Used by
+   *  the Best Window card to show its 3-hour band. */
+  markRange?: [number, number] | null;
 }
 
 interface KpiCardProps {
   icon: IconSvgElement;
   label: string;
   value: ReactNode;
-  /** Small sub-label under the value, replaces the static peak chip. */
   sub?: ReactNode;
   delta?: { text: string; tone: "up" | "down" | "flat" };
   spark?: SparkProps;
   loading?: boolean;
-  /** Hint shown muted under value when value is empty/zero, e.g.
-   *  "No matched 'Work' time — check category rules." */
   emptyHint?: string;
-  /** Tooltip on the icon. Useful for explaining metric definitions. */
   tip?: string;
 }
 
@@ -109,6 +113,11 @@ function KpiCard({
     ? { [spark.configKey]: { label, color: spark.color } }
     : {};
 
+  const inMarkRange = (i: number): boolean => {
+    if (spark?.markRange == null) return false;
+    return i >= spark.markRange[0] && i <= spark.markRange[1];
+  };
+
   if (loading) {
     return (
       <Card size="sm" className="gap-0 overflow-hidden py-0">
@@ -150,7 +159,9 @@ function KpiCard({
                       fill={
                         spark!.markX != null && i === spark!.markX
                           ? "var(--foreground)"
-                          : colorVar
+                          : inMarkRange(i)
+                            ? "var(--foreground)"
+                            : colorVar
                       }
                     />
                   ))}
@@ -205,9 +216,6 @@ function KpiCard({
         )}
       </div>
 
-      {/* 2×2 block. Top: label / value. Bottom: sub / trend.
-          Icon inlines with the label so the metric retains identity
-          without claiming a third column. */}
       <div className="flex items-start justify-between gap-3 px-3 py-2.5">
         <div className="min-w-0 flex-1">
           <div
@@ -250,52 +258,98 @@ function KpiCard({
   );
 }
 
+/** Format a "vs typical" sub-line. Returns null when baseline isn't ready. */
+function vsTypical(
+  todayVal: number,
+  baselineMedian: number,
+  effectiveDays: number,
+  fmt: (n: number) => string,
+): string | null {
+  if (effectiveDays === 0) return null;
+  const delta = todayVal - baselineMedian;
+  if (delta === 0) return "matches typical";
+  const sign = delta > 0 ? "+" : "−";
+  return `${sign}${fmt(Math.abs(delta))} vs typical`;
+}
+
+/** Build the per-category-root totals map a single day's events. */
+function rootTotals(events: readonly CategorizedEvent[]): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const ev of events) {
+    const root = categoryRoot(ev.category);
+    out[root] = (out[root] ?? 0) + ev.duration;
+  }
+  return out;
+}
+
 export function KpiStrip() {
-  const { today: afkToday, yesterday: afkYest } = useAfkTodayVsYesterday();
+  const { data: today, isLoading: todayLoading } = useCategorizedEvents();
   const { data: hourly, isLoading: hourlyLoading } = useHourly();
-  const { data: categorized, isLoading: catzdLoading } = useCategorizedEvents();
+  const { data: afk, isLoading: afkLoading } = useAfkSummary(true);
+  const { data: trailing, isLoading: trailingLoading } = useTrailingDays(8);
 
-  // 1. Active
-  const activeSec = afkToday.data?.active_seconds ?? 0;
-  const yestActiveSec = afkYest.data?.active_seconds ?? 0;
-  const activeDelta = activeSec - yestActiveSec;
+  // Today's derived metrics
+  const todayEvents = today ?? [];
+  const activeSec = afk?.active_seconds ?? 0;
+  const afkAvailable = afk != null;
+  const longest = longestFocus(todayEvents);
+  const window = bestWindow(todayEvents);
+  const focusSpark = focusByHour(todayEvents);
   const activeSpark = (hourly ?? []).map((h) => h.duration);
+  const cad = cadence(todayEvents, afk?.intervals ?? []);
 
-  // 2. Productive
-  const productiveSec = categorized ? productiveSeconds(categorized) : 0;
-  const productiveSpark = categorized ? productiveByHour(categorized) : [];
-  const productivePct = activeSec > 0 ? productiveSec / activeSec : 0;
+  // Trailing-7 baselines (skip index 0 which is today itself)
+  const past = useMemo(
+    () => (trailing ?? []).filter((d) => d.daysAgo > 0 && d.events != null),
+    [trailing],
+  );
+  const pastActiveSec = past.map((d) => d.activeSec ?? 0);
 
-  // 3. Longest focus + per-hour focused minutes (only counts time in qualifying runs)
-  const focus = categorized ? longestFocus(categorized) : { seconds: 0, root: null };
-  const focusSpark = categorized ? focusByHour(categorized) : [];
+  const activeStats = trailingStats(pastActiveSec, pastActiveSec);
+  const longestStats = trailingStats(
+    past.map((d) => longestFocus(d.events ?? []).seconds),
+    pastActiveSec,
+  );
+  const bestWindowStats = trailingStats(
+    past.map((d) => bestWindow(d.events ?? [])?.seconds ?? 0),
+    pastActiveSec,
+  );
 
-  // 4. Started at — marker x = the hour the day began
-  const started = categorized ? firstActivity(categorized) : null;
-  const startedHour = started ? started.getHours() : null;
+  // Pattern shift: per-category-root totals across past days vs today
+  const todayRoots = useMemo(() => rootTotals(todayEvents), [todayEvents]);
+  const trailingRootData = useMemo(
+    () =>
+      past.map((d) => ({
+        totals: rootTotals(d.events ?? []),
+        activeSec: d.activeSec ?? 0,
+      })),
+    [past],
+  );
+  const shift = useMemo(
+    () => dominantShift({ today: todayRoots, trailing: trailingRootData }),
+    [todayRoots, trailingRootData],
+  );
 
-  // 5. Peak hour — marker x = the peak hour itself
-  const peak = hourly ? peakHour(hourly) : null;
-  const peakSpark = (hourly ?? []).map((h) => h.duration);
+  const baselineDaysReady = activeStats.effectiveDays;
+  const baselinePlaceholder =
+    baselineDaysReady === 0
+      ? `building baseline (${past.length}/7 days)`
+      : null;
+
+  const loading =
+    todayLoading || hourlyLoading || afkLoading || trailingLoading;
 
   return (
     <section className="grid grid-cols-5 gap-1.5 rounded-xl bg-secondary p-1.5">
+      {/* 1. Active */}
       <KpiCard
         icon={Activity03Icon}
         label="Active time"
-        value={fmtDuration(activeSec)}
+        value={afkAvailable ? fmtDuration(activeSec) : "—"}
         sub={
-          afkYest.data
-            ? `vs yesterday ${fmtDuration(yestActiveSec)}`
-            : "today"
-        }
-        delta={
-          afkYest.data
-            ? {
-                text: `${activeDelta >= 0 ? "↑" : "↓"} ${fmtDuration(Math.abs(activeDelta))}`,
-                tone: activeDelta > 0 ? "up" : activeDelta < 0 ? "down" : "flat",
-              }
-            : undefined
+          baselinePlaceholder ??
+          vsTypical(activeSec, activeStats.median, activeStats.effectiveDays, fmtDuration) ??
+          "today"
         }
         spark={{
           values: activeSpark,
@@ -303,95 +357,133 @@ export function KpiStrip() {
           color: "var(--chart-1)",
           format: fmtDuration,
         }}
-        loading={afkToday.isLoading || hourlyLoading}
-        tip="Total time you weren't AFK today"
+        loading={loading}
+        emptyHint={!afkAvailable ? "no AFK bucket — set up tracker" : undefined}
+        tip="Total time you weren't AFK today, with the median active total of the trailing 7 days as baseline."
       />
 
-      <KpiCard
-        icon={RocketIcon}
-        label="Productive time"
-        value={fmtDuration(productiveSec)}
-        sub={
-          activeSec > 0
-            ? `${fmtPercent(productivePct)} of active`
-            : "no active time yet"
-        }
-        spark={{
-          values: productiveSpark,
-          configKey: "productive",
-          color: "var(--chart-1)",
-          format: fmtDuration,
-        }}
-        loading={catzdLoading}
-        emptyHint={
-          activeSec > 0 && productiveSec === 0
-            ? "No 'Work' time — set up category rules"
-            : undefined
-        }
-        tip="Time categorized under 'Work'. Edit rules in Settings."
-      />
-
+      {/* 2. Best Window */}
       <KpiCard
         icon={Target02Icon}
-        label="Longest focus"
-        value={focus.seconds > 0 ? fmtDuration(focus.seconds) : "—"}
-        sub={focus.root ? `in ${focus.root}` : "no focused runs"}
+        label="Best window"
+        value={
+          window
+            ? `${String(window.startHour).padStart(2, "0")}–${String(window.endHour).padStart(2, "0")}`
+            : "—"
+        }
+        sub={
+          window
+            ? (baselinePlaceholder ??
+              vsTypical(
+                window.seconds,
+                bestWindowStats.median,
+                bestWindowStats.effectiveDays,
+                fmtDuration,
+              ) ??
+              `${fmtDuration(window.seconds)} focused`)
+            : "no focused window yet"
+        }
         spark={{
           values: focusSpark,
-          configKey: "focus",
+          configKey: "bestwin",
+          color: "var(--chart-2)",
+          format: fmtDuration,
+          shape: "bar",
+          markRange: window ? [window.startHour, window.endHour - 1] : null,
+        }}
+        loading={loading}
+        tip="Densest 3-hour window of focused stretches today (≥2m on a single category root). Highlighted bars show that window."
+      />
+
+      {/* 3. Longest stretch */}
+      <KpiCard
+        icon={RocketIcon}
+        label="Longest stretch"
+        value={longest.seconds > 0 ? fmtDuration(longest.seconds) : "—"}
+        sub={
+          longest.seconds > 0
+            ? (vsTypical(
+                longest.seconds,
+                longestStats.median,
+                longestStats.effectiveDays,
+                fmtDuration,
+              ) ?? `in ${longest.root ?? ""}`)
+            : "no focused stretches yet"
+        }
+        spark={{
+          values: focusSpark,
+          configKey: "longest",
           color: "var(--chart-2)",
           format: fmtDuration,
           shape: "bar",
         }}
-        loading={catzdLoading}
+        loading={loading}
         emptyHint={
-          activeSec > 0 && focus.seconds === 0
+          activeSec > 0 && longest.seconds === 0
             ? "No focused runs ≥ 2m yet"
             : undefined
         }
-        tip="Longest uninterrupted run on a single category root (≥2m). Bars show focused minutes per hour."
+        tip="Longest uninterrupted run on a single category root today (≥2m), with the trailing-7-day median as baseline."
       />
 
+      {/* 4. Cadence */}
       <KpiCard
         icon={Sun01Icon}
-        label="Started today"
-        value={started ? fmtClock(started) : "—"}
-        sub={started ? agoLabel(started) : "no activity yet"}
+        label="Cadence"
+        value={cad.start ? fmtClock(cad.start) : "—"}
+        sub={
+          cad.start
+            ? cadenceSub(cad.start, cad.end, cad.idleGaps)
+            : "no activity yet"
+        }
         spark={{
           values: activeSpark,
-          configKey: "started",
+          configKey: "cadence",
           color: "var(--chart-4)",
           format: fmtDuration,
-          markX: startedHour,
+          markX: cad.start ? cad.start.getHours() : null,
         }}
-        loading={catzdLoading || hourlyLoading}
-        tip="Time of your first categorized event today. Dashed line marks that hour against today's active flow."
+        loading={loading}
+        tip="Start → end of your day plus idle gaps ≥ 10min. Dashed line marks your start hour."
       />
 
+      {/* 5. Pattern shift */}
       <KpiCard
         icon={Clock01Icon}
-        label="Peak hour"
-        value={peak ? `${String(peak.hour).padStart(2, "0")}:00` : "—"}
-        sub={peak ? `${fmtDuration(peak.seconds)} active` : "no peak yet"}
-        spark={{
-          values: peakSpark,
-          configKey: "peak",
-          color: "var(--chart-5)",
-          format: fmtDuration,
-          shape: "bar",
-          markX: peak?.hour ?? null,
-        }}
-        loading={hourlyLoading}
-        tip="Hour of day with the most active time. Highlighted bar = peak."
+        label="Pattern shift"
+        value={shift ? formatShiftValue(shift.deltaSec) : "—"}
+        sub={
+          shift
+            ? `${shift.category} vs typical`
+            : (baselinePlaceholder ?? "no notable shifts")
+        }
+        loading={loading}
+        emptyHint={
+          shift && shift.zScore !== 0
+            ? `Z-score ${shift.zScore >= 0 ? "+" : ""}${shift.zScore.toFixed(1)}`
+            : undefined
+        }
+        tip="The category whose absolute deviation from your trailing-7-day median is largest today. Pulse is observational; this is what's notable, not a target to chase."
       />
     </section>
   );
 }
 
-function agoLabel(d: Date): string {
-  const min = Math.floor((Date.now() - d.getTime()) / 60_000);
-  if (min < 60) return `${min}m ago`;
-  const h = Math.floor(min / 60);
-  const m = min % 60;
-  return m > 0 ? `${h}h ${m}m ago` : `${h}h ago`;
+function cadenceSub(
+  _start: Date,
+  end: Date | null,
+  gaps: number,
+): string {
+  const endStr = end ? `→ ${fmtClock(end)}` : "→ now";
+  if (gaps === 0) return endStr;
+  return `${endStr} · ${gaps} idle gap${gaps === 1 ? "" : "s"}`;
 }
+
+function formatShiftValue(deltaSec: number): string {
+  const sign = deltaSec > 0 ? "+" : "−";
+  return `${sign}${fmtDuration(Math.abs(deltaSec))}`;
+}
+
+// firstActivity is no longer used directly in this component; kept exported
+// from kpi.ts for tests and future use.
+void firstActivity;

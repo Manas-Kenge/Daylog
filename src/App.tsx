@@ -8,6 +8,8 @@ import { ActivityLogPage } from "@/pages/ActivityLogPage";
 import { HourlyPatternsPage } from "@/pages/HourlyPatternsPage";
 import { CategoriesPage } from "@/pages/CategoriesPage";
 import { WebPage } from "@/pages/WebPage";
+import { WeekPage } from "@/pages/WeekPage";
+import { MonthPage } from "@/pages/MonthPage";
 import { Wizard } from "@/pages/Wizard";
 import { usePage, type PageId } from "@/context/PageContext";
 import { useFirstLaunch } from "@/hooks/useFirstLaunch";
@@ -60,6 +62,8 @@ function PageOutlet({ page }: { page: PageId }) {
     case "hourly":     return <HourlyPatternsPage />;
     case "categories": return <CategoriesPage />;
     case "web":        return <WebPage />;
+    case "week":       return <WeekPage />;
+    case "month":      return <MonthPage />;
     case "settings":   return <SettingsPlaceholder />;
   }
 }

@@ -5,22 +5,22 @@
 
 import type { CategorizedEvent, HourBucket } from "./aw-types";
 import { categoryRoot } from "./category-colors";
-import { isProductive } from "./productive";
+import { isWork } from "./productive";
 
-/** Sum duration of events whose root is in the productive allowlist. */
-export function productiveSeconds(events: readonly CategorizedEvent[]): number {
+/** Sum duration of events whose root is in the Work allowlist. */
+export function workSeconds(events: readonly CategorizedEvent[]): number {
   let s = 0;
   for (const ev of events) {
-    if (isProductive(ev.category)) s += ev.duration;
+    if (isWork(ev.category)) s += ev.duration;
   }
   return s;
 }
 
-/** Productive-by-hour spark (24 entries). */
-export function productiveByHour(events: readonly CategorizedEvent[]): number[] {
+/** Work-time-by-hour spark (24 entries). */
+export function workByHour(events: readonly CategorizedEvent[]): number[] {
   const out = new Array(24).fill(0);
   for (const ev of events) {
-    if (!isProductive(ev.category)) continue;
+    if (!isWork(ev.category)) continue;
     const h = new Date(ev.timestamp).getHours();
     if (h >= 0 && h < 24) out[h] += ev.duration;
   }

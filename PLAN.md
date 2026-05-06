@@ -6,6 +6,27 @@ A native Linux desktop dashboard for ActivityWatch.
 
 ---
 
+## 1.0 Post-CEO-review addendum (2026-05-06)
+
+After a `/plan-ceo-review` session, the dashboard scope was deliberately expanded under a re-affirmed observational thesis. The *thesis* didn't change — Pulse remains observational, not nudging — but the *KPI surface* was reshaped to lean harder into pattern-discovery, the unique-to-Pulse wedge that cloud trackers can't match (no round-trip latency) and ActivityWatch can't deliver (no UI).
+
+Locked decisions:
+
+1. **KPI strip rebuilt around discovery, not scoring.** Replace `Productive` with `Best Window`; replace `Peak hour` with `Pattern shift`; replace `Started` with `Cadence`. New 5-up: **Active · Best Window · Longest stretch · Cadence · Pattern shift**. Every card carries a one-line "vs trailing-7-day median" sub-text — the wedge.
+2. **"Notable today"** card replaces `CurrentFocus` on row 3 — surfaces 1–2 daily anomalies vs rolling baseline. CurrentFocus moves to the mini-window (where ambient widgets belong).
+3. **Timeline becomes the visual hero**, not row 2 of 3 equal rows. Yesterday-ghost rendered underneath at low opacity for at-a-glance comparison.
+4. **AFK is visible everywhere** — Timeline shows idle stripes, `Cadence` lists idle gaps, `Active` subtracts AFK with graceful degrade when no AFK bucket is present.
+5. **Click-to-filter palette wiring** — donut segments, app rows, and category badges open the palette with the filter typed in.
+6. **Week (stacked bars) + Month (calendar heatmap) pages** added as palette-reachable detail views.
+7. **Mini-window pulled forward from v0.2 → v0.1.** `--mini` CLI flag and palette command spawn a frameless 320×120 always-on-top secondary `WebviewWindow`. Cross-DE always-on-top is acknowledged-fiddly; ship without always-on-top first if the per-DE work overruns.
+8. **"Productive" terminology renamed to "Time in Work"** wherever it persists. The judgment frame ("productive" implies the rest is unproductive) is replaced with descriptive language. `productive_roots` → `work_roots` rename in `lib/productive.ts` follows from this.
+
+Out-of-scope, re-confirmed: Focus Score gauges, productive-time goals, app-usage limits, weekly streaks, Pomodoro timers. These are nudging mechanics. Pulse measures; it does not intervene. If anyone asks for these post-launch the answer is "RescueTime is over there."
+
+The sections below remain the implementation source of truth. §5 (Overview composition), §6 (deferred items), §13 (definition of done), and §14 (v0.2 roadmap) have been updated to reflect this addendum.
+
+---
+
 ## 1. Vision
 
 A single-window native desktop app that shows a beautiful, dense, real-time pulse of your day, sourced from the local ActivityWatch server you already have running. No browser tab. No sign-in. No cloud. The whole thing fits in one window with poster-quality information density.
@@ -166,22 +187,27 @@ A single-window app with one poster-quality dashboard view and a global command 
 ┌────────────────────────────────────────────────────────────────────┐
 │ Pulse              today · 14:23 · 5h 18m              [⌘K]        │
 ├────────────────────────────────────────────────────────────────────┤
-│  ┌─────────┬─────────┬──────────┬─────────┬──────────┐             │
-│  │ Active  │ Product.│ Longest  │ Started │ Peak hr  │  ← KpiStrip │
-│  │ 5h 18m  │ 3h 02m  │ 47m      │ 09:14   │ 14:00    │    (5-up)   │
-│  │ ↑ 23m   │ 57% act │ Work     │ 5h ago  │ 1h 12m   │             │
-│  └─────────┴─────────┴──────────┴─────────┴──────────┘             │
+│ ┌────────┬──────────┬──────────┬──────────┬───────────────────┐    │
+│ │ Active │ Best win │ Longest  │ Cadence  │ Pattern shift     │    │
+│ │ 5h 18m │ 14-17    │ 47m Work │ 09:14 →  │ +2h Browsing      │    │
+│ │ +18m   │ ▂▂▆▇▇▄▂  │ ▂▆█▇▃    │ now      │ vs typical Tue    │    │
+│ │ vs typ │ +10% vs  │ +12m vs  │ 2 idle   │ (-31m Work)       │    │
+│ │        │ typical  │ typical  │ gaps     │                   │    │
+│ └────────┴──────────┴──────────┴──────────┴───────────────────┘    │
 ├────────────────────────────────────────────────────────────────────┤
-│  Today's timeline                                                  │
-│  [▓▓░░▓▓▓▓░░▓▓▓▓▓▓░░░░▓▓▓▓ ... ]  ← horizontal heatmap, 24h       │
-│  hover: app + title at that instant                                │
+│ Today's timeline (HERO ROW — ~50% of vertical space)               │
+│ [▓▓░░▓▓▓▓░░░▓▓▓▓▓▓░░░░▒▒▓▓▓▓▓▓▓▓░░░░▒░  ▓▓▓░│ ◀ NOW              │
+│  ░░░░▒▒▒░░░▒▒▒▒▒▒░░░░░░░▒▒▒▒▒▒▒▒░░░░░░  ▒▒▒░│  ← yesterday-ghost │
+│ legend: Work · Comms · Browsing · Media · Other · │ idle (AFK)     │
+│ hover: app + title at that instant                                 │
 ├────────────────────────────────────────────────────────────────────┤
-│  Top apps              │  Top categories     │  Current focus      │
-│  ────────────────      │  ────────────────   │  ─────────────      │
-│  kitty       2h 14m ▁▃▅│  dev work    3h 02m │  ◐ 47 min           │
-│  firefox     1h 03m ▂▄▆│  comms       0h 41m │  ↳ kitty            │
-│  Code        0h 42m ▁▂▃│  reading     0h 33m │     "PLAN.md"       │
-│  Slack       0h 12m ▁▁▂│  uncategor.  1h 02m │                     │
+│ Top apps              │ Top categories      │ Notable today        │
+│ ────────────────      │ ────────────────    │ ─────────────────    │
+│ kitty       2h 14m ▁▃▅│ Work        3h 02m  │ • 3 stretches of     │
+│ firefox     1h 03m ▂▄▆│ Comms       0h 41m  │   Code 30+ min       │
+│ Code        0h 42m ▁▂▃│ Browsing    0h 33m  │   (typical: 1)       │
+│ Slack       0h 12m ▁▁▂│ (donut, click =     │ • Late start vs avg  │
+│ click → palette filter│  filter to Apps)    │   (09:14 vs 08:42)   │
 └────────────────────────────────────────────────────────────────────┘
 
    ↓  user hits ⌘K (or Ctrl+K)
@@ -204,27 +230,30 @@ A single-window app with one poster-quality dashboard view and a global command 
 
 | Row | Widget(s) | What it shows |
 |---|---|---|
-| 1 | `KpiStrip` (5-up) | Active (vs-yesterday delta) · Productive · Longest focus · Started · Peak hour |
-| 2 | `Timeline` | 24h horizontal heatmap, color-encoded by category, hover reveals app + title |
-| 3 | `TopApps` \| `TopCategories` \| `CurrentFocus` | Three equal columns: top apps with sparklines, top categories with bars, live focus session |
+| 1 | `KpiStrip` (5-up) | Active · Best Window · Longest stretch · Cadence · Pattern shift. Each card carries a one-line "vs trailing-7-day median" sub-text. |
+| 2 (HERO) | `Timeline` | 24h heatmap, color-encoded by category, AFK as low-opacity stripes, NOW indicator, yesterday-ghost rendered underneath at low opacity. Takes ~50% of vertical space. |
+| 3 | `TopApps` \| `TopCategories` \| `NotableToday` | Three columns: top apps with sparklines (click → palette filter), top categories donut (click segment → palette filter), notable-today anomaly card. |
 
 **KPI definitions (which questions each card answers):**
 
 | Card | Question | Source | Notes |
 |---|---|---|---|
-| **Active** | "How long was I at the keyboard today?" | `aw_afk_summary` | Total active seconds. Vs-yesterday delta in a Badge. |
-| **Productive** | "Did I actually do work?" | `useCategorizedEvents` filtered by `PRODUCTIVE_ROOTS` | v0.1: hardcoded to `["Work"]`. Sub-label shows `% of active`. Empty-state hint when zero: *"No 'Work' time — set up category rules"*. |
-| **Longest focus** | "What was my deepest stretch today?" | `useCategorizedEvents` | Biggest uninterrupted run on a single category root, ≥120s floor. Sub-label shows the root. |
-| **Started** | "What time did I actually start work?" | first event in range | Sub-label shows `Nh Nm ago` for context within the working day. |
-| **Peak hour** | "When am I most active?" | `useHourly` | Hour of day with max active duration. Sub-label shows the duration at peak. |
+| **Active** | "How long was I at the keyboard today?" | `aw_afk_summary` | Total active seconds (AFK subtracted). "vs typical" sub-text against trailing-7-day median. Degrades to "—" when no AFK bucket present. |
+| **Best Window** | "When did I focus best today?" | `useCategorizedEvents` + focused-stretches reducer (`focusByHour`) | Hour-range with the highest concentration of qualifying focus runs (≥120s on a single category root). E.g., `14-17`. Inline sparkline of focus-by-hour with the window highlighted. |
+| **Longest stretch** | "What was my deepest stretch today?" | `useCategorizedEvents` | Biggest uninterrupted run on a single category root, ≥120s floor. Sub-label shows the root. |
+| **Cadence** | "What did my day actually look like?" | first/last event in range + AFK intervals | Start time, end time (or `now` if active), count of idle gaps ≥10min. Replaces the v0.1-original `Started` and partly `Peak hour`. |
+| **Pattern shift** | "What's notable about today vs my typical day?" | trailing-7-day median per category, computed locally | The wedge metric. Surfaces the largest absolute delta against trailing-7-day median for the same weekday-class (workday vs weekend). E.g., `+2h Browsing vs typical Tue`. Suppressed until ≥7 days of history exist; placeholder reads `building baseline (N/7 days)`. |
 
-The "Productive" definition is opinionated and configurable later. v0.1 uses a single hardcoded root (`"Work"`) so the metric is honest: if you set up category rules well, the number is meaningful; if you don't, it's near-zero, which is a clear signal that categorization needs setup. Phase 4 settings UI will expose `productive_roots: string[]` (default `["Work"]`) and a per-rule `productive: boolean` flag for cases like work-Slack vs personal-Discord. Constant lives at `src/lib/productive.ts`.
+The "Productive" concept (Work-rooted time) is no longer a dedicated KPI card — it's served by `TopCategories` (Work appears as a category row) and indirectly by `Pattern shift` (which surfaces deltas in Work specifically when they're the largest of the day). The `productive.ts` module is renamed to use `work_roots` terminology to drop the implicit judgment frame; Phase 4 settings UI lets the user edit this allowlist.
 
 **Dropped from earlier KPI design** (and where the info now lives):
 
 | Old card | Why dropped | Where it lives now |
 |---|---|---|
-| `Activity %` | Just AFK ratio. 100% on a Twitter-all-day session. | Sub-label inside Productive card (`57% of active`). |
+| `Productive` | Single-number judgment metric. Implies the rest of the day was unproductive. Conflicts with the observational thesis. | Time in Work surfaces in `TopCategories`; deltas surface via `Pattern shift`. |
+| `Started` | One number doesn't tell the day's story; idle gaps and end-of-day are equally informative. | Subsumed by `Cadence`. |
+| `Peak hour` | Raw "most active hour" is less useful than "best *focus* window." Active ≠ focused. | Subsumed by `Best Window`. |
+| `Activity %` | Just AFK ratio. 100% on a Twitter-all-day session. | AFK now visible directly in Timeline as low-opacity stripes. |
 | `Switches` | No threshold for good/bad. Number with no signal. | Visible as color flicker in Timeline. |
 | `Apps unique` | "12 apps" not actionable. | Header chip on `TopApps`. |
 | `Top category` | Duplicates `TopCategories` donut directly below. | `TopCategories` widget. |
@@ -236,19 +265,30 @@ The "Productive" definition is opinionated and configurable later. v0.1 uses a s
 | Widget / page | Detail destination | Palette command |
 |---|---|---|
 | `HourlyDistribution` | `pages/HourlyPatternsPage.tsx` (existing) | `Hourly patterns` |
-| `WebPanel` | `pages/WebPage.tsx` (new; promote `WebPanel`) | `Web` |
+| `WebPanel` | `pages/WebPage.tsx` (existing) | `Web` |
 | `ActivityLog` | `pages/ActivityLogPage.tsx` (existing) | `Activity log` |
-| `WeekChart` | **Deleted.** Range-switching to `This week` covers it. | (none) |
+| `WeekStacked` (new) | `pages/WeekPage.tsx` — 7-day stacked bars by category root, with weekday-typical overlay | `Week` |
+| `MonthHeatmap` (new) | `pages/MonthPage.tsx` — calendar heatmap of total active per day, GitHub-contributions style | `Month` |
 
-Widget files for `HourlyDistribution`, `WebPanel`, `ActivityLog` stay in `components/widgets/` because their detail pages still consume them. Only `WeekChart.tsx` is removed.
+`Week` and `Month` are new palette destinations added in this scope expansion. They share a query-batch pattern with `HourlyPatternsPage` (parallel `aw_hourly` / `aw_categorized_events` per day). Widgets live under `components/widgets/` so the palette can preview a thumbnail for each.
 
-**Open layout call:** `CurrentFocus` may move from Row 3 column to a single line in the topbar (`◐ 47 min · kitty · "Sidebar.tsx"`). That frees Row 3 for `TopApps | TopCategories` at 50/50 — bigger, more readable. Try both during palette implementation.
+**`CurrentFocus` is no longer on Overview.** It moves to the v0.1 mini-window (see §14, pulled forward). Ambient widgets belong on ambient surfaces, not in the dashboard. Row 3's third column is now `NotableToday`.
+
+**`NotableToday` widget:** surfaces 1–2 anomalies per day computed against trailing-14-day rolling stats. Examples:
+- "3 stretches of Code 30+ min today (typical: 1)"
+- "Late start vs typical Tue (09:14 vs 08:42)"
+- "Unusually quiet morning — no Comms before 11:00"
+
+Anomaly thresholds need empirical tuning. Start dumb: Z-score against trailing 14 days, suppress when absolute delta < 15min OR daily total < 30min. Empty state: "No notable patterns today." Card never claims certainty it doesn't have.
+
+**Click-to-filter palette wiring:** clicking any tracked-app row in `TopApps`, any donut segment in `TopCategories`, or any category badge anywhere on the dashboard opens the command palette pre-populated with that filter (e.g., `> kitty` typed into the search). Pure wiring against the existing `PageContext.push()` — no new navigation surface, just makes the existing widgets *talk to each other* via the keyboard-summonable surface.
 
 **Command palette (primary navigation):**
 - Built on `cmdk` (via shadcn's `Command` component).
 - Hotkeys: `⌘K` and `Ctrl+K` both bind globally inside the window. `Esc` dismisses. `?` opens shortcut help.
-- Static commands: `Today`, `Yesterday`, `This week`, `This month` (range switch); `Apps`, `Categories`, `Hourly patterns`, `Activity log` (detail views); `Settings → Tracking | Categories | General`.
+- Static commands: `Today`, `Yesterday`, `This week`, `This month` (range switch); `Apps`, `Categories`, `Hourly patterns`, `Week`, `Month`, `Activity log` (detail views); `Mini` (spawns the v0.1 mini-window — see §14); `Settings → Tracking | Categories | General`.
 - Dynamic commands: each tracked app and category becomes a typeable result (`kitty 2h 14m → jump to detail`).
+- Click-driven entry: clicking any donut segment, app row, or category badge on the dashboard opens the palette pre-populated with that term — palette remains the single navigation surface.
 - Detail views render in the main pane. Approach undecided between sliding overlay (dashboard stays behind) and route swap; pick during impl.
 - Affordance: a small `⌘K` chip in the topbar. First-launch toast hints at the shortcut. Not a hamburger menu.
 
@@ -280,13 +320,14 @@ Widget files for `HourlyDistribution`, `WebPanel`, `ActivityLog` stay in `compon
 | Cross-platform builds (macOS/Windows) | Linux-first per office-hours premise P2. Multi-OS CI doubles the build matrix. Re-evaluate after v0.1 stars >100. |
 | Sidebar navigation | Reverted to palette-primary in office-hours after a sidebar scaffold landed in `phase-3-dashboard`. Filling 8+ pages contradicts §1's "visual density beats feature density" rule. Sidebar code removed in Phase 3 rewrite. |
 | Topbar applet (GNOME shell extension showing current focus + today total) | **Explicit v0.2 roadmap.** This is the ambient-surface companion to the palette. Deferred only because cross-DE work (GNOME / KDE / Sway) is its own engineering project and would push v0.1 past the weekend budget. |
-| Pinned mini-window (frameless, always-on-top, 320×120 showing current focus + bar) | **Explicit v0.2 roadmap.** Cross-DE solution to the "pinnable" goal without per-DE widget systems. Same Tauri app, secondary window. |
+| ~~Pinned mini-window~~ | **MOVED INTO v0.1 SCOPE** post-CEO-review (§1.0). Frameless 320×120 secondary `WebviewWindow` spawned via `--mini` CLI flag or `Mini` palette command. Always-on-top behavior is best-effort per-DE; ship without it first if cross-DE work overruns. |
 | Tray icon / menubar widget | Linux tray support varies wildly across DEs (XEmbed vs SNI vs AppIndicator). The pinned mini-window above is the cross-DE alternative. |
 | Notifications / focus alerts | Outside the "passive observer" identity of v0.1. |
 | ~~Bundled `aw-server-rust` sidecar~~ | **MOVED INTO v0.1 SCOPE** — see Phase 5. Reframed: not a Tauri sidecar, but a session-scoped background daemon (systemd user unit, with XDG-autostart fallback). |
 | Flatpak / Snap | **Deferred to v0.2.** Sandboxing fights our use case (D-Bus access, Wayland foreign-toplevel, talking to localhost:5600, GNOME extension install). Each portal is its own rabbit hole. AppImage covers the universal-Linux requirement without the sandbox tax. |
 | AUR / nix / pacman / ebuild packages | **Community.** We don't ship distro-native packages beyond `.deb` and `.rpm`. We make the build reproducible (`bun run tauri build` after `scripts/fetch-binaries.sh`); packagers do the rest. |
-| Multi-day / weekly / monthly views | v0.2. Today first; hard to get density right even for one day. |
+| ~~Multi-day / weekly / monthly views~~ | **MOVED INTO v0.1 SCOPE** post-CEO-review (§1.0). `Week` (7-day stacked bars) and `Month` (calendar heatmap) palette destinations. |
+| Goal targets / app-usage limits / streaks / Pomodoro | **Re-confirmed NOT in scope** post-CEO-review. Behavioral nudging is a separate product. Pulse measures; it does not intervene. If users ask, the answer is "RescueTime is over there." |
 | Categorization rule editor (visual) | v0.1 ships with a JSON-edit list. Visual rule builder is its own feature. |
 | AW bucket creation / event editing | We are read-only against aw-server in v0.1. Period. |
 | GNOME Shell extension companion | Lateral path discussed in office-hours; revisit in v0.2 once the dashboard is done. |
@@ -876,9 +917,15 @@ pulse/
 - [ ] First-launch wizard correctly detects an existing AW install on `:5600` and skips bundled-stack install.
 - [ ] Tracking continues running after the Pulse window is closed; reopening Pulse shows stats covering the entire login session.
 - [ ] After a logout/login cycle, services restart automatically; no manual intervention required.
-- [ ] All five dashboard widgets render real data from the running aw-server: `KpiStrip`, `Timeline`, `TopApps`, `TopCategories`, `CurrentFocus`.
-- [ ] `Overview.tsx` composes exactly those five widgets in three rows. `HourlyDistribution`, `WebPanel`, `ActivityLog` are not imported by `Overview.tsx`. `WeekChart` is deleted.
-- [ ] All five widgets re-render correctly when `RangeContext` switches (Today / Yesterday / This week / This month).
+- [ ] All five Overview widgets render real data from the running aw-server: `KpiStrip` (Active · Best Window · Longest stretch · Cadence · Pattern shift), `Timeline` (hero row, with AFK stripes + yesterday-ghost), `TopApps`, `TopCategories`, `NotableToday`.
+- [ ] Each KPI card carries a "vs trailing-7-day median" sub-text (suppressed with `building baseline (N/7 days)` placeholder when <7 days of history).
+- [ ] `NotableToday` surfaces 0–2 anomaly cards per day; empty state reads `No notable patterns today` (never claims false positives).
+- [ ] `Overview.tsx` composes exactly those five widgets. `HourlyDistribution`, `WebPanel`, `ActivityLog`, `WeekStacked`, `MonthHeatmap` are not imported by `Overview.tsx` — they live on their own palette-reachable pages.
+- [ ] `Week` and `Month` palette destinations render correctly: 7-day stacked bars by category root with weekday-typical overlay; calendar heatmap of daily active total.
+- [ ] All five Overview widgets re-render correctly when `RangeContext` switches (Today / Yesterday / This week / This month).
+- [ ] Click-to-filter wiring: clicking a donut segment, app row, or category badge opens the palette with the term pre-typed.
+- [ ] AFK is visible everywhere: low-opacity stripes in Timeline, idle-gap count in Cadence, AFK subtracted from Active. Active KPI degrades to "—" with a tooltip when no AFK bucket exists.
+- [ ] Mini-window: `pulse --mini` (and the `Mini` palette command) spawns a frameless 320×120 secondary window showing current focus + a one-line category bar. Always-on-top is best-effort per-DE; documented gap if a DE doesn't honor the hint.
 - [ ] **No sidebar exists in the rendered DOM.** Single-page dashboard is the default view.
 - [ ] **Command palette opens on `⌘K` and `Ctrl+K`** anywhere in the window. `Esc` dismisses. `?` opens shortcut help.
 - [ ] **Range commands work:** `Today` / `Yesterday` / `This week` / `This month` switch the dashboard within one frame.
@@ -902,11 +949,13 @@ When all boxes are checked, tag `v0.1.0` and post to r/ActivityWatch, r/linux, a
 
 ---
 
-## 14. v0.2 roadmap (ambient surfaces)
+## 14. v0.2 roadmap (ambient surfaces + extensions)
 
-After v0.1 ships, the next-most-important surface is ambient visibility. Two complementary additions:
+The mini-window has been pulled into v0.1 (§1.0 addendum). What remains for v0.2:
 
-1. **Pinned mini-window.** A frameless, always-on-top, 320×120 secondary Tauri window showing current focus + a one-line bar of today's category split. Cross-DE (works on GNOME / KDE / Sway / wlroots). Solves the "pinnable on the desktop" goal without fighting per-DE widget systems. Shares the same Rust core; spawned via `WebviewWindow::new` from a tray-less menu entry or a `--mini` CLI flag.
-2. **GNOME shell topbar applet.** Companion extension that shows current focus + today total in the top bar. Hover reveals a small popover with top 3 apps. Talks to `aw-server` directly over HTTP (same `:5600`). Distributed via extensions.gnome.org and bundled in the `.deb` similar to `focused-window-dbus`.
-
-These were considered for v0.1 and consciously deferred. Cross-DE work for the topbar applet is its own engineering project; the pinned mini-window is straightforward but pushes v0.1 past the weekend budget. They are not optional polish — they are the second and third surfaces of the same product.
+1. **GNOME shell topbar applet.** Companion extension that shows current focus + today total in the top bar. Hover reveals a small popover with top 3 apps. Talks to `aw-server` directly over HTTP (same `:5600`). Distributed via extensions.gnome.org and bundled in the `.deb` similar to `focused-window-dbus`. Cross-DE work is its own engineering project; staying in v0.2.
+2. **KDE / Sway / wlroots ambient surfaces.** The mini-window is the cross-DE fallback; per-DE widgets (KDE Plasmoid, Sway tray) are post-v0.1 polish.
+3. **Per-rule `productive: boolean` flag** in category settings, with `work_roots`-aware Pattern Shift weighting (e.g., work-Slack contributes to Work, personal-Discord doesn't).
+4. **Configurable productive allowlist UI** — currently `work_roots` is hardcoded to `["Work"]`; v0.2 exposes it in Settings → General.
+5. **Browser activity (aw-watcher-web)** integration polish — first-class Web page already exists at v0.1; v0.2 adds a "you can install the browser extension" hint flow and a richer per-domain panel.
+6. **aarch64 builds** — neither aw-server-rust nor aw-awatcher publishes aarch64 release artifacts; v0.2 builds them from source as part of the release pipeline.
