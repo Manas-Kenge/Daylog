@@ -80,13 +80,6 @@ export function Topbar() {
     <header className="flex min-w-0 items-center justify-between gap-3.5 border-b bg-background px-4 py-2.5">
       {/* Left — brand + back-button (or active total) + delta */}
       <div className="flex min-w-0 shrink-0 items-center gap-3">
-        <div className="flex items-center gap-2">
-          <div className="relative size-5 rounded-md border bg-secondary">
-            <span className="absolute inset-0 m-auto size-1.5 rounded-full bg-foreground" />
-          </div>
-          <span className="font-semibold tracking-tight">Pulse</span>
-        </div>
-        <Separator orientation="vertical" className="h-4" />
         {page !== "overview" && (
           <button
             type="button"
