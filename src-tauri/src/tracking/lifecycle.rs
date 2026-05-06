@@ -1,11 +1,11 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use serde::Serialize;
 use tauri::AppHandle;
 
 use crate::aw_client::AwClient;
-use crate::tracking::{systemd, xdg_autostart, BinDir, InstallError};
+use crate::tracking::{config_dir, systemd, xdg_autostart, BinDir, InstallError};
 
 #[derive(Debug, thiserror::Error)]
 pub enum LifecycleError {
@@ -82,7 +82,7 @@ pub async fn install_supervisor(app: &AppHandle, bin_dir: &BinDir) -> Result<(),
     }
 }
 
-pub async fn status(_app: &AppHandle) -> Result<TrackerStatus, LifecycleError> {
+pub async fn status() -> Result<TrackerStatus, LifecycleError> {
     match detect() {
         Supervisor::Systemd => {
             let server = systemd::is_active(systemd::SERVER_UNIT).await?;
@@ -113,7 +113,7 @@ pub async fn status(_app: &AppHandle) -> Result<TrackerStatus, LifecycleError> {
 /// so historical queries still work. On XDG-autostart: stops the supervisor
 /// (and therefore both binaries), since selectively pausing a child of a
 /// shell-loop supervisor is fragile. Documented limitation.
-pub async fn pause(_app: &AppHandle) -> Result<(), LifecycleError> {
+pub async fn pause() -> Result<(), LifecycleError> {
     match detect() {
         Supervisor::Systemd => systemd::stop_watcher().await,
         Supervisor::XdgAutostart => xdg_autostart::stop().await,
@@ -129,14 +129,58 @@ pub async fn resume(_app: &AppHandle, bin_dir: &BinDir) -> Result<(), LifecycleE
     }
 }
 
-/// Disable + stop everything. Used on uninstall paths and the Settings →
-/// "Stop background tracking" toggle.
-pub async fn stop(_app: &AppHandle) -> Result<(), LifecycleError> {
+/// Disable + stop everything. Used on the Settings → "Stop background tracking"
+/// toggle. Leaves unit files / autostart entries / binaries in place so a
+/// re-enable is one command. For full removal, see `uninstall()`.
+pub async fn stop() -> Result<(), LifecycleError> {
     match detect() {
         Supervisor::Systemd => systemd::disable_all().await,
         Supervisor::XdgAutostart => xdg_autostart::uninstall().await,
         Supervisor::External => Ok(()),
     }
+}
+
+/// Full removal: stop services, delete unit files / autostart entries, delete
+/// the user-extracted binaries dir. Used by `pulse --uninstall-tracking` (the
+/// AppImage user's escape hatch) and the future Settings → "Uninstall tracking"
+/// button. Best-effort — missing files are not errors.
+///
+/// We do **not** delete `~/.local/share/activitywatch/` — that's the user's
+/// tracking history, not ours to remove.
+pub async fn uninstall() -> Result<(), LifecycleError> {
+    // 1. Stop and disable everything we can. Errors here are best-effort.
+    let _ = stop().await;
+
+    // 2. Remove our unit files / autostart entries. Missing files are fine.
+    let cfg = config_dir()?;
+    let _ = std::fs::remove_file(cfg.join("systemd").join("user").join(systemd::SERVER_UNIT));
+    let _ = std::fs::remove_file(cfg.join("systemd").join("user").join(systemd::WATCHER_UNIT));
+    let _ = std::fs::remove_file(cfg.join("autostart").join("pulse-tracker.desktop"));
+
+    // 3. systemd needs a daemon-reload after removing unit files so it forgets them.
+    //    Best-effort; user may not have systemd or the units may already be gone.
+    if Path::new("/run/systemd/system").exists() {
+        let _ = systemd::daemon_reload().await;
+    }
+
+    // 4. Remove the AppImage-extracted binaries dir, if any. System packages
+    //    (.deb / .rpm) own their copies under /usr/lib/<bundle-id>/ and the
+    //    package manager handles cleanup; nothing to do for those.
+    if let Some(dir) = user_bin_dir() {
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    Ok(())
+}
+
+/// `~/.local/share/pulse/bin/` (or under `$XDG_DATA_HOME`). Mirrors the path
+/// `install::place_binaries` uses on the AppImage carrier. Returns `None` if
+/// neither `XDG_DATA_HOME` nor `HOME` is set.
+fn user_bin_dir() -> Option<PathBuf> {
+    std::env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local").join("share")))
+        .map(|d| d.join("pulse").join("bin"))
 }
 
 /// Poll `127.0.0.1:5600/api/0/info` until it answers, or `timeout_secs` elapses.

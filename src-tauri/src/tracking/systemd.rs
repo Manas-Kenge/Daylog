@@ -52,6 +52,10 @@ pub async fn is_active(unit: &str) -> Result<UnitState, LifecycleError> {
     })
 }
 
+pub async fn daemon_reload() -> Result<(), LifecycleError> {
+    run("systemctl", &["--user", "daemon-reload"]).await
+}
+
 pub async fn stop_watcher() -> Result<(), LifecycleError> {
     run("systemctl", &["--user", "stop", WATCHER_UNIT]).await
 }

@@ -7,8 +7,8 @@ pub mod xdg_autostart;
 pub use gnome::ExtensionStatus;
 pub use install::{place_binaries, resolve_bin_dir, BinDir, InstallError};
 pub use lifecycle::{
-    detect, install_supervisor, pause, resume, status, stop, wait_until_live, LifecycleError,
-    Supervisor, TrackerStatus,
+    detect, install_supervisor, pause, resume, status, stop, uninstall, wait_until_live,
+    LifecycleError, Supervisor, TrackerStatus,
 };
 
 use std::path::{Path, PathBuf};

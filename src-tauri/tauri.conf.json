@@ -39,6 +39,16 @@
       "services/pulse-supervisor.sh.tmpl",
       "services/pulse-tracker.desktop.tmpl",
       "extensions/focused-window-dbus@flexagoon.com.zip"
-    ]
+    ],
+    "linux": {
+      "deb": {
+        "postInstallScript": "../scripts/postinst.sh",
+        "preRemoveScript": "../scripts/prerm.sh"
+      },
+      "rpm": {
+        "postInstallScript": "../scripts/postinst.sh",
+        "preRemoveScript": "../scripts/prerm.sh"
+      }
+    }
   }
 }

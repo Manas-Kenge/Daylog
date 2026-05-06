@@ -234,17 +234,17 @@ async fn tracking_install_supervisor(app: AppHandle) -> Result<TrackerStatus, Li
     let bin_dir = tracking::place_binaries(&app)?;
     tracking::install_supervisor(&app, &bin_dir).await?;
     tracking::wait_until_live(15).await?;
-    tracking::status(&app).await
+    tracking::status().await
 }
 
 #[tauri::command]
-async fn tracking_status(app: AppHandle) -> Result<TrackerStatus, LifecycleError> {
-    tracking::status(&app).await
+async fn tracking_status() -> Result<TrackerStatus, LifecycleError> {
+    tracking::status().await
 }
 
 #[tauri::command]
-async fn tracking_pause(app: AppHandle) -> Result<(), LifecycleError> {
-    tracking::pause(&app).await
+async fn tracking_pause() -> Result<(), LifecycleError> {
+    tracking::pause().await
 }
 
 #[tauri::command]
@@ -254,8 +254,13 @@ async fn tracking_resume(app: AppHandle) -> Result<(), LifecycleError> {
 }
 
 #[tauri::command]
-async fn tracking_stop(app: AppHandle) -> Result<(), LifecycleError> {
-    tracking::stop(&app).await
+async fn tracking_stop() -> Result<(), LifecycleError> {
+    tracking::stop().await
+}
+
+#[tauri::command]
+async fn tracking_uninstall() -> Result<(), LifecycleError> {
+    tracking::uninstall().await
 }
 
 #[tauri::command]
@@ -281,6 +286,18 @@ async fn aw_top_urls(range: TimeRange) -> Result<Vec<serde_json::Value>, AwError
         .query(queries::web_top_urls(), &[range.as_aw_timeperiod()])
         .await?;
     Ok(unwrap_first_array(res))
+}
+
+/// Synchronous wrapper around `tracking::uninstall()` for the CLI entrypoint
+/// (`pulse --uninstall-tracking`). Spins up a small tokio runtime so we don't
+/// require the caller to be in an async context.
+pub fn uninstall_blocking() -> Result<(), String> {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| format!("create runtime: {e}"))?;
+    rt.block_on(tracking::uninstall())
+        .map_err(|e| e.to_string())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -319,6 +336,7 @@ pub fn run() {
             tracking_detect,
             wizard_complete_get,
             wizard_complete_set,
+            tracking_uninstall,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
