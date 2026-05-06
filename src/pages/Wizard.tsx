@@ -161,7 +161,7 @@ function renderStep(state: State, h: Handlers) {
           body={
             <p className="text-sm text-muted-foreground">
               For systemd, you can also inspect logs with{" "}
-              <code>journalctl --user -u pulse-aw-server</code>.
+              <code>journalctl --user -u daylog-aw-server</code>.
             </p>
           }
           error={state.error}
