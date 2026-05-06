@@ -1,26 +1,66 @@
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { useEffect } from "react";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Topbar } from "@/components/layout/Topbar";
+import { CommandPalette } from "@/components/palette/CommandPalette";
+import { OverviewPage } from "@/pages/Overview";
+import { AppsPage } from "@/pages/AppsPage";
+import { ActivityLogPage } from "@/pages/ActivityLogPage";
+import { HourlyPatternsPage } from "@/pages/HourlyPatternsPage";
+import { CategoriesPage } from "@/pages/CategoriesPage";
+import { WebPage } from "@/pages/WebPage";
+import { usePage, type PageId } from "@/context/PageContext";
+import { useHotkey } from "@/hooks/useHotkey";
 
 function App() {
+  // Lock dark theme for now; theme-following is a later concern.
+  useEffect(() => {
+    document.documentElement.classList.add("dark");
+  }, []);
+
+  const { page, back } = usePage();
+
+  useHotkey({ key: "Escape", preventDefault: false, skipInInputs: true }, () => {
+    if (page !== "overview") back();
+  });
+
   return (
-    <div className="min-h-screen bg-background text-foreground flex items-center justify-center p-8">
-      <Card className="w-full max-w-md">
-        <CardHeader>
-          <CardTitle>Pulse</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <p className="text-sm text-muted-foreground">
-            shadcn preset wired up. Background, foreground, and card tokens
-            should all be from the preset.
-          </p>
-          <div className="flex gap-2">
-            <Button>Primary</Button>
-            <Button variant="secondary">Secondary</Button>
-            <Button variant="outline">Outline</Button>
-          </div>
-        </CardContent>
-      </Card>
+    <div className="grid h-screen w-screen grid-rows-[auto_1fr] overflow-hidden bg-background">
+      <Topbar />
+      <main className="flex min-h-0 min-w-0 flex-col gap-2.5 overflow-y-auto px-3.5 pb-5 pt-3">
+        <PageOutlet page={page} />
+      </main>
+      <CommandPalette />
     </div>
+  );
+}
+
+function PageOutlet({ page }: { page: PageId }) {
+  switch (page) {
+    case "overview":   return <OverviewPage />;
+    case "apps":       return <AppsPage />;
+    case "activity":   return <ActivityLogPage />;
+    case "hourly":     return <HourlyPatternsPage />;
+    case "categories": return <CategoriesPage />;
+    case "web":        return <WebPage />;
+    case "settings":   return <SettingsPlaceholder />;
+  }
+}
+
+function SettingsPlaceholder() {
+  return (
+    <Card size="sm">
+      <CardHeader>
+        <CardTitle>Settings</CardTitle>
+        <CardDescription>
+          Tracking, category rules, and general preferences live here.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <div className="py-10 text-center text-muted-foreground">
+          Phase 4 — not built yet.
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
