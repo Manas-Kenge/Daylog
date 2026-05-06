@@ -9,7 +9,6 @@ const EXT_UUID: &str = "focused-window-dbus@flexagoon.com";
 const EXT_RESOURCE: &str = "extensions/focused-window-dbus@flexagoon.com.zip";
 
 #[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "kebab-case")]
 pub struct ExtensionStatus {
     /// True iff this is a GNOME-Wayland session (the only case that needs the
     /// extension). aw-awatcher handles X11, KDE-Wayland, and wlroots-Wayland

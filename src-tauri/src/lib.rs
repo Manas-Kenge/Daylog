@@ -9,9 +9,10 @@ use aggregate::{
     unwrap_first_array, AfkSummary, CategorizedEvent, HourBucket,
 };
 use aw_client::{queries, AwClient, AwError, Bucket, Event, ServerInfo};
+use serde::Serialize;
 use categories::{CategoryConfig, CategoryError, CategorySummary, Matcher};
 use chrono::{DateTime, Utc};
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 use time::TimeRange;
 use tracking::{BinDir, ExtensionStatus, InstallError, LifecycleError, Supervisor, TrackerStatus};
 
@@ -178,6 +179,54 @@ fn tracking_detect_supervisor() -> Supervisor {
     tracking::detect()
 }
 
+/// First-launch probe: is there an aw-server already answering on :5600?
+/// Used by the wizard to decide between "use existing AW" and "install bundled".
+/// Never errors — connection refused / parse failure / anything else maps to None.
+#[derive(Debug, Serialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+enum Detection {
+    Existing { hostname: String, version: String },
+    None,
+}
+
+#[tauri::command]
+async fn tracking_detect() -> Detection {
+    match AwClient::new().info().await {
+        Ok(info) => Detection::Existing {
+            hostname: info.hostname,
+            version: info.version,
+        },
+        Err(_) => Detection::None,
+    }
+}
+
+const WIZARD_MARKER: &str = ".wizard-complete";
+
+#[tauri::command]
+fn wizard_complete_get(app: AppHandle) -> Result<bool, String> {
+    let dir = app
+        .path()
+        .app_config_dir()
+        .map_err(|e| e.to_string())?;
+    Ok(dir.join(WIZARD_MARKER).exists())
+}
+
+#[tauri::command]
+fn wizard_complete_set(app: AppHandle, complete: bool) -> Result<(), String> {
+    let dir = app
+        .path()
+        .app_config_dir()
+        .map_err(|e| e.to_string())?;
+    let marker = dir.join(WIZARD_MARKER);
+    if complete {
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        std::fs::write(&marker, b"").map_err(|e| e.to_string())?;
+    } else {
+        let _ = std::fs::remove_file(&marker);
+    }
+    Ok(())
+}
+
 /// Full first-launch install: place binaries → install systemd units (or
 /// XDG autostart) → wait until aw-server answers on :5600.
 #[tauri::command]
@@ -267,6 +316,9 @@ pub fn run() {
             tracking_stop,
             tracking_gnome_extension_status,
             tracking_setup_gnome_extension,
+            tracking_detect,
+            wizard_complete_get,
+            wizard_complete_set,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
