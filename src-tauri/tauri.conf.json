@@ -37,7 +37,8 @@
       "services/pulse-aw-server.service.tmpl",
       "services/pulse-awatcher.service.tmpl",
       "services/pulse-supervisor.sh.tmpl",
-      "services/pulse-tracker.desktop.tmpl"
+      "services/pulse-tracker.desktop.tmpl",
+      "extensions/focused-window-dbus@flexagoon.com.zip"
     ]
   }
 }

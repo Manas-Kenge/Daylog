@@ -20,16 +20,20 @@ LOCK="$REPO_ROOT/scripts/binaries.lock"
 # Mirror the URL logic in fetch-binaries.sh. Kept inline to avoid a shared lib.
 archive_url() {
   local component="$1" version="$2" target="$3"
-  local arch
-  case "$target" in
-    x86_64-unknown-linux-gnu) arch="x86_64" ;;
-    *) echo "fatal: unsupported target $target" >&2; exit 1 ;;
-  esac
+  local arch=""
+  if [ "$target" != "noarch" ]; then
+    case "$target" in
+      x86_64-unknown-linux-gnu) arch="x86_64" ;;
+      *) echo "fatal: unsupported target $target" >&2; exit 1 ;;
+    esac
+  fi
   case "$component" in
     aw-server-rust)
       echo "https://github.com/ActivityWatch/activitywatch/releases/download/${version}/activitywatch-${version}-linux-${arch}.zip" ;;
     aw-awatcher)
       echo "https://github.com/2e3s/awatcher/releases/download/${version}/aw-awatcher.zip" ;;
+    focused-window-dbus@flexagoon.com)
+      echo "https://extensions.gnome.org/download-extension/focused-window-dbus@flexagoon.com.shell-extension.zip?version_tag=${version}" ;;
     *) echo "fatal: unknown component $component" >&2; exit 1 ;;
   esac
 }

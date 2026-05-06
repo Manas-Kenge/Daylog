@@ -1,8 +1,10 @@
+pub mod gnome;
 pub mod install;
 pub mod lifecycle;
 pub mod systemd;
 pub mod xdg_autostart;
 
+pub use gnome::ExtensionStatus;
 pub use install::{place_binaries, resolve_bin_dir, BinDir, InstallError};
 pub use lifecycle::{
     detect, install_supervisor, pause, resume, status, stop, wait_until_live, LifecycleError,

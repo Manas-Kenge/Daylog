@@ -13,7 +13,7 @@ use categories::{CategoryConfig, CategoryError, CategorySummary, Matcher};
 use chrono::{DateTime, Utc};
 use tauri::AppHandle;
 use time::TimeRange;
-use tracking::{BinDir, InstallError, LifecycleError, Supervisor, TrackerStatus};
+use tracking::{BinDir, ExtensionStatus, InstallError, LifecycleError, Supervisor, TrackerStatus};
 
 #[tauri::command]
 async fn aw_info() -> Result<ServerInfo, AwError> {
@@ -210,6 +210,18 @@ async fn tracking_stop(app: AppHandle) -> Result<(), LifecycleError> {
 }
 
 #[tauri::command]
+async fn tracking_gnome_extension_status() -> ExtensionStatus {
+    tracking::gnome::status().await
+}
+
+/// Install + enable the GNOME-Wayland focused-window-dbus extension.
+/// Returns ExtensionStatus with `applicable: false` on every other DE.
+#[tauri::command]
+async fn tracking_setup_gnome_extension(app: AppHandle) -> Result<ExtensionStatus, LifecycleError> {
+    tracking::gnome::setup(&app).await
+}
+
+#[tauri::command]
 async fn aw_top_urls(range: TimeRange) -> Result<Vec<serde_json::Value>, AwError> {
     let client = AwClient::new();
     let buckets = client.buckets().await?;
@@ -253,6 +265,8 @@ pub fn run() {
             tracking_pause,
             tracking_resume,
             tracking_stop,
+            tracking_gnome_extension_status,
+            tracking_setup_gnome_extension,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

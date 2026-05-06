@@ -9,30 +9,44 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LOCK="$REPO_ROOT/scripts/binaries.lock"
-OUT_DIR="$REPO_ROOT/src-tauri/binaries"
 CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/pulse/binaries"
 
-mkdir -p "$OUT_DIR" "$CACHE_DIR"
+mkdir -p "$CACHE_DIR"
 
-# Resolve (component, version, target) → (archive_url, extract_path)
-# extract_path is the path *inside the archive* of the binary we want.
+# Resolve (component, version, target) → archive URL + name + extract path +
+# on-disk output path + mode. EXTRACT_PATH may be empty, in which case the
+# whole archive is copied to OUT_PATH as-is (used for GNOME extension zips).
 resolve() {
   local component="$1" version="$2" target="$3"
-  local arch
-  case "$target" in
-    x86_64-unknown-linux-gnu) arch="x86_64" ;;
-    *) echo "fatal: unsupported target $target" >&2; exit 1 ;;
-  esac
+  local arch=""
+  if [ "$target" != "noarch" ]; then
+    case "$target" in
+      x86_64-unknown-linux-gnu) arch="x86_64" ;;
+      *) echo "fatal: unsupported target $target" >&2; exit 1 ;;
+    esac
+  fi
   case "$component" in
     aw-server-rust)
       ARCHIVE_URL="https://github.com/ActivityWatch/activitywatch/releases/download/${version}/activitywatch-${version}-linux-${arch}.zip"
       ARCHIVE_NAME="activitywatch-${version}-linux-${arch}.zip"
       EXTRACT_PATH="activitywatch/aw-server-rust/aw-server-rust"
+      OUT_PATH="$REPO_ROOT/src-tauri/binaries/aw-server-rust"
+      OUT_MODE="0755"
       ;;
     aw-awatcher)
       ARCHIVE_URL="https://github.com/2e3s/awatcher/releases/download/${version}/aw-awatcher.zip"
       ARCHIVE_NAME="aw-awatcher-${version}.zip"
       EXTRACT_PATH="aw-awatcher"
+      OUT_PATH="$REPO_ROOT/src-tauri/binaries/aw-awatcher"
+      OUT_MODE="0755"
+      ;;
+    focused-window-dbus@flexagoon.com)
+      # version is the extensions.gnome.org "pk" (download tag), not a semver.
+      ARCHIVE_URL="https://extensions.gnome.org/download-extension/focused-window-dbus@flexagoon.com.shell-extension.zip?version_tag=${version}"
+      ARCHIVE_NAME="focused-window-dbus-${version}.zip"
+      EXTRACT_PATH=""
+      OUT_PATH="$REPO_ROOT/src-tauri/extensions/focused-window-dbus@flexagoon.com.zip"
+      OUT_MODE="0644"
       ;;
     *) echo "fatal: unknown component $component" >&2; exit 1 ;;
   esac
@@ -55,11 +69,12 @@ fetch_one() {
   resolve "$component" "$version" "$target"
 
   local cached="$CACHE_DIR/$want_sha-$ARCHIVE_NAME"
-  local out="$OUT_DIR/${component}"
-  local stamp="$out.sha"
+  local stamp="$OUT_PATH.sha"
 
-  # Idempotency check — already extracted with the right archive sha?
-  if [ -f "$out" ] && [ -f "$stamp" ] && [ "$(cat "$stamp")" = "$want_sha" ]; then
+  mkdir -p "$(dirname "$OUT_PATH")"
+
+  # Idempotency check — already placed with the right archive sha?
+  if [ -f "$OUT_PATH" ] && [ -f "$stamp" ] && [ "$(cat "$stamp")" = "$want_sha" ]; then
     echo "  ✓ $component $version ($target) — already up to date"
     return 0
   fi
@@ -76,14 +91,19 @@ fetch_one() {
 
   verify_archive "$cached" "$want_sha"
 
-  # Extract just the binary we want, regardless of zip layout.
-  local tmp
-  tmp="$(mktemp -d)"
-  ( cd "$tmp" && unzip -q "$cached" "$EXTRACT_PATH" )
-  install -m 0755 "$tmp/$EXTRACT_PATH" "$out"
-  rm -rf "$tmp"
+  if [ -z "$EXTRACT_PATH" ]; then
+    # Ship the whole archive (used for GNOME extension zips).
+    install -m "$OUT_MODE" "$cached" "$OUT_PATH"
+  else
+    # Extract a single file from the archive, place at OUT_PATH.
+    local tmp
+    tmp="$(mktemp -d)"
+    ( cd "$tmp" && unzip -q "$cached" "$EXTRACT_PATH" )
+    install -m "$OUT_MODE" "$tmp/$EXTRACT_PATH" "$OUT_PATH"
+    rm -rf "$tmp"
+  fi
   echo "$want_sha" > "$stamp"
-  echo "    → $out"
+  echo "    → $OUT_PATH"
 }
 
 main() {
@@ -96,7 +116,7 @@ main() {
     fi
   done
 
-  echo "Pulse binaries → $OUT_DIR"
+  echo "Pulse binaries + extensions → src-tauri/{binaries,extensions}/"
   while IFS=$'\t' read -r component version target sha; do
     case "$component" in '#'*|'') continue ;; esac
     fetch_one "$component" "$version" "$target" "$sha"

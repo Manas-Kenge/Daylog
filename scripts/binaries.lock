@@ -1,18 +1,29 @@
-# Pulse bundled binaries — pinned versions and SHA-256 checksums.
+# Pulse bundled binaries + GNOME extension — pinned versions and SHA-256
+# checksums.
 #
 # Format: <component>\t<version>\t<target>\t<archive-sha256>
 # Bump via:  scripts/bump-binary.sh <component> <new-version>
 # Verify via: scripts/fetch-binaries.sh
 #
 # Sources:
-#   aw-server-rust  → extracted from the ActivityWatch/activitywatch
-#                     parent bundle zip (the upstream aw-server-rust
-#                     repo has no own releases at this time)
-#   aw-awatcher     → 2e3s/awatcher release zip
+#   aw-server-rust                       → extracted from the
+#                                          ActivityWatch/activitywatch parent
+#                                          bundle zip (the upstream
+#                                          aw-server-rust repo has no own
+#                                          releases at this time)
+#   aw-awatcher                          → 2e3s/awatcher release zip
+#   focused-window-dbus@flexagoon.com    → extensions.gnome.org. Only needed
+#                                          on GNOME-Wayland sessions; bundled
+#                                          and extracted at first launch when
+#                                          the wizard detects that case.
+#                                          "version" is the pk download tag,
+#                                          not a semver. Renovate does not
+#                                          auto-track this; bump manually.
 #
-# v0.1 is x86_64-linux only — neither upstream publishes aarch64
-# release artifacts. aarch64 is a v0.2 goal that requires building
-# from source.
+# v0.1 is x86_64-linux only for the binaries — neither upstream publishes
+# aarch64 release artifacts. aarch64 is a v0.2 goal that requires building
+# from source. The GNOME extension is JS, so it's `noarch`.
 
 aw-server-rust	v0.13.2	x86_64-unknown-linux-gnu	8f62b10babf8a8f108cbdf7267c02fbc1ce2a970fa9535f230b3416b803e3360
 aw-awatcher	v0.3.3	x86_64-unknown-linux-gnu	30b51a94956e3490d9248a40a8deb6fc7eea9c041a1862ed4c4b23a3e4b633df
+focused-window-dbus@flexagoon.com	62865	noarch	2c9ca5d737f7fe64197f44727d5391a5fcac71ebafe87b820967a844df716770
