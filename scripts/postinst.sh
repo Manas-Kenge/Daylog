@@ -1,9 +1,9 @@
 #!/bin/sh
-# Pulse package postinst hook (.deb / .rpm).
+# Daylog package postinst hook (.deb / .rpm).
 #
 # After install or upgrade, reload each logged-in user's systemd manager and
 # *try-restart* our units. try-restart is a no-op if the unit isn't running,
-# so this is safe on a fresh install (where no Pulse user has run the wizard
+# so this is safe on a fresh install (where no Daylog user has run the wizard
 # yet) and useful on upgrades (where users with already-running services pick
 # up the new binaries without manual action).
 #
@@ -20,7 +20,7 @@ loginctl list-users --no-legend 2>/dev/null \
       [ -z "$user" ] && continue
       runuser -u "$user" -- systemctl --user daemon-reload 2>/dev/null || true
       runuser -u "$user" -- systemctl --user try-restart \
-          pulse-aw-server.service pulse-awatcher.service 2>/dev/null || true
+          daylog-aw-server.service daylog-awatcher.service 2>/dev/null || true
     done
 
 exit 0

@@ -1,10 +1,10 @@
 #!/bin/sh
-# Pulse package prerm hook (.deb / .rpm).
+# Daylog package prerm hook (.deb / .rpm).
 #
 # Before removal, stop our user services for each logged-in user so the
 # package manager can delete the binaries cleanly without exec'd processes
 # holding them. We don't `disable` here — that's the user's choice via
-# `pulse --uninstall-tracking` or the Settings UI. A package upgrade also
+# `daylog --uninstall-tracking` or the Settings UI. A package upgrade also
 # triggers prerm, and we don't want to forget the user's enabled state.
 #
 # Best-effort: errors are swallowed.
@@ -17,7 +17,7 @@ loginctl list-users --no-legend 2>/dev/null \
       user="$(getent passwd "$uid" | cut -d: -f1)" || continue
       [ -z "$user" ] && continue
       runuser -u "$user" -- systemctl --user stop \
-          pulse-awatcher.service pulse-aw-server.service 2>/dev/null || true
+          daylog-awatcher.service daylog-aw-server.service 2>/dev/null || true
     done
 
 exit 0

@@ -6,8 +6,8 @@ use tokio::process::Command;
 use crate::tracking::lifecycle::{LifecycleError, UnitState};
 use crate::tracking::{config_dir, render_template};
 
-pub const SERVER_UNIT: &str = "pulse-aw-server.service";
-pub const WATCHER_UNIT: &str = "pulse-awatcher.service";
+pub const SERVER_UNIT: &str = "daylog-aw-server.service";
+pub const WATCHER_UNIT: &str = "daylog-awatcher.service";
 
 pub async fn install(app: &AppHandle, bin_dir: &Path) -> Result<(), LifecycleError> {
     let unit_dir = config_dir()?.join("systemd").join("user");
@@ -16,13 +16,13 @@ pub async fn install(app: &AppHandle, bin_dir: &Path) -> Result<(), LifecycleErr
 
     render_template(
         app,
-        "pulse-aw-server.service.tmpl",
+        "daylog-aw-server.service.tmpl",
         &unit_dir.join(SERVER_UNIT),
         bin_dir,
     )?;
     render_template(
         app,
-        "pulse-awatcher.service.tmpl",
+        "daylog-awatcher.service.tmpl",
         &unit_dir.join(WATCHER_UNIT),
         bin_dir,
     )?;

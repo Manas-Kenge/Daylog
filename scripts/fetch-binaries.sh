@@ -9,7 +9,7 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LOCK="$REPO_ROOT/scripts/binaries.lock"
-CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/pulse/binaries"
+CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/daylog/binaries"
 
 mkdir -p "$CACHE_DIR"
 
@@ -116,7 +116,7 @@ main() {
     fi
   done
 
-  echo "Pulse binaries + extensions → src-tauri/{binaries,extensions}/"
+  echo "Daylog binaries + extensions → src-tauri/{binaries,extensions}/"
   while IFS=$'\t' read -r component version target sha; do
     case "$component" in '#'*|'') continue ;; esac
     fetch_one "$component" "$version" "$target" "$sha"

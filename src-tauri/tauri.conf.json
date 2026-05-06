@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "pulse",
+  "productName": "daylog",
   "version": "0.1.0",
-  "identifier": "com.manas-kenge.pulse",
+  "identifier": "com.manas-kenge.daylog",
   "build": {
     "beforeDevCommand": "bun run dev",
     "devUrl": "http://localhost:1420",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "pulse",
+        "title": "Daylog",
         "width": 800,
         "height": 600
       }
@@ -34,10 +34,10 @@
     "resources": [
       "binaries/aw-server-rust",
       "binaries/aw-awatcher",
-      "services/pulse-aw-server.service.tmpl",
-      "services/pulse-awatcher.service.tmpl",
-      "services/pulse-supervisor.sh.tmpl",
-      "services/pulse-tracker.desktop.tmpl",
+      "services/daylog-aw-server.service.tmpl",
+      "services/daylog-awatcher.service.tmpl",
+      "services/daylog-supervisor.sh.tmpl",
+      "services/daylog-tracker.desktop.tmpl",
       "extensions/focused-window-dbus@flexagoon.com.zip"
     ],
     "linux": {

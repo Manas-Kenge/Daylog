@@ -6,13 +6,13 @@ use tokio::process::Command;
 use crate::tracking::lifecycle::{LifecycleError, UnitState};
 use crate::tracking::{config_dir, render_template};
 
-const AUTOSTART_FILE: &str = "pulse-tracker.desktop";
-const SUPERVISOR_FILE: &str = "pulse-supervisor.sh";
+const AUTOSTART_FILE: &str = "daylog-tracker.desktop";
+const SUPERVISOR_FILE: &str = "daylog-supervisor.sh";
 
 pub async fn install(app: &AppHandle, bin_dir: &Path) -> Result<(), LifecycleError> {
     // 1. Drop the supervisor script into bin_dir, executable.
     let supervisor = bin_dir.join(SUPERVISOR_FILE);
-    render_template(app, "pulse-supervisor.sh.tmpl", &supervisor, bin_dir)?;
+    render_template(app, "daylog-supervisor.sh.tmpl", &supervisor, bin_dir)?;
     chmod_exec(&supervisor)?;
 
     // 2. Drop the autostart .desktop entry so the user picks up tracking
@@ -23,7 +23,7 @@ pub async fn install(app: &AppHandle, bin_dir: &Path) -> Result<(), LifecycleErr
     })?;
     render_template(
         app,
-        "pulse-tracker.desktop.tmpl",
+        "daylog-tracker.desktop.tmpl",
         &autostart_dir.join(AUTOSTART_FILE),
         bin_dir,
     )?;
@@ -70,7 +70,7 @@ pub async fn uninstall() -> Result<(), LifecycleError> {
     let autostart_path = config_dir()?.join("autostart").join(AUTOSTART_FILE);
     let _ = std::fs::remove_file(&autostart_path);
     // We deliberately leave the supervisor.sh + binaries in bin_dir so a
-    // re-enable is one command. Full cleanup happens on `pulse --uninstall-tracking`.
+    // re-enable is one command. Full cleanup happens on `daylog --uninstall-tracking`.
     Ok(())
 }
 

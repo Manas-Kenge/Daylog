@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Pulse tracker supervisor — non-systemd fallback.
+# Daylog tracker supervisor — non-systemd fallback.
 #
 # Runs aw-server-rust + aw-awatcher, restarts either if it dies, and exits
 # when the user's session ends (the parent autostart process is killed).
@@ -9,7 +9,7 @@
 set -u
 
 BIN_DIR="{BIN_DIR}"
-LOG_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/pulse"
+LOG_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/daylog"
 mkdir -p "$LOG_DIR"
 LOG_FILE="$LOG_DIR/supervisor.log"
 
