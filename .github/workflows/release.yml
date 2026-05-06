@@ -38,8 +38,8 @@ jobs:
       - name: Cache upstream binaries
         uses: actions/cache@v4
         with:
-          path: ~/.cache/pulse/binaries
-          key: pulse-binaries-${{ hashFiles('scripts/binaries.lock') }}
+          path: ~/.cache/daylog/binaries
+          key: daylog-binaries-${{ hashFiles('scripts/binaries.lock') }}
 
       - name: Install Tauri Linux build dependencies
         run: |
@@ -113,7 +113,7 @@ jobs:
           name: deb
           path: artifact
 
-      - name: Install Pulse .deb (resolves deps via apt)
+      - name: Install Daylog .deb (resolves deps via apt)
         run: |
           set -euo pipefail
           export DEBIAN_FRONTEND=noninteractive
@@ -121,11 +121,11 @@ jobs:
           # in one step. Avoids the dpkg-i-then-apt-f dance.
           apt-get install -y "$(echo artifact/*.deb)"
 
-      - name: Smoke test — pulse --help
-        run: pulse --help
+      - name: Smoke test — daylog --help
+        run: daylog --help
 
-      - name: Smoke test — pulse --uninstall-tracking (no-op in container)
-        run: pulse --uninstall-tracking
+      - name: Smoke test — daylog --uninstall-tracking (no-op in container)
+        run: daylog --uninstall-tracking
 
   # ---------------------------------------------------------------------------
   # 2b. Native .rpm install on the Red Hat / SUSE family.
@@ -142,11 +142,11 @@ jobs:
           name: rpm
           path: artifact
 
-      - name: Install Pulse .rpm (resolves deps via dnf)
+      - name: Install Daylog .rpm (resolves deps via dnf)
         run: dnf install -y artifact/*.rpm
 
-      - run: pulse --help
-      - run: pulse --uninstall-tracking
+      - run: daylog --help
+      - run: daylog --uninstall-tracking
 
   smoke-rpm-opensuse:
     needs: build
@@ -159,11 +159,11 @@ jobs:
           name: rpm
           path: artifact
 
-      - name: Install Pulse .rpm
+      - name: Install Daylog .rpm
         run: zypper --non-interactive --no-gpg-checks install artifact/*.rpm
 
-      - run: pulse --help
-      - run: pulse --uninstall-tracking
+      - run: daylog --help
+      - run: daylog --uninstall-tracking
 
   # ---------------------------------------------------------------------------
   # 3. AppImage smoke. Covers Arch-family (Manjaro, EndeavourOS, Omarchy,
@@ -205,7 +205,7 @@ jobs:
           name: appimage
           path: artifact
 
-      - name: Smoke test — pulse --help via AppImage
+      - name: Smoke test — daylog --help via AppImage
         env:
           APPIMAGE_EXTRACT_AND_RUN: "1"
         run: |

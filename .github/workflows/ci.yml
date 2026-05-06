@@ -30,8 +30,8 @@ jobs:
       - name: Cache upstream binaries
         uses: actions/cache@v4
         with:
-          path: ~/.cache/pulse/binaries
-          key: pulse-binaries-${{ hashFiles('scripts/binaries.lock') }}
+          path: ~/.cache/daylog/binaries
+          key: daylog-binaries-${{ hashFiles('scripts/binaries.lock') }}
 
       - name: Install Tauri Linux build dependencies
         run: |
