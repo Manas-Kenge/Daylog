@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+
+# Cancel in-flight runs of the same branch when new commits land.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Cache upstream binaries
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pulse/binaries
+          key: pulse-binaries-${{ hashFiles('scripts/binaries.lock') }}
+
+      - name: Install Tauri Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev \
+            build-essential curl wget file unzip \
+            libxdo-dev libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev patchelf
+
+      - name: Install npm deps
+        run: bun install --frozen-lockfile
+
+      - name: Fetch upstream binaries (aw-server-rust + aw-awatcher + GNOME ext)
+        run: scripts/fetch-binaries.sh
+
+      - name: Rust — cargo check
+        working-directory: src-tauri
+        run: cargo check --all-targets
+
+      - name: Rust — cargo test
+        working-directory: src-tauri
+        run: cargo test
+
+      - name: Frontend — type check
+        run: bunx tsc --noEmit
+
+      - name: Frontend — vite build
+        run: bun run build
+
+      # Full Tauri build (release): catches packaging/bundling regressions
+      # that earlier steps don't see. Slow (~6–8 min) but worth it on PR
+      # since 5g's release path depends on this working.
+      - name: Tauri build (release)
+        run: bun run tauri build

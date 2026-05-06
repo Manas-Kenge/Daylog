@@ -1,0 +1,305 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  # Allow manual triggering for dry-runs of the smoke matrix on master
+  # without minting a release. The "release" job below skips when the
+  # ref isn't a tag.
+  workflow_dispatch:
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # 1. Build — produces .AppImage, .deb, and .rpm on a single Ubuntu host.
+  #    Artifact target glibc is whatever ubuntu-22.04 ships (currently 2.35),
+  #    which gives forward compat to every supported desktop distro below.
+  # ---------------------------------------------------------------------------
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    outputs:
+      appimage_name: ${{ steps.locate.outputs.appimage_name }}
+      deb_name: ${{ steps.locate.outputs.deb_name }}
+      rpm_name: ${{ steps.locate.outputs.rpm_name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Cache upstream binaries
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pulse/binaries
+          key: pulse-binaries-${{ hashFiles('scripts/binaries.lock') }}
+
+      - name: Install Tauri Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev \
+            build-essential curl wget file unzip rpm \
+            libxdo-dev libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev patchelf
+
+      - run: bun install --frozen-lockfile
+      - run: scripts/fetch-binaries.sh
+      - run: bun run tauri build
+
+      - name: Locate produced artifacts
+        id: locate
+        run: |
+          set -euo pipefail
+          BUNDLE=src-tauri/target/release/bundle
+          ls -la "$BUNDLE"/appimage/ "$BUNDLE"/deb/ "$BUNDLE"/rpm/ || true
+          APPIMAGE=$(ls "$BUNDLE"/appimage/*.AppImage | head -1)
+          DEB=$(ls "$BUNDLE"/deb/*.deb | head -1)
+          RPM=$(ls "$BUNDLE"/rpm/*.rpm | head -1)
+          echo "appimage_name=$(basename "$APPIMAGE")" >> "$GITHUB_OUTPUT"
+          echo "deb_name=$(basename "$DEB")" >> "$GITHUB_OUTPUT"
+          echo "rpm_name=$(basename "$RPM")" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: appimage
+          path: src-tauri/target/release/bundle/appimage/*.AppImage
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deb
+          path: src-tauri/target/release/bundle/deb/*.deb
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rpm
+          path: src-tauri/target/release/bundle/rpm/*.rpm
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
+  # 2a. Native .deb install + binary smoke test on the Debian/Ubuntu family.
+  #     Covers Mint, Pop!_OS, Zorin, elementary, KDE Neon, etc. by inheritance.
+  # ---------------------------------------------------------------------------
+  smoke-deb:
+    needs: build
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - ubuntu:22.04
+          - ubuntu:24.04
+          - debian:12
+    container:
+      image: ${{ matrix.image }}
+    steps:
+      - name: Bootstrap container
+        run: |
+          set -euo pipefail
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update
+          apt-get install -y --no-install-recommends ca-certificates
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: deb
+          path: artifact
+
+      - name: Install Pulse .deb (resolves deps via apt)
+        run: |
+          set -euo pipefail
+          export DEBIAN_FRONTEND=noninteractive
+          # `apt install ./pkg.deb` resolves declared dependencies (incl. WebKit)
+          # in one step. Avoids the dpkg-i-then-apt-f dance.
+          apt-get install -y "$(echo artifact/*.deb)"
+
+      - name: Smoke test — pulse --help
+        run: pulse --help
+
+      - name: Smoke test — pulse --uninstall-tracking (no-op in container)
+        run: pulse --uninstall-tracking
+
+  # ---------------------------------------------------------------------------
+  # 2b. Native .rpm install on the Red Hat / SUSE family.
+  #     Covers Rocky, Alma, RHEL, CentOS Stream, openSUSE Leap by inheritance.
+  # ---------------------------------------------------------------------------
+  smoke-rpm-fedora:
+    needs: build
+    runs-on: ubuntu-22.04
+    container:
+      image: fedora:41
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: rpm
+          path: artifact
+
+      - name: Install Pulse .rpm (resolves deps via dnf)
+        run: dnf install -y artifact/*.rpm
+
+      - run: pulse --help
+      - run: pulse --uninstall-tracking
+
+  smoke-rpm-opensuse:
+    needs: build
+    runs-on: ubuntu-22.04
+    container:
+      image: opensuse/tumbleweed
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: rpm
+          path: artifact
+
+      - name: Install Pulse .rpm
+        run: zypper --non-interactive --no-gpg-checks install artifact/*.rpm
+
+      - run: pulse --help
+      - run: pulse --uninstall-tracking
+
+  # ---------------------------------------------------------------------------
+  # 3. AppImage smoke. Covers Arch-family (Manjaro, EndeavourOS, Omarchy,
+  #    Garuda) plus broad re-confirmation across the deb/rpm bases.
+  #    APPIMAGE_EXTRACT_AND_RUN=1 bypasses fuse (which containers lack).
+  # ---------------------------------------------------------------------------
+  smoke-appimage:
+    needs: build
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - ubuntu:24.04
+          - debian:12
+          - fedora:41
+          - archlinux:latest
+          - opensuse/tumbleweed
+    container:
+      image: ${{ matrix.image }}
+    steps:
+      - name: Bootstrap container
+        run: |
+          set -e
+          if command -v apt-get >/dev/null; then
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update
+            apt-get install -y --no-install-recommends ca-certificates file
+          elif command -v dnf >/dev/null; then
+            dnf install -y file
+          elif command -v pacman >/dev/null; then
+            pacman -Sy --noconfirm file
+          elif command -v zypper >/dev/null; then
+            zypper --non-interactive install file
+          fi
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: appimage
+          path: artifact
+
+      - name: Smoke test — pulse --help via AppImage
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+        run: |
+          set -euo pipefail
+          chmod +x artifact/*.AppImage
+          ./artifact/*.AppImage --help
+
+  # ---------------------------------------------------------------------------
+  # 4. Non-systemd informational test. Confirms AppImage launches on Void
+  #    (XDG-autostart fallback path). Marked continue-on-error: a transient
+  #    Void mirror outage shouldn't block a release.
+  # ---------------------------------------------------------------------------
+  smoke-appimage-void:
+    needs: build
+    runs-on: ubuntu-22.04
+    continue-on-error: true
+    container:
+      image: ghcr.io/void-linux/void-glibc-full:latest
+    steps:
+      - name: Bootstrap
+        run: xbps-install -Sy file
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: appimage
+          path: artifact
+
+      - name: Smoke test on non-systemd
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+        run: |
+          chmod +x artifact/*.AppImage
+          ./artifact/*.AppImage --help
+
+  # ---------------------------------------------------------------------------
+  # 5. musl informational test. Expected to fail (glibc-built AppImage on musl
+  #    libc). If it ever passes, our README's "Alpine needs distrobox" note is
+  #    out of date — we want to know.
+  # ---------------------------------------------------------------------------
+  smoke-appimage-alpine:
+    needs: build
+    runs-on: ubuntu-22.04
+    continue-on-error: true
+    container:
+      image: alpine:latest
+    steps:
+      - name: Bootstrap
+        run: apk add --no-cache file
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: appimage
+          path: artifact
+
+      - name: Expected fail on musl
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+        run: |
+          chmod +x artifact/*.AppImage
+          # We expect this to fail with glibc errors. If it succeeds, README is wrong.
+          if ./artifact/*.AppImage --help; then
+            echo "::warning::AppImage unexpectedly worked on Alpine. README's 'Alpine needs distrobox' note may be obsolete."
+          else
+            echo "Expected failure on musl libc — README guidance holds."
+            exit 0
+          fi
+
+  # ---------------------------------------------------------------------------
+  # 6. Cut the GitHub Release (only on tag pushes; manual workflow runs skip).
+  # ---------------------------------------------------------------------------
+  release:
+    needs:
+      - build
+      - smoke-deb
+      - smoke-rpm-fedora
+      - smoke-rpm-opensuse
+      - smoke-appimage
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/*.AppImage
+            artifacts/*.deb
+            artifacts/*.rpm
+          generate_release_notes: true
+          fail_on_unmatched_files: true
