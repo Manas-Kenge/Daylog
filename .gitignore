@@ -1,6 +1,9 @@
-# Tauri
+# Cargo workspace
+/target/
 src-tauri/target/
 src-tauri/Cargo.lock
+
+# Tauri
 src-tauri/binaries/
 src-tauri/extensions/
 

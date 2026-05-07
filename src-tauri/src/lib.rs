@@ -1,31 +1,25 @@
-mod aggregate;
-mod aw_client;
-mod categories;
 mod icons;
-mod time;
 mod tracking;
 
-use aggregate::{
-    bucketize_hourly, fetch_afk_events, fetch_window_events, parse_categorized_events,
-    parse_category_summaries, summarize_afk, unwrap_first_array, AfkSummary, CategorizedEvent,
-    CategorySummary, HourBucket,
-};
-use aw_client::{queries, AwClient, AwError, Bucket, Event, ServerInfo};
-use categories::{CategoryConfig, CategoryError};
 use chrono::{DateTime, Utc};
+use daylog_core::aggregate::{AfkSummary, CategorizedEvent, CategorySummary, HourBucket};
+use daylog_core::aw_client::{AwClient, AwError, Bucket, Event, ServerInfo};
+use daylog_core::categories::{self, CategoryConfig, CategoryError};
+use daylog_core::queries as q;
+use daylog_core::queries::{QueryError, TrailingDayPayload};
+use daylog_core::time::TimeRange;
 use serde::Serialize;
 use tauri::{AppHandle, Manager};
-use time::TimeRange;
 use tracking::{BinDir, ExtensionStatus, InstallError, LifecycleError, Supervisor, TrackerStatus};
 
 #[tauri::command]
 async fn aw_info() -> Result<ServerInfo, AwError> {
-    AwClient::new().info().await
+    q::info(&AwClient::new()).await
 }
 
 #[tauri::command]
 async fn aw_buckets() -> Result<Vec<Bucket>, AwError> {
-    AwClient::new().buckets().await
+    q::buckets(&AwClient::new()).await
 }
 
 #[tauri::command]
@@ -35,7 +29,7 @@ async fn aw_events(
     end: Option<DateTime<Utc>>,
     limit: Option<u32>,
 ) -> Result<Vec<Event>, AwError> {
-    AwClient::new().events(&bucket_id, start, end, limit).await
+    q::events(&AwClient::new(), &bucket_id, start, end, limit).await
 }
 
 #[tauri::command]
@@ -43,163 +37,63 @@ async fn aw_query(
     query: String,
     timeperiods: Vec<String>,
 ) -> Result<Vec<serde_json::Value>, AwError> {
-    AwClient::new().query(&query, &timeperiods).await
+    q::raw_query(&AwClient::new(), &query, &timeperiods).await
 }
 
 #[tauri::command]
 async fn aw_top_apps(range: TimeRange) -> Result<Vec<serde_json::Value>, AwError> {
-    let res = AwClient::new()
-        .query(&queries::top_apps(), &[range.as_aw_timeperiod()])
-        .await?;
-    Ok(unwrap_first_array(res))
+    q::top_apps(&AwClient::new(), range).await
 }
 
 #[tauri::command]
 async fn aw_timeline(range: TimeRange) -> Result<Vec<serde_json::Value>, AwError> {
-    let res = AwClient::new()
-        .query(&queries::timeline(), &[range.as_aw_timeperiod()])
-        .await?;
-    Ok(unwrap_first_array(res))
+    q::timeline(&AwClient::new(), range).await
 }
 
 #[tauri::command]
 async fn aw_top_apps_today() -> Result<Vec<serde_json::Value>, AwError> {
-    aw_top_apps(TimeRange::Today).await
+    q::top_apps(&AwClient::new(), TimeRange::Today).await
 }
 
 #[tauri::command]
 async fn aw_timeline_today() -> Result<Vec<serde_json::Value>, AwError> {
-    aw_timeline(TimeRange::Today).await
-}
-
-#[derive(Debug, thiserror::Error)]
-enum AppError {
-    #[error("{0}")]
-    Aw(#[from] AwError),
-    #[error("{0}")]
-    Category(#[from] CategoryError),
-    #[error("task join: {0}")]
-    Join(String),
-}
-
-impl serde::Serialize for AppError {
-    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        s.serialize_str(&self.to_string())
-    }
+    q::timeline(&AwClient::new(), TimeRange::Today).await
 }
 
 #[tauri::command]
 async fn categories_get() -> Result<CategoryConfig, CategoryError> {
-    let client = AwClient::new();
-    categories::load(&client).await
+    categories::load(&AwClient::new()).await
 }
 
 #[tauri::command]
 async fn categories_set(config: CategoryConfig) -> Result<(), CategoryError> {
     categories::validate(&config)?;
-    let client = AwClient::new();
-    categories::save(&client, &config).await
+    categories::save(&AwClient::new(), &config).await
 }
 
 #[tauri::command]
-async fn aw_top_categories(range: TimeRange) -> Result<Vec<CategorySummary>, AppError> {
-    let client = AwClient::new();
-    let cfg = categories::load(&client).await?;
-    let classes_json = categories::classes_to_aql(&cfg);
-    let res = client
-        .query(
-            &queries::top_categories(&classes_json),
-            &[range.as_aw_timeperiod()],
-        )
-        .await?;
-    Ok(parse_category_summaries(&unwrap_first_array(res)))
+async fn aw_top_categories(range: TimeRange) -> Result<Vec<CategorySummary>, QueryError> {
+    q::top_categories(&AwClient::new(), range).await
 }
 
 #[tauri::command]
-async fn aw_top_categories_today() -> Result<Vec<CategorySummary>, AppError> {
-    aw_top_categories(TimeRange::Today).await
+async fn aw_top_categories_today() -> Result<Vec<CategorySummary>, QueryError> {
+    q::top_categories(&AwClient::new(), TimeRange::Today).await
 }
 
 #[tauri::command]
 async fn aw_hourly(range: TimeRange) -> Result<Vec<HourBucket>, AwError> {
-    let client = AwClient::new();
-    let events = fetch_window_events(&client, &range).await?;
-    Ok(bucketize_hourly(&events))
+    q::hourly(&AwClient::new(), range).await
 }
 
 #[tauri::command]
-async fn aw_categorized_events(range: TimeRange) -> Result<Vec<CategorizedEvent>, AppError> {
-    let client = AwClient::new();
-    let cfg = categories::load(&client).await?;
-    let classes_json = categories::classes_to_aql(&cfg);
-    let res = client
-        .query(
-            &queries::categorized_events(&classes_json),
-            &[range.as_aw_timeperiod()],
-        )
-        .await?;
-    Ok(parse_categorized_events(&unwrap_first_array(res)))
-}
-
-/// Bundled categorized-events + AFK summary for a contiguous past-day
-/// window (days 1..=N, where 1 = yesterday). Replaces the 14-query
-/// fan-out the trailing-days hook used to issue from JS — same data,
-/// one IPC roundtrip, queries dispatched concurrently inside Rust so
-/// HTTP keep-alive against aw-server actually pays off.
-///
-/// Today's slot is intentionally *not* bundled here: the dashboard
-/// refreshes today every 5s, while past days only need a 5min
-/// staleness — bundling them together would re-run past-day AQL on
-/// every tick.
-#[derive(Debug, serde::Serialize)]
-pub struct TrailingDayPayload {
-    pub days_ago: u32,
-    pub events: Vec<CategorizedEvent>,
-    pub afk: AfkSummary,
+async fn aw_categorized_events(range: TimeRange) -> Result<Vec<CategorizedEvent>, QueryError> {
+    q::categorized_events(&AwClient::new(), range).await
 }
 
 #[tauri::command]
-async fn aw_trailing_days_past(days: u32) -> Result<Vec<TrailingDayPayload>, AppError> {
-    if days == 0 {
-        return Ok(Vec::new());
-    }
-    // Pre-load + cache categories once; per-day tasks below hit the cache.
-    let client = AwClient::new();
-    let _ = categories::load(&client).await?;
-
-    let mut handles = Vec::with_capacity(days as usize);
-    for n in 1..=days {
-        handles.push(tokio::spawn(async move { fetch_trailing_day(n).await }));
-    }
-    let mut out = Vec::with_capacity(handles.len());
-    for h in handles {
-        match h.await {
-            Ok(res) => out.push(res?),
-            Err(e) => return Err(AppError::Join(e.to_string())),
-        }
-    }
-    out.sort_by_key(|d| d.days_ago);
-    Ok(out)
-}
-
-async fn fetch_trailing_day(n: u32) -> Result<TrailingDayPayload, AppError> {
-    let client = AwClient::new();
-    let cfg = categories::load(&client).await?;
-    let classes_json = categories::classes_to_aql(&cfg);
-    let range = TimeRange::DaysAgo { days: n };
-    let timeperiods = [range.as_aw_timeperiod()];
-    let aql = queries::categorized_events(&classes_json);
-    let (events_res, afk_events) = tokio::join!(
-        client.query(&aql, &timeperiods),
-        fetch_afk_events(&client, &range),
-    );
-    let events = parse_categorized_events(&unwrap_first_array(events_res?));
-    let afk = summarize_afk(&afk_events?, false);
-    Ok(TrailingDayPayload {
-        days_ago: n,
-        events,
-        afk,
-    })
+async fn aw_trailing_days_past(days: u32) -> Result<Vec<TrailingDayPayload>, QueryError> {
+    q::trailing_days_past(days).await
 }
 
 #[tauri::command]
@@ -207,32 +101,22 @@ async fn aw_afk_summary(
     range: TimeRange,
     include_intervals: Option<bool>,
 ) -> Result<AfkSummary, AwError> {
-    let client = AwClient::new();
-    let buckets = client.buckets().await?;
-    if !buckets.iter().any(|b| b.id.starts_with("aw-watcher-afk_")) {
-        return Ok(summarize_afk(&[], include_intervals.unwrap_or(false)));
-    }
-    let events = fetch_afk_events(&client, &range).await?;
-    Ok(summarize_afk(&events, include_intervals.unwrap_or(false)))
+    q::afk_summary(&AwClient::new(), range, include_intervals.unwrap_or(false)).await
 }
 
 #[tauri::command]
 async fn aw_has_web_watcher() -> Result<bool, AwError> {
-    let buckets = AwClient::new().buckets().await?;
-    Ok(buckets.iter().any(|b| b.id.starts_with("aw-watcher-web-")))
+    q::has_web_watcher(&AwClient::new()).await
 }
 
 #[tauri::command]
 async fn aw_top_domains(range: TimeRange) -> Result<Vec<serde_json::Value>, AwError> {
-    let client = AwClient::new();
-    let buckets = client.buckets().await?;
-    if !buckets.iter().any(|b| b.id.starts_with("aw-watcher-web-")) {
-        return Ok(vec![]);
-    }
-    let res = client
-        .query(&queries::web_top_domains(), &[range.as_aw_timeperiod()])
-        .await?;
-    Ok(unwrap_first_array(res))
+    q::top_domains(&AwClient::new(), range).await
+}
+
+#[tauri::command]
+async fn aw_top_urls(range: TimeRange) -> Result<Vec<serde_json::Value>, AwError> {
+    q::top_urls(&AwClient::new(), range).await
 }
 
 #[tauri::command]
@@ -262,7 +146,7 @@ enum Detection {
 
 #[tauri::command]
 async fn tracking_detect() -> Detection {
-    match AwClient::new().info().await {
+    match q::info(&AwClient::new()).await {
         Ok(info) => Detection::Existing {
             hostname: info.hostname,
             version: info.version,
@@ -275,19 +159,13 @@ const WIZARD_MARKER: &str = ".wizard-complete";
 
 #[tauri::command]
 fn wizard_complete_get(app: AppHandle) -> Result<bool, String> {
-    let dir = app
-        .path()
-        .app_config_dir()
-        .map_err(|e| e.to_string())?;
+    let dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
     Ok(dir.join(WIZARD_MARKER).exists())
 }
 
 #[tauri::command]
 fn wizard_complete_set(app: AppHandle, complete: bool) -> Result<(), String> {
-    let dir = app
-        .path()
-        .app_config_dir()
-        .map_err(|e| e.to_string())?;
+    let dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
     let marker = dir.join(WIZARD_MARKER);
     if complete {
         std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
@@ -356,19 +234,6 @@ async fn app_icons(names: Vec<String>) -> std::collections::HashMap<String, Opti
     tokio::task::spawn_blocking(move || icons::resolve_many(&names))
         .await
         .unwrap_or_default()
-}
-
-#[tauri::command]
-async fn aw_top_urls(range: TimeRange) -> Result<Vec<serde_json::Value>, AwError> {
-    let client = AwClient::new();
-    let buckets = client.buckets().await?;
-    if !buckets.iter().any(|b| b.id.starts_with("aw-watcher-web-")) {
-        return Ok(vec![]);
-    }
-    let res = client
-        .query(&queries::web_top_urls(), &[range.as_aw_timeperiod()])
-        .await?;
-    Ok(unwrap_first_array(res))
 }
 
 /// Synchronous wrapper around `tracking::uninstall()` for the CLI entrypoint

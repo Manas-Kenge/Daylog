@@ -4,7 +4,7 @@ use std::time::Duration;
 use serde::Serialize;
 use tauri::AppHandle;
 
-use crate::aw_client::AwClient;
+use daylog_core::aw_client::AwClient;
 use crate::tracking::{config_dir, systemd, xdg_autostart, BinDir, InstallError};
 
 #[derive(Debug, thiserror::Error)]

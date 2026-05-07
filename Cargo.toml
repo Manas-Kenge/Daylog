@@ -1,0 +1,14 @@
+[workspace]
+members = ["src-tauri", "crates/daylog-core"]
+resolver = "2"
+
+# Shared dependency versions. Members opt into features per-crate so the TUI
+# binary doesn't pull in tokio's `process` feature it'll never use.
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = { version = "0.4.44", features = ["serde"] }
+tokio = { version = "1.52.2" }
+thiserror = "2.0.18"
+reqwest = { version = "0.13.3", features = ["json", "query"] }
+regex = { version = "1.12.3", features = ["unicode-case"] }

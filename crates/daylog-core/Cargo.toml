@@ -1,0 +1,16 @@
+[package]
+name = "daylog-core"
+version = "0.1.0"
+edition = "2021"
+description = "Shared Daylog data layer: aw-server client, aggregations, categories, time ranges"
+license = "MIT"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync"] }
+thiserror = { workspace = true }
+reqwest = { workspace = true }
+regex = { workspace = true }
+dirs = "5"

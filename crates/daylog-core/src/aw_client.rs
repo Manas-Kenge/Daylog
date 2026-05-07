@@ -75,9 +75,18 @@ pub struct AwClient {
     http: &'static reqwest::Client,
 }
 
+impl Default for AwClient {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AwClient {
     pub fn new() -> Self {
-        Self { base_url: DEFAULT_BASE_URL.into(), http: shared_http() }
+        Self {
+            base_url: DEFAULT_BASE_URL.into(),
+            http: shared_http(),
+        }
     }
 
     fn url(&self, path: &str) -> String {
@@ -92,17 +101,30 @@ impl AwClient {
         }
     }
 
-    async fn decode<T: for<'de> Deserialize<'de>>(&self, resp: reqwest::Response) -> Result<T, AwError> {
+    async fn decode<T: for<'de> Deserialize<'de>>(
+        &self,
+        resp: reqwest::Response,
+    ) -> Result<T, AwError> {
         let status = resp.status();
         if !status.is_success() {
             let body = resp.text().await.unwrap_or_default();
-            return Err(AwError::BadStatus { status: status.as_u16(), body });
+            return Err(AwError::BadStatus {
+                status: status.as_u16(),
+                body,
+            });
         }
-        resp.json::<T>().await.map_err(|e| AwError::Decode(e.to_string()))
+        resp.json::<T>()
+            .await
+            .map_err(|e| AwError::Decode(e.to_string()))
     }
 
     async fn get_json<T: for<'de> Deserialize<'de>>(&self, path: &str) -> Result<T, AwError> {
-        let resp = self.http.get(self.url(path)).send().await.map_err(|e| self.classify(e))?;
+        let resp = self
+            .http
+            .get(self.url(path))
+            .send()
+            .await
+            .map_err(|e| self.classify(e))?;
         self.decode(resp).await
     }
 
@@ -205,7 +227,10 @@ impl AwClient {
         let status = resp.status();
         if !status.is_success() {
             let body = resp.text().await.unwrap_or_default();
-            return Err(AwError::BadStatus { status: status.as_u16(), body });
+            return Err(AwError::BadStatus {
+                status: status.as_u16(),
+                body,
+            });
         }
         Ok(())
     }

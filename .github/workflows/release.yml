@@ -33,7 +33,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: src-tauri
+          workspaces: .
 
       - name: Cache upstream binaries
         uses: actions/cache@v4
@@ -59,7 +59,8 @@ jobs:
         id: locate
         run: |
           set -euo pipefail
-          BUNDLE=src-tauri/target/release/bundle
+          # Workspace root puts target/ at the repo root; tauri build follows.
+          BUNDLE=target/release/bundle
           ls -la "$BUNDLE"/appimage/ "$BUNDLE"/deb/ "$BUNDLE"/rpm/ || true
           APPIMAGE=$(ls "$BUNDLE"/appimage/*.AppImage | head -1)
           DEB=$(ls "$BUNDLE"/deb/*.deb | head -1)
@@ -71,17 +72,17 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: appimage
-          path: src-tauri/target/release/bundle/appimage/*.AppImage
+          path: target/release/bundle/appimage/*.AppImage
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
           name: deb
-          path: src-tauri/target/release/bundle/deb/*.deb
+          path: target/release/bundle/deb/*.deb
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
           name: rpm
-          path: src-tauri/target/release/bundle/rpm/*.rpm
+          path: target/release/bundle/rpm/*.rpm
           if-no-files-found: error
 
   # ---------------------------------------------------------------------------
