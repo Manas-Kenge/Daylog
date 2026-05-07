@@ -81,11 +81,17 @@ To upgrade an upstream component, run `scripts/bump-binary.sh <component> <versi
 
 `v0.1` is x86_64-only — neither upstream publishes aarch64 artifacts.
 
+`aw-server-rust` and `aw-awatcher` are MPL-2.0; full attribution lives in [`THIRD-PARTY-NOTICES.md`](./THIRD-PARTY-NOTICES.md). When bumping a pinned binary, update the pinned-version line in that file alongside `binaries.lock`.
+
 ## CI / release
 
 - `.github/workflows/ci.yml` runs on every push/PR: cargo check + test, `tsc --noEmit`, vite build, and a full `tauri build` (slow but catches packaging regressions). All on `ubuntu-22.04` so the artifact glibc baseline stays at 2.35.
 - `.github/workflows/release.yml` triggers on `v*.*.*` tags. It builds artifacts once and smoke-tests them in containers across the deb family (Ubuntu/Debian), rpm family (Fedora/openSUSE), and AppImage across deb/rpm/Arch/openSUSE — plus informational runs on Void (non-systemd) and Alpine (musl, expected to fail). The `release` job that publishes the GitHub Release only runs on actual tag pushes.
 - The smoke matrix runs `daylog --help` and `daylog --uninstall-tracking` against the installed binary. If you add a CLI flag in `main.rs`, extend the smoke commands.
+
+## License
+
+Daylog's own source is MIT-licensed (see [`LICENSE`](./LICENSE)). Bundled binaries stay under their upstream licenses; see [`THIRD-PARTY-NOTICES.md`](./THIRD-PARTY-NOTICES.md).
 
 ## Conventions worth knowing
 
