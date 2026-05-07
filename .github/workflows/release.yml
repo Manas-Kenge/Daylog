@@ -103,7 +103,7 @@ jobs:
     steps:
       - name: Bootstrap container
         run: |
-          set -euo pipefail
+          set -eu
           export DEBIAN_FRONTEND=noninteractive
           apt-get update
           apt-get install -y --no-install-recommends ca-certificates
@@ -115,7 +115,7 @@ jobs:
 
       - name: Install Daylog .deb (resolves deps via apt)
         run: |
-          set -euo pipefail
+          set -eu
           export DEBIAN_FRONTEND=noninteractive
           # `apt install ./pkg.deb` resolves declared dependencies (incl. WebKit)
           # in one step. Avoids the dpkg-i-then-apt-f dance.
@@ -188,16 +188,19 @@ jobs:
       - name: Bootstrap container
         run: |
           set -e
+          # fontconfig: Tauri's AppImage doesn't bundle libfontconfig.so.1, but
+          # WebKitGTK loads it at startup even for `--help`. Real desktop distros
+          # ship it; minimal CI containers do not.
           if command -v apt-get >/dev/null; then
             export DEBIAN_FRONTEND=noninteractive
             apt-get update
-            apt-get install -y --no-install-recommends ca-certificates file
+            apt-get install -y --no-install-recommends ca-certificates file fontconfig
           elif command -v dnf >/dev/null; then
-            dnf install -y file
+            dnf install -y file fontconfig
           elif command -v pacman >/dev/null; then
-            pacman -Sy --noconfirm file
+            pacman -Sy --noconfirm file fontconfig
           elif command -v zypper >/dev/null; then
-            zypper --non-interactive install file
+            zypper --non-interactive install file fontconfig
           fi
 
       - uses: actions/download-artifact@v4
@@ -209,7 +212,7 @@ jobs:
         env:
           APPIMAGE_EXTRACT_AND_RUN: "1"
         run: |
-          set -euo pipefail
+          set -eu
           chmod +x artifact/*.AppImage
           ./artifact/*.AppImage --help
 
