@@ -118,8 +118,9 @@ jobs:
           set -eu
           export DEBIAN_FRONTEND=noninteractive
           # `apt install ./pkg.deb` resolves declared dependencies (incl. WebKit)
-          # in one step. Avoids the dpkg-i-then-apt-f dance.
-          apt-get install -y "$(echo artifact/*.deb)"
+          # in one step. The `./` prefix is mandatory — without it apt parses
+          # `artifact/foo.deb` as `release/package` and fails to locate it.
+          apt-get install -y ./artifact/*.deb
 
       - name: Smoke test — daylog --help
         run: daylog --help
@@ -188,19 +189,22 @@ jobs:
       - name: Bootstrap container
         run: |
           set -e
-          # fontconfig: Tauri's AppImage doesn't bundle libfontconfig.so.1, but
-          # WebKitGTK loads it at startup even for `--help`. Real desktop distros
-          # ship it; minimal CI containers do not.
+          # Tauri's AppImage bundles webkit/gtk but links against the host's
+          # libX11, libfontconfig, and the rest of the X/GTK runtime. Real
+          # desktop distros ship these by default; minimal CI containers don't.
+          # Installing webkit2gtk pulls the full runtime chain (X11, GTK, Pango,
+          # Cairo, fontconfig) transitively, which mirrors a real desktop.
           if command -v apt-get >/dev/null; then
             export DEBIAN_FRONTEND=noninteractive
             apt-get update
-            apt-get install -y --no-install-recommends ca-certificates file fontconfig
+            apt-get install -y --no-install-recommends \
+              ca-certificates file fontconfig libwebkit2gtk-4.1-0
           elif command -v dnf >/dev/null; then
-            dnf install -y file fontconfig
+            dnf install -y file fontconfig webkit2gtk4.1
           elif command -v pacman >/dev/null; then
-            pacman -Sy --noconfirm file fontconfig
+            pacman -Sy --noconfirm file fontconfig webkit2gtk-4.1
           elif command -v zypper >/dev/null; then
-            zypper --non-interactive install file fontconfig
+            zypper --non-interactive install file fontconfig libwebkit2gtk-4_1-0
           fi
 
       - uses: actions/download-artifact@v4
@@ -229,7 +233,10 @@ jobs:
       image: ghcr.io/void-linux/void-glibc-full:latest
     steps:
       - name: Bootstrap
-        run: xbps-install -Sy file
+        # bash: AppImage's AppRun shebang needs it; void-glibc-full doesn't
+        # ship bash by default. webkit2gtk: same X/GTK runtime story as the
+        # smoke-appimage matrix above.
+        run: xbps-install -Sy bash file webkit2gtk
 
       - uses: actions/download-artifact@v4
         with:
