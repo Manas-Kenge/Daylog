@@ -458,10 +458,12 @@ Polling: a single `useQuery` per widget, all using the same query key prefix, re
 ### Phase 4 — Settings + categorization (1 weekend)
 
 - Settings dialog (shadcn `Dialog`) with: refresh interval, theme, category rules.
-- Category rules: list of `{ pattern: regex, category: string, color: hex }`. Persisted via `tauri-plugin-store`.
-- Apply rules client-side when displaying — don't push back to aw-server.
+- **Category rules live in aw-server's settings bucket** at `/api/0/settings/classes` — same place the AW WebUI puts them. Schema: `{ name: string[], rule: { type: "regex"|"none", regex?, ignore_case? }, data?: { color?, score? } }` (matches WebUI verbatim; `data` is optional decoration we round-trip).
+- **Matching is server-side via AQL `categorize()`.** Rust does no regex matching; we just edit the rule list and inline it into queries (see `categories::classes_to_aql`).
+- Defaults are seeded by `categories::load()` on first read if the bucket is absent — fresh installs get a sensible starter set; user edits are never silently overwritten on upgrade.
+- Settings UI writes through `categories_set` IPC, which validates regex compilation Rust-side before POSTing to aw-server.
 
-**Exit criteria:** rules persist across app restarts; categorization in widgets reflects rules within one refresh tick.
+**Exit criteria:** rules persist across app restarts; the AW WebUI's Settings → Categories page shows the same rules; categorization in widgets reflects edits within one refresh tick.
 
 ### Phase 5 — Always-on tracking + universal-Linux bundling (2 weekends)
 
@@ -832,7 +834,7 @@ daylog/
 │   ├── lib/
 │   │   ├── aw.ts                 ← Tauri invoke wrappers
 │   │   ├── aw-types.ts
-│   │   ├── categories.ts         ← rule engine
+│   │   ├── category-colors.ts    ← root → chart-color map
 │   │   └── utils.ts              ← shadcn cn() lives here
 │   └── hooks/
 │       ├── useAw.ts              ← TanStack Query hooks
@@ -888,8 +890,19 @@ daylog/
 
 ## 11. Open questions (decide before / during implementation)
 
-1. **Polling vs event stream.** aw-server doesn't expose websockets. Polling at 5s is fine for v0.1, but if we later want sub-second focus tracking, we'd need to long-poll or watch sqlite directly. *Decision deferred.*
-2. **Category storage location.** App-local store (current plan) or aw-server bucket? Storing in aw-server would make rules portable to the official WebUI. Cost: harder to test, more network calls. *Decision: app-local for v0.1, revisit.*
+1. **Polling vs event stream.** *Decided: polling.* aw-server-rust exposes
+   neither websockets nor SSE (verified by symbol-dumping the binary — only
+   HTTP routes; no `ws`, `stream`, `subscribe`, or `text/event-stream`).
+   Polling at 5s is the only option. v0.2 may reduce churn by reading
+   `last_updated` from `GET /api/0/buckets/` before re-running an expensive
+   query, but the polling cadence stays.
+2. **Category storage location.** *Decided: aw-server settings bucket
+   (`/api/0/settings/classes`).* Categories live where the AW WebUI puts
+   them, in aw-server's settings store. Defaults are seeded on first read
+   if the key is absent. Matching is server-side via AQL `categorize()`;
+   Daylog only edits the rule list. This makes the rules portable to a
+   future v0.2 GNOME shell extension and to the official WebUI editing the
+   same bucket.
 3. **Light mode default.** The aesthetic of dense data dashboards leans dark. shadcn default is system-follow. *Decision: follow GNOME for now; verify dark mode renders the heatmap acceptably.*
 4. **Hostname assumption.** Bucket IDs include hostname (`aw-watcher-window_manas`). What if the user changes hostname or has multiple machines? *Decision for v0.1: query `/api/0/buckets/` at startup, pick the first `aw-watcher-window_*` and `aw-watcher-afk_*`. Document the assumption. Multi-host is a v0.2 problem.*
 5. **Detail view: slide-over or route swap?** Slide-over keeps the dashboard visually present; route swap is simpler. Try slide-over first. If transitions feel like blinking, fall back to route swap. *Decide during Phase 3 Track B.*
@@ -953,7 +966,20 @@ When all boxes are checked, tag `v0.1.0` and post to r/ActivityWatch, r/linux, a
 
 The mini-window has been pulled into v0.1 (§1.0 addendum). What remains for v0.2:
 
-1. **GNOME shell topbar applet.** Companion extension that shows current focus + today total in the top bar. Hover reveals a small popover with top 3 apps. Talks to `aw-server` directly over HTTP (same `:5600`). Distributed via extensions.gnome.org and bundled in the `.deb` similar to `focused-window-dbus`. Cross-DE work is its own engineering project; staying in v0.2.
+1. **GNOME shell topbar applet.** Companion extension that shows current focus + today total in the top bar. Hover reveals a small popover with top 3 apps. Click opens the Daylog window (or raises it if already running). Distributed independently via extensions.gnome.org so users can install it before or after Daylog itself.
+
+   **Architecture.** The extension is a peer of Daylog, not a child. It reads from the same backend Daylog reads from:
+   - **Backend.** `localhost:5600` (aw-server-rust). The extension talks to it directly via GNOME's `Soup` HTTP library — no shared-code dependency on Daylog. If Daylog isn't running, the extension still works as long as the tracker daemons are.
+   - **Categories.** Read from `/api/0/settings/classes` — the same settings bucket Daylog writes to. No file sharing, no schema duplication. If the user edits rules in Daylog (or in the AW WebUI), the extension picks them up on next refresh. Colors come from the optional `data.color` field.
+   - **Categorization.** AQL `categorize()` on the server. The extension builds queries with the rules inlined (same pattern Daylog uses), aw-server does the matching.
+   - **Polling.** Same constraint as Daylog: aw-server has no websockets/SSE, so the extension polls. 5–10s tick is fine; gnome-shell runs in the compositor process so heavy work belongs server-side, not in the extension.
+
+   **Daylog-side prep work** (small, do at v0.2 kickoff):
+   - Add `tauri-plugin-single-instance` so the extension's "click to open" subprocess raises the existing window instead of spawning a duplicate.
+   - Add CLI deep-linking flags (e.g. `daylog --page focus`) so the extension can jump to specific views.
+   - Document the `daylog`-on-`PATH` requirement for AppImage users (deb/rpm packages get this for free).
+
+   **Distribution.** Extension lives in its own repo and ships via extensions.gnome.org so users can install it from the Extensions Manager UI without touching Daylog. Daylog's release notes link to it; no bundling.
 2. **KDE / Sway / wlroots ambient surfaces.** The mini-window is the cross-DE fallback; per-DE widgets (KDE Plasmoid, Sway tray) are post-v0.1 polish.
 3. **Per-rule `productive: boolean` flag** in category settings, with `work_roots`-aware Pattern Shift weighting (e.g., work-Slack contributes to Work, personal-Discord doesn't).
 4. **Configurable productive allowlist UI** — currently `work_roots` is hardcoded to `["Work"]`; v0.2 exposes it in Settings → General.

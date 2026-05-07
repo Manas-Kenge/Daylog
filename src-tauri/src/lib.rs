@@ -6,13 +6,14 @@ mod time;
 mod tracking;
 
 use aggregate::{
-    bucketize_hourly, categorize_events, fetch_afk_events, fetch_window_events, summarize_afk,
-    unwrap_first_array, AfkSummary, CategorizedEvent, HourBucket,
+    bucketize_hourly, fetch_afk_events, fetch_window_events, parse_categorized_events,
+    parse_category_summaries, summarize_afk, unwrap_first_array, AfkSummary, CategorizedEvent,
+    CategorySummary, HourBucket,
 };
 use aw_client::{queries, AwClient, AwError, Bucket, Event, ServerInfo};
-use serde::Serialize;
-use categories::{CategoryConfig, CategoryError, CategorySummary, Matcher};
+use categories::{CategoryConfig, CategoryError};
 use chrono::{DateTime, Utc};
+use serde::Serialize;
 use tauri::{AppHandle, Manager};
 use time::TimeRange;
 use tracking::{BinDir, ExtensionStatus, InstallError, LifecycleError, Supervisor, TrackerStatus};
@@ -48,7 +49,7 @@ async fn aw_query(
 #[tauri::command]
 async fn aw_top_apps(range: TimeRange) -> Result<Vec<serde_json::Value>, AwError> {
     let res = AwClient::new()
-        .query(queries::top_apps(), &[range.as_aw_timeperiod()])
+        .query(&queries::top_apps(), &[range.as_aw_timeperiod()])
         .await?;
     Ok(unwrap_first_array(res))
 }
@@ -56,7 +57,7 @@ async fn aw_top_apps(range: TimeRange) -> Result<Vec<serde_json::Value>, AwError
 #[tauri::command]
 async fn aw_timeline(range: TimeRange) -> Result<Vec<serde_json::Value>, AwError> {
     let res = AwClient::new()
-        .query(queries::timeline(), &[range.as_aw_timeperiod()])
+        .query(&queries::timeline(), &[range.as_aw_timeperiod()])
         .await?;
     Ok(unwrap_first_array(res))
 }
@@ -86,31 +87,35 @@ impl serde::Serialize for AppError {
 }
 
 #[tauri::command]
-async fn categories_get(app: AppHandle) -> Result<CategoryConfig, CategoryError> {
-    categories::load(&app)
-}
-
-#[tauri::command]
-async fn categories_set(app: AppHandle, config: CategoryConfig) -> Result<(), CategoryError> {
-    Matcher::new(&config)?;
-    categories::save(&app, &config)
-}
-
-#[tauri::command]
-async fn aw_top_categories(
-    app: AppHandle,
-    range: TimeRange,
-) -> Result<Vec<CategorySummary>, AppError> {
-    let cfg = categories::load(&app)?;
-    let matcher = Matcher::new(&cfg)?;
+async fn categories_get() -> Result<CategoryConfig, CategoryError> {
     let client = AwClient::new();
-    let events = fetch_window_events(&client, &range).await?;
-    Ok(categories::summarize(&matcher, &events))
+    categories::load(&client).await
 }
 
 #[tauri::command]
-async fn aw_top_categories_today(app: AppHandle) -> Result<Vec<CategorySummary>, AppError> {
-    aw_top_categories(app, TimeRange::Today).await
+async fn categories_set(config: CategoryConfig) -> Result<(), CategoryError> {
+    categories::validate(&config)?;
+    let client = AwClient::new();
+    categories::save(&client, &config).await
+}
+
+#[tauri::command]
+async fn aw_top_categories(range: TimeRange) -> Result<Vec<CategorySummary>, AppError> {
+    let client = AwClient::new();
+    let cfg = categories::load(&client).await?;
+    let classes_json = categories::classes_to_aql(&cfg);
+    let res = client
+        .query(
+            &queries::top_categories(&classes_json),
+            &[range.as_aw_timeperiod()],
+        )
+        .await?;
+    Ok(parse_category_summaries(&unwrap_first_array(res)))
+}
+
+#[tauri::command]
+async fn aw_top_categories_today() -> Result<Vec<CategorySummary>, AppError> {
+    aw_top_categories(TimeRange::Today).await
 }
 
 #[tauri::command]
@@ -121,15 +126,17 @@ async fn aw_hourly(range: TimeRange) -> Result<Vec<HourBucket>, AwError> {
 }
 
 #[tauri::command]
-async fn aw_categorized_events(
-    app: AppHandle,
-    range: TimeRange,
-) -> Result<Vec<CategorizedEvent>, AppError> {
-    let cfg = categories::load(&app)?;
-    let matcher = Matcher::new(&cfg)?;
+async fn aw_categorized_events(range: TimeRange) -> Result<Vec<CategorizedEvent>, AppError> {
     let client = AwClient::new();
-    let events = fetch_window_events(&client, &range).await?;
-    Ok(categorize_events(&matcher, &events))
+    let cfg = categories::load(&client).await?;
+    let classes_json = categories::classes_to_aql(&cfg);
+    let res = client
+        .query(
+            &queries::categorized_events(&classes_json),
+            &[range.as_aw_timeperiod()],
+        )
+        .await?;
+    Ok(parse_categorized_events(&unwrap_first_array(res)))
 }
 
 #[tauri::command]
@@ -160,7 +167,7 @@ async fn aw_top_domains(range: TimeRange) -> Result<Vec<serde_json::Value>, AwEr
         return Ok(vec![]);
     }
     let res = client
-        .query(queries::web_top_domains(), &[range.as_aw_timeperiod()])
+        .query(&queries::web_top_domains(), &[range.as_aw_timeperiod()])
         .await?;
     Ok(unwrap_first_array(res))
 }
@@ -296,7 +303,7 @@ async fn aw_top_urls(range: TimeRange) -> Result<Vec<serde_json::Value>, AwError
         return Ok(vec![]);
     }
     let res = client
-        .query(queries::web_top_urls(), &[range.as_aw_timeperiod()])
+        .query(&queries::web_top_urls(), &[range.as_aw_timeperiod()])
         .await?;
     Ok(unwrap_first_array(res))
 }

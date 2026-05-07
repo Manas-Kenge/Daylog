@@ -3,7 +3,6 @@ use serde::Serialize;
 use serde_json::Value;
 
 use crate::aw_client::{queries, AwClient, AwError};
-use crate::categories::Matcher;
 use crate::time::TimeRange;
 
 pub async fn fetch_window_events(
@@ -11,7 +10,7 @@ pub async fn fetch_window_events(
     range: &TimeRange,
 ) -> Result<Vec<Value>, AwError> {
     let res = client
-        .query(queries::timeline(), &[range.as_aw_timeperiod()])
+        .query(&queries::timeline(), &[range.as_aw_timeperiod()])
         .await?;
     Ok(unwrap_first_array(res))
 }
@@ -21,7 +20,7 @@ pub async fn fetch_afk_events(
     range: &TimeRange,
 ) -> Result<Vec<Value>, AwError> {
     let res = client
-        .query(queries::afk_events(), &[range.as_aw_timeperiod()])
+        .query(&queries::afk_events(), &[range.as_aw_timeperiod()])
         .await?;
     Ok(unwrap_first_array(res))
 }
@@ -157,7 +156,17 @@ pub struct CategorizedEvent {
     pub category: Vec<String>,
 }
 
-pub fn categorize_events(matcher: &Matcher, events: &[Value]) -> Vec<CategorizedEvent> {
+#[derive(Debug, Serialize)]
+pub struct CategorySummary {
+    pub name: Vec<String>,
+    pub duration: f64,
+}
+
+/// Pull the `$category` array off each event as flat `category: [..]`.
+/// aw-server's `categorize()` writes either the matching rule's name path
+/// or `["Uncategorized"]` to `data.$category`, so this should never miss.
+/// Events lacking a parseable timestamp are dropped (same as before).
+pub fn parse_categorized_events(events: &[Value]) -> Vec<CategorizedEvent> {
     events
         .iter()
         .filter_map(|ev| {
@@ -168,7 +177,15 @@ pub fn categorize_events(matcher: &Matcher, events: &[Value]) -> Vec<Categorized
                 .map(|dt| dt.with_timezone(&Utc))?;
             let duration = ev.get("duration").and_then(|v| v.as_f64()).unwrap_or(0.0);
             let data = ev.get("data").cloned().unwrap_or(Value::Null);
-            let category = matcher.classify(&data);
+            let category = data
+                .get("$category")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_else(|| vec!["Uncategorized".into()]);
             Some(CategorizedEvent {
                 timestamp,
                 duration,
@@ -179,10 +196,42 @@ pub fn categorize_events(matcher: &Matcher, events: &[Value]) -> Vec<Categorized
         .collect()
 }
 
+/// Server-merged events from `merge_events_by_keys(events, ["$category"])`
+/// arrive shaped as `{data: {"$category": [..]}, duration: <sum>}`. Flatten
+/// to `{name, duration}` pairs sorted by duration desc (server already
+/// sorts, but we re-sort defensively in case a future upstream change
+/// removes it).
+pub fn parse_category_summaries(events: &[Value]) -> Vec<CategorySummary> {
+    let mut out: Vec<CategorySummary> = events
+        .iter()
+        .filter_map(|ev| {
+            let duration = ev.get("duration").and_then(|v| v.as_f64())?;
+            let name = ev
+                .get("data")
+                .and_then(|d| d.get("$category"))
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect::<Vec<_>>()
+                })?;
+            if name.is_empty() {
+                return None;
+            }
+            Some(CategorySummary { name, duration })
+        })
+        .collect();
+    out.sort_by(|a, b| {
+        b.duration
+            .partial_cmp(&a.duration)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::categories::CategoryConfig;
     use serde_json::json;
 
     #[test]
@@ -197,7 +246,6 @@ mod tests {
 
     #[test]
     fn hourly_attributes_to_local_hour() {
-        // Build a 30-min event starting at the top of some local hour.
         let now_local = Local::now();
         let start_local = now_local
             .with_minute(0)
@@ -221,7 +269,6 @@ mod tests {
 
     #[test]
     fn hourly_splits_across_boundary() {
-        // 30 minutes starting at HH:45 local should split 15min into HH and 15min into HH+1.
         let now_local = Local::now();
         let base = now_local
             .with_minute(45)
@@ -289,39 +336,62 @@ mod tests {
     }
 
     #[test]
-    fn categorize_preserves_order_and_assigns() {
-        let cfg = CategoryConfig::defaults();
-        let m = Matcher::new(&cfg).unwrap();
+    fn parse_categorized_events_pulls_category_from_data() {
         let events = vec![
-            json!({"timestamp": "2026-01-01T10:00:00Z", "duration": 10.0, "data": {"app": "kitty"}}),
-            json!({"timestamp": "2026-01-01T10:01:00Z", "duration": 20.0, "data": {"app": "spotify"}}),
-            json!({"timestamp": "2026-01-01T10:02:00Z", "duration": 30.0, "data": {"app": "weirdapp"}}),
+            json!({
+                "timestamp": "2026-01-01T10:00:00Z",
+                "duration": 10.0,
+                "data": {"app": "vim", "$category": ["Work", "Programming"]}
+            }),
+            json!({
+                "timestamp": "2026-01-01T10:01:00Z",
+                "duration": 20.0,
+                "data": {"app": "weirdapp", "$category": ["Uncategorized"]}
+            }),
         ];
-        let out = categorize_events(&m, &events);
-        assert_eq!(out.len(), 3);
+        let out = parse_categorized_events(&events);
+        assert_eq!(out.len(), 2);
         assert_eq!(out[0].category, vec!["Work", "Programming"]);
-        assert_eq!(out[1].category, vec!["Media", "Music"]);
-        assert_eq!(out[2].category, vec!["Uncategorized"]);
-        assert_eq!(out[0].duration, 10.0);
+        assert_eq!(out[1].category, vec!["Uncategorized"]);
     }
 
     #[test]
-    fn categorize_drops_events_without_timestamp() {
-        let cfg = CategoryConfig::defaults();
-        let m = Matcher::new(&cfg).unwrap();
-        let events = vec![json!({"duration": 10.0, "data": {"app": "kitty"}})];
-        let out = categorize_events(&m, &events);
+    fn parse_categorized_events_drops_events_without_timestamp() {
+        let events = vec![json!({"duration": 10.0, "data": {"$category": ["Work"]}})];
+        let out = parse_categorized_events(&events);
         assert!(out.is_empty());
+    }
+
+    #[test]
+    fn parse_categorized_events_falls_back_when_category_missing() {
+        let events = vec![json!({
+            "timestamp": "2026-01-01T10:00:00Z",
+            "duration": 10.0,
+            "data": {"app": "x"}
+        })];
+        let out = parse_categorized_events(&events);
+        assert_eq!(out[0].category, vec!["Uncategorized"]);
+    }
+
+    #[test]
+    fn parse_category_summaries_groups_and_sorts() {
+        let events = vec![
+            json!({"data": {"$category": ["Work", "Programming"]}, "duration": 150.0}),
+            json!({"data": {"$category": ["Media", "Music"]}, "duration": 200.0}),
+            json!({"data": {"$category": ["Uncategorized"]}, "duration": 25.0}),
+        ];
+        let out = parse_category_summaries(&events);
+        assert_eq!(out[0].name, vec!["Media", "Music"]);
+        assert_eq!(out[0].duration, 200.0);
+        assert_eq!(out[1].name, vec!["Work", "Programming"]);
+        assert_eq!(out[1].duration, 150.0);
+        assert_eq!(out[2].name, vec!["Uncategorized"]);
     }
 
     #[test]
     fn unwrap_first_array_handles_empty() {
         assert!(unwrap_first_array(vec![]).is_empty());
         assert!(unwrap_first_array(vec![json!(null)]).is_empty());
-        assert_eq!(
-            unwrap_first_array(vec![json!([1, 2, 3])]).len(),
-            3
-        );
+        assert_eq!(unwrap_first_array(vec![json!([1, 2, 3])]).len(), 3);
     }
-
 }

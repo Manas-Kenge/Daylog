@@ -66,9 +66,20 @@ export type Rule =
   | { type: "regex"; regex: string; ignore_case?: boolean }
   | { type: "none" };
 
+/**
+ * Optional decoration a future companion (the v0.2 GNOME extension, or the
+ * AW WebUI editing the same settings bucket) may attach to a rule. Daylog
+ * just round-trips it.
+ */
+export interface CategoryData {
+  color?: string;
+  score?: number;
+}
+
 export interface Category {
   name: string[];
   rule: Rule;
+  data?: CategoryData;
 }
 
 export interface CategoryConfig {
