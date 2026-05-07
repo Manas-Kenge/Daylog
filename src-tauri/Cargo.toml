@@ -1,6 +1,6 @@
 [package]
 name = "daylog"
-version = "0.1.0"
+version = "0.1.1"
 description = "See how you spent your time on your computer"
 authors = ["Manas Kenge"]
 edition = "2021"
