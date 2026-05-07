@@ -3,13 +3,29 @@
 //! server-side via AQL `categorize()` — this module just handles the rule
 //! shape, validation, and AQL serialization.
 
+use std::sync::OnceLock;
+
 use regex::RegexBuilder;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tokio::sync::RwLock;
 
 use crate::aw_client::{AwClient, AwError};
 
 const SETTINGS_KEY: &str = "classes";
+
+/// Process-level cache. Categories rarely change inside a session, but
+/// `aw_top_categories` and `aw_categorized_events` both call `load()`
+/// per IPC call, so a cold Overview mount used to issue ~14 redundant
+/// HTTP roundtrips to aw-server's settings bucket. The cache is filled
+/// lazily on first read and invalidated by `save()` when this app is
+/// the mutator. External edits (AW WebUI writing the same key) are not
+/// observed; that's an accepted miss until categories grow live-edit
+/// surface area.
+fn cache() -> &'static RwLock<Option<CategoryConfig>> {
+    static CACHE: OnceLock<RwLock<Option<CategoryConfig>>> = OnceLock::new();
+    CACHE.get_or_init(|| RwLock::new(None))
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum CategoryError {
@@ -139,7 +155,19 @@ pub fn validate(cfg: &CategoryConfig) -> Result<(), CategoryError> {
 /// empty, seed defaults — best-effort persisted back to aw-server so the
 /// AW WebUI sees the same rules. If the persist write fails, we still
 /// return defaults in-memory so the dashboard works.
+///
+/// Memoized: subsequent calls in the same process return the cached
+/// config until `save()` mutates it.
 pub async fn load(client: &AwClient) -> Result<CategoryConfig, CategoryError> {
+    if let Some(cfg) = cache().read().await.as_ref() {
+        return Ok(cfg.clone());
+    }
+    let cfg = load_uncached(client).await?;
+    *cache().write().await = Some(cfg.clone());
+    Ok(cfg)
+}
+
+async fn load_uncached(client: &AwClient) -> Result<CategoryConfig, CategoryError> {
     let stored: Option<Vec<Category>> = client.get_setting(SETTINGS_KEY).await?;
     if let Some(cats) = stored {
         if !cats.is_empty() {
@@ -154,6 +182,7 @@ pub async fn load(client: &AwClient) -> Result<CategoryConfig, CategoryError> {
 pub async fn save(client: &AwClient, cfg: &CategoryConfig) -> Result<(), CategoryError> {
     validate(cfg)?;
     client.set_setting(SETTINGS_KEY, &cfg.categories).await?;
+    *cache().write().await = Some(cfg.clone());
     Ok(())
 }
 

@@ -208,10 +208,13 @@ export function useScopedActive(scope: "today" | "week" | "month"): ScopedActive
  * (0 = today, 1 = yesterday, ..., N-1). Drives the Pattern Shift KPI sub-line
  * and the Notable Today widget.
  *
- * Today's slot uses 5s refetchInterval so live deltas track real-time;
- * past days use a 5min staleTime since they don't change inside one day.
- *
- * Returns null entries for days that are still loading.
+ * Two queries, not 14:
+ *   - Today's slot piggybacks on the same query keys other widgets
+ *     (`useCategorizedEvents(Today)`, `useAfkSummary(Today, false)`) use,
+ *     so it's deduped from cache and refetches every 5s in lockstep with
+ *     the rest of the live UI.
+ *   - Days 1..N-1 collapse into one bundled IPC call (`aw_trailing_days_past`)
+ *     with a 5min staleTime — past days don't change within a day.
  */
 export interface TrailingDay {
   daysAgo: number;
@@ -223,31 +226,45 @@ export function useTrailingDays(days = 7): {
   data: TrailingDay[];
   isLoading: boolean;
 } {
-  const eventQueries = useQueries({
-    queries: Array.from({ length: days }, (_, n) => ({
-      queryKey: ["aw_categorized_events_daysago", n],
-      queryFn: () => aw.awCategorizedEvents(DaysAgo(n)),
-      refetchInterval: (n === 0 ? REFRESH_MS : false) as number | false,
-      staleTime: n === 0 ? 0 : PAST_DAY_STALE_MS,
-    })),
+  const todayEvents = useQuery({
+    queryKey: ["aw_categorized_events", ...rangeKey(Today)],
+    queryFn: () => aw.awCategorizedEvents(Today),
+    refetchInterval: REFRESH_MS,
   });
-  const afkQueries = useQueries({
-    queries: Array.from({ length: days }, (_, n) => ({
-      queryKey: ["aw_afk_summary_daysago", false, n],
-      queryFn: () => aw.awAfkSummary(DaysAgo(n), false),
-      refetchInterval: (n === 0 ? REFRESH_MS : false) as number | false,
-      staleTime: n === 0 ? 0 : PAST_DAY_STALE_MS,
-    })),
+  const todayAfk = useQuery({
+    queryKey: ["aw_afk_summary", false, ...rangeKey(Today)],
+    queryFn: () => aw.awAfkSummary(Today, false),
+    refetchInterval: REFRESH_MS,
   });
 
-  const data: TrailingDay[] = Array.from({ length: days }, (_, n) => ({
-    daysAgo: n,
-    events: eventQueries[n].data ?? null,
-    activeSec: afkQueries[n].data?.active_seconds ?? null,
-  }));
+  const pastCount = Math.max(0, days - 1);
+  const past = useQuery({
+    queryKey: ["aw_trailing_days_past", pastCount],
+    queryFn: () => aw.awTrailingDaysPast(pastCount),
+    enabled: pastCount > 0,
+    staleTime: PAST_DAY_STALE_MS,
+  });
+
+  const data: TrailingDay[] = Array.from({ length: days }, (_, n) => {
+    if (n === 0) {
+      return {
+        daysAgo: 0,
+        events: todayEvents.data ?? null,
+        activeSec: todayAfk.data?.active_seconds ?? null,
+      };
+    }
+    const slot = past.data?.find((d) => d.days_ago === n);
+    return {
+      daysAgo: n,
+      events: slot?.events ?? null,
+      activeSec: slot?.afk.active_seconds ?? null,
+    };
+  });
 
   const isLoading =
-    eventQueries.some((q) => q.isLoading) || afkQueries.some((q) => q.isLoading);
+    todayEvents.isLoading ||
+    todayAfk.isLoading ||
+    (pastCount > 0 && past.isLoading);
 
   return { data, isLoading };
 }

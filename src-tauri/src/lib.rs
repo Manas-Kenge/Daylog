@@ -78,6 +78,8 @@ enum AppError {
     Aw(#[from] AwError),
     #[error("{0}")]
     Category(#[from] CategoryError),
+    #[error("task join: {0}")]
+    Join(String),
 }
 
 impl serde::Serialize for AppError {
@@ -137,6 +139,67 @@ async fn aw_categorized_events(range: TimeRange) -> Result<Vec<CategorizedEvent>
         )
         .await?;
     Ok(parse_categorized_events(&unwrap_first_array(res)))
+}
+
+/// Bundled categorized-events + AFK summary for a contiguous past-day
+/// window (days 1..=N, where 1 = yesterday). Replaces the 14-query
+/// fan-out the trailing-days hook used to issue from JS — same data,
+/// one IPC roundtrip, queries dispatched concurrently inside Rust so
+/// HTTP keep-alive against aw-server actually pays off.
+///
+/// Today's slot is intentionally *not* bundled here: the dashboard
+/// refreshes today every 5s, while past days only need a 5min
+/// staleness — bundling them together would re-run past-day AQL on
+/// every tick.
+#[derive(Debug, serde::Serialize)]
+pub struct TrailingDayPayload {
+    pub days_ago: u32,
+    pub events: Vec<CategorizedEvent>,
+    pub afk: AfkSummary,
+}
+
+#[tauri::command]
+async fn aw_trailing_days_past(days: u32) -> Result<Vec<TrailingDayPayload>, AppError> {
+    if days == 0 {
+        return Ok(Vec::new());
+    }
+    // Pre-load + cache categories once; per-day tasks below hit the cache.
+    let client = AwClient::new();
+    let _ = categories::load(&client).await?;
+
+    let mut handles = Vec::with_capacity(days as usize);
+    for n in 1..=days {
+        handles.push(tokio::spawn(async move { fetch_trailing_day(n).await }));
+    }
+    let mut out = Vec::with_capacity(handles.len());
+    for h in handles {
+        match h.await {
+            Ok(res) => out.push(res?),
+            Err(e) => return Err(AppError::Join(e.to_string())),
+        }
+    }
+    out.sort_by_key(|d| d.days_ago);
+    Ok(out)
+}
+
+async fn fetch_trailing_day(n: u32) -> Result<TrailingDayPayload, AppError> {
+    let client = AwClient::new();
+    let cfg = categories::load(&client).await?;
+    let classes_json = categories::classes_to_aql(&cfg);
+    let range = TimeRange::DaysAgo { days: n };
+    let timeperiods = [range.as_aw_timeperiod()];
+    let aql = queries::categorized_events(&classes_json);
+    let (events_res, afk_events) = tokio::join!(
+        client.query(&aql, &timeperiods),
+        fetch_afk_events(&client, &range),
+    );
+    let events = parse_categorized_events(&unwrap_first_array(events_res?));
+    let afk = summarize_afk(&afk_events?, false);
+    Ok(TrailingDayPayload {
+        days_ago: n,
+        events,
+        afk,
+    })
 }
 
 #[tauri::command]
@@ -337,6 +400,7 @@ pub fn run() {
             aw_top_categories_today,
             aw_hourly,
             aw_categorized_events,
+            aw_trailing_days_past,
             aw_afk_summary,
             aw_has_web_watcher,
             aw_top_domains,
