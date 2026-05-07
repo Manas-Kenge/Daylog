@@ -1,9 +1,3 @@
-/**
- * Inline SVG sparkline. `area` toggles a soft gradient fill below the line.
- * Designed to work as a card background (when sized via className) or as
- * an inline element (default 56×14).
- */
-
 import { useId } from "react";
 
 interface SparklineProps {

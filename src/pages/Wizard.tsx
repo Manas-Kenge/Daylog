@@ -23,7 +23,6 @@ type State =
 export function Wizard({ onComplete }: WizardProps) {
   const [state, setState] = useState<State>({ kind: "detecting" });
 
-  // Step 1 — probe :5600 on mount.
   useEffect(() => {
     let cancelled = false;
     tracking.detect().then((d: Detection) => {

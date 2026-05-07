@@ -11,10 +11,6 @@ interface WizardShellProps {
   className?: string;
 }
 
-/**
- * Centered, single-card frame used by every step. Keeps padding, max-width,
- * and the error surface consistent so step components stay short.
- */
 export function WizardShell({
   title,
   description,

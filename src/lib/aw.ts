@@ -1,8 +1,5 @@
-/**
- * Typed wrappers around Tauri invoke() calls. Names match the Rust commands
- * registered in src-tauri/src/lib.rs. Tauri 2 converts JS camelCase keys to
- * snake_case Rust parameters automatically, so use camelCase here.
- */
+// Tauri 2 converts JS camelCase keys to snake_case Rust params automatically
+// — use camelCase here.
 
 import { invoke } from "@tauri-apps/api/core";
 import type {

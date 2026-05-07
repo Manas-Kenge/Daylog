@@ -28,7 +28,6 @@ const queryClient = new QueryClient({
 const persister = createSyncStoragePersister({
   storage: window.localStorage,
   key: "daylog.rq-cache",
-  // Drop legacy/oversized blobs silently rather than throwing on launch.
   throttleTime: 1000,
 });
 

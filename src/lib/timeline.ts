@@ -1,7 +1,4 @@
-/**
- * Bucket categorized events into 96 × 15-minute slots for the local day.
- * For each slot, the dominant category (longest contributor) wins.
- */
+// Dominant category (longest contributor) wins per 15-min slot.
 
 import type { CategorizedEvent } from "./aw-types";
 import { categoryRoot } from "./category-colors";

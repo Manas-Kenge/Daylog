@@ -1,7 +1,5 @@
-/**
- * TanStack Query wrappers around the Tauri commands. Each is keyed by
- * command name + serialized range so flipping the range refetches all widgets.
- */
+// Each query is keyed by command name + serialized range so flipping the
+// range refetches all widgets.
 
 import { useQueries, useQuery } from "@tanstack/react-query";
 import { useRange } from "@/context/RangeContext";
@@ -269,10 +267,6 @@ export function useTrailingDays(days = 7): {
   return { data, isLoading };
 }
 
-/**
- * Convenience: paired Today + Yesterday hourly queries for the
- * "compare to yesterday" overlay on the hourly chart.
- */
 export function useHourlyTodayVsYesterday() {
   const today = useQuery({
     queryKey: ["aw_hourly", ...rangeKey(Today)],

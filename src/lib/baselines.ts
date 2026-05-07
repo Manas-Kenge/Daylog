@@ -1,11 +1,4 @@
 /**
- * Trailing-N-day baseline statistics.
- *
- * The "Pattern shift" KPI sub-line ("vs typical Tue") and "Notable today"
- * widget both compare today against a baseline computed over the previous
- * N days. These pure helpers do that computation; the data fetch happens
- * in `useTrailingDays` (hooks/useAw.ts).
- *
  * Quiet-day filter: a day with < QUIET_DAY_FLOOR seconds of total activity
  * is excluded from the baseline. Without this, vacation days, weekends,
  * or paused-tracking days would skew the median toward zero and make the

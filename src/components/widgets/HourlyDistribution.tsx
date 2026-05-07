@@ -1,7 +1,3 @@
-/**
- * 24-hour distribution. Today as bars, yesterday as a dashed overlay line.
- */
-
 import {
   Bar,
   CartesianGrid,

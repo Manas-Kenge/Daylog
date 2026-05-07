@@ -1,16 +1,10 @@
 /**
  * 3 KPI cards. Discovery-shaped, not score-shaped (PLAN.md §1.0).
  *
- *  1. Active / AFK  — active duration headline; ratio bar + afk·tracked
- *                     footnote; "vs typical" delta against trailing-7-day
- *                     median.
- *  2. Best Window   — densest 3h focus window of the day.
- *  3. Longest       — biggest uninterrupted run on a single category root.
- *
  * Returns a Fragment of three cards so the parent grid (Overview's
  * Timeline + 3 KPIs row) can lay them out as direct grid children.
  *
- * Each card carries a "vs typical" sub-line gated on ≥1 effective baseline
+ * Each card's "vs typical" sub-line is gated on ≥1 effective baseline
  * day; below that we show a build-up placeholder.
  */
 
@@ -294,7 +288,6 @@ export function KpiStrip() {
   const { data: afk, isLoading: afkLoading } = useAfkSummary(true);
   const { data: trailing, isLoading: trailingLoading } = useTrailingDays(8);
 
-  // Today's derived metrics
   const todayEvents = today ?? [];
   const activeSec = afk?.active_seconds ?? 0;
   const afkSec = afk?.afk_seconds ?? 0;
@@ -341,7 +334,6 @@ export function KpiStrip() {
 
   return (
     <>
-      {/* 1. Active / AFK */}
       <KpiCard
         icon={Activity03Icon}
         label="Active / AFK"
@@ -372,7 +364,6 @@ export function KpiStrip() {
         tip="Total active time today (you vs AFK), with the trailing-7-day median active total as baseline."
       />
 
-      {/* 2. Best Window */}
       <KpiCard
         icon={Target02Icon}
         label="Best window"
@@ -405,7 +396,6 @@ export function KpiStrip() {
         tip="Densest 3-hour window of focused stretches today (≥2m on a single category root). Highlighted bars show that window."
       />
 
-      {/* 3. Longest stretch */}
       <KpiCard
         icon={RocketIcon}
         label="Longest stretch"

@@ -35,8 +35,6 @@ const CELL_PX = 10;
 const GAP_PX = 3;
 
 const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
-/** Which weekday-row labels to actually render (others stay reserved-but-blank
- *  so the column visually aligns). Matches GitHub's pattern. */
 const VISIBLE_WEEKDAY_INDICES = new Set([1, 3, 5]);
 
 interface DayCell {
@@ -186,7 +184,6 @@ export function MonthPage() {
             className="inline-flex flex-col gap-1"
             style={{ minWidth: "fit-content" }}
           >
-            {/* Month-label row */}
             <div
               className="flex"
               style={{ gap: `${GAP_PX}px`, paddingLeft: `${CELL_PX * 2 + GAP_PX * 2}px` }}
@@ -202,9 +199,7 @@ export function MonthPage() {
               ))}
             </div>
 
-            {/* Heatmap body: weekday-label column + week columns */}
             <div className="flex" style={{ gap: `${GAP_PX}px` }}>
-              {/* Weekday labels */}
               <div
                 className="flex flex-col"
                 style={{ gap: `${GAP_PX}px`, width: `${CELL_PX * 2 + GAP_PX}px` }}
@@ -223,7 +218,6 @@ export function MonthPage() {
                 ))}
               </div>
 
-              {/* Week columns */}
               {columns.map((col, ci) => (
                 <div
                   key={ci}
@@ -237,7 +231,6 @@ export function MonthPage() {
               ))}
             </div>
 
-            {/* Legend */}
             <Legend max={maxActive} />
           </div>
         </div>

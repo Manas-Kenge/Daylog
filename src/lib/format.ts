@@ -1,7 +1,3 @@
-/**
- * Display helpers. Keep these pure; widgets import them.
- */
-
 export function fmtDuration(seconds: number): string {
   if (!Number.isFinite(seconds) || seconds <= 0) return "0m";
   const total = Math.round(seconds);

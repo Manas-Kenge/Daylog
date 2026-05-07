@@ -1,8 +1,3 @@
-/**
- * Top categories · donut chart + compact legend.
- * Built on shadcn `ChartContainer` + Recharts `PieChart`.
- */
-
 import { Cell, Pie, PieChart } from "recharts";
 import { WidgetCard } from "./Card";
 import { Badge } from "@/components/ui/badge";

@@ -1,14 +1,10 @@
 /**
- * Week heatmap · calendar-week activity by hour-band × weekday.
+ * Calendar week (not trailing 7 days), matching WeekPage's convention —
+ * future days render as empty cells.
  *
- * 6 hour-bands (4h each) × 7 weekdays (Mon–Sun). Cell intensity maps to
- * active duration in that band on that day. Today's column is ringed;
- * future days render as empty cells (matches WeekPage's "calendar week,
- * not trailing 7 days" convention).
- *
- * Pulls one `awHourly(DaysAgo(n))` per applicable weekday — same
- * useQueries pattern as MonthPage. Past-day queries share the
- * `aw_hourly_daysago` key so reopening Overview after WeekPage is instant.
+ * Pulls one `awHourly(DaysAgo(n))` per applicable weekday. Past-day
+ * queries share the `aw_hourly_daysago` key so reopening Overview after
+ * WeekPage is instant.
  *
  * Layout uses a single CSS grid with explicit row heights — aspect-ratio
  * cells fight the parent's flex-1/min-h-0 constraints in narrow rails.

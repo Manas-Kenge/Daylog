@@ -1,14 +1,7 @@
 /**
- * 24h timeline heatmap (96 × 15-min cells). Cells are colored by the
- * dominant category root in their slot.
- *
- * Post-CEO-review (PLAN.md §1.0):
- *   - Yesterday-ghost: yesterday's bucketize96 rendered underneath today
- *     at low opacity. At-a-glance "did I behave the same?" comparison
- *     without leaving the dashboard.
- *   - NOW indicator: vertical line at the current slot.
- *   - AFK stripes: AFK intervals overlay as dim diagonal stripes so the
- *     idle parts of the day are honest rather than hidden.
+ * 24h timeline heatmap (96 × 15-min cells), dominant category per slot.
+ * AFK intervals overlay as dim diagonal stripes so idle time is honest
+ * rather than hidden.
  */
 
 import { useEffect, useMemo, useState } from "react";
@@ -72,7 +65,6 @@ export function Timeline() {
     return mask;
   }, [afk]);
 
-  // NOW indicator: which slot index covers the current wall clock?
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
     const id = setInterval(() => setNow(new Date()), 60_000);
@@ -105,7 +97,6 @@ export function Timeline() {
           <Skeleton className="h-14 w-full rounded-sm" />
         ) : (
           <div className="relative">
-            {/* Today row */}
             <div
               className="grid h-14 gap-px overflow-hidden rounded-sm border bg-background"
               style={{ gridTemplateColumns: "repeat(96, 1fr)" }}
@@ -142,7 +133,6 @@ export function Timeline() {
                   </div>
                 );
               })}
-              {/* NOW indicator overlays the today grid */}
               <div
                 aria-hidden
                 className="pointer-events-none absolute inset-y-0 w-px bg-foreground/80"
@@ -158,7 +148,6 @@ export function Timeline() {
               />
             </div>
 
-            {/* Yesterday ghost — only render when yesterday has data */}
             {yestHasData && (
               <div
                 className="mt-1 grid h-3 gap-px overflow-hidden rounded-sm border border-dashed bg-background opacity-50"

@@ -18,7 +18,7 @@ export function longestFocus(
 ): { seconds: number; root: string | null } {
   if (events.length === 0) return { seconds: 0, root: null };
 
-  // Sort ascending; grouping needs chronological order.
+  // Grouping needs chronological order.
   const sorted = [...events].sort((a, b) =>
     a.timestamp < b.timestamp ? -1 : 1,
   );
@@ -31,7 +31,6 @@ export function longestFocus(
   for (const ev of sorted) {
     const root = categoryRoot(ev.category);
     if (root !== runRoot) {
-      // boundary
       if (runSec >= floorSec && runSec > bestSec) {
         bestSec = runSec;
         bestRoot = runRoot;
@@ -42,7 +41,6 @@ export function longestFocus(
       runSec += ev.duration;
     }
   }
-  // tail
   if (runSec >= floorSec && runSec > bestSec) {
     bestSec = runSec;
     bestRoot = runRoot;

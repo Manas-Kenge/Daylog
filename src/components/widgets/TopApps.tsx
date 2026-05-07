@@ -1,8 +1,3 @@
-/**
- * Top apps · pill rows in a recessed body. Each row carries a per-hour
- * sparkline derived from the categorized event stream.
- */
-
 import { ListBody, ListRow, WidgetCard } from "./Card";
 import { Sparkline } from "@/components/Sparkline";
 import { Badge } from "@/components/ui/badge";
@@ -14,11 +9,10 @@ import type { TimeRange } from "@/lib/aw-types";
 import { useMemo, useState } from "react";
 
 interface TopAppsProps {
-  /** Time range to query. Defaults to the active RangeContext (Today). */
   rangeOverride?: TimeRange;
-  /** Show per-app per-hour sparklines. Defaults true on single-day ranges,
-   *  false on multi-day ranges (the categorized-events query gets heavy
-   *  fast, and the 24-bucket sparkline reads as noise across N days). */
+  /** Defaults true on single-day ranges, false on multi-day ranges (the
+   *  categorized-events query gets heavy fast, and the 24-bucket sparkline
+   *  reads as noise across N days). */
   showSparklines?: boolean;
   title?: string;
   description?: string;
@@ -111,11 +105,6 @@ export function TopApps({
   );
 }
 
-/**
- * 16px slot rendering either the resolved app icon or a category-colored
- * dot fallback. Image errors (corrupt data URL, unsupported MIME the
- * webview rejects) collapse to the same fallback via `onError`.
- */
 function AppGlyph({ icon, color }: { icon: string | null; color: string }) {
   const [failed, setFailed] = useState(false);
   if (icon && !failed) {

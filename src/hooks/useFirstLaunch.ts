@@ -7,11 +7,6 @@ interface UseFirstLaunch {
   markComplete: () => Promise<void>;
 }
 
-/**
- * Reads the wizard-completion marker from the app config dir on mount.
- * `markComplete` writes the marker and flips the local state so the gate
- * in App.tsx re-renders into the dashboard.
- */
 export function useFirstLaunch(): UseFirstLaunch {
   const [isLoading, setIsLoading] = useState(true);
   const [complete, setComplete] = useState(false);

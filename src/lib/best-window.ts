@@ -1,16 +1,5 @@
 /**
- * "Best Window" KPI computation.
- *
- * For a given day's categorized events, find the contiguous hour-range
- * with the highest concentration of *focused* time (qualifying focus runs
- * ≥ floorSec on a single category root). Returns {startHour, endHour,
- * seconds}, or null when there's no focused time.
- *
- * Algorithm: compute focusByHour, then scan all WINDOW_HOURS-length
- * sliding windows, returning the one with the highest sum. Ties broken
- * by earliest start.
- *
- * The window length is fixed at 3 hours — long enough to feel like a
+ * Window length is fixed at 3 hours — long enough to feel like a
  * meaningful "focus block," short enough that "best window" still
  * resolves to a specific time-of-day. Smaller windows degenerate to
  * "best hour"; larger windows blur into the whole day.

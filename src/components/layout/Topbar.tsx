@@ -49,7 +49,6 @@ export function Topbar() {
 
   return (
     <header className="flex min-w-0 items-center justify-between gap-3.5 border-b bg-background px-4 py-2.5">
-      {/* Left — scoped active total + delta */}
       <div className="flex min-w-0 shrink-0 items-center gap-3">
         {scopedLoading ? (
           <Skeleton className="h-4 w-20" />
@@ -71,7 +70,6 @@ export function Topbar() {
         )}
       </div>
 
-      {/* Right — view toggle (Today/Week/Month) */}
       <ToggleGroup
         type="single"
         size="sm"
