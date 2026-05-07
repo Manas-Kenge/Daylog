@@ -1,8 +1,8 @@
 [package]
 name = "daylog"
 version = "0.1.0"
-description = "A Tauri App"
-authors = ["you"]
+description = "See how you spent your time on your computer"
+authors = ["Manas Kenge"]
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
