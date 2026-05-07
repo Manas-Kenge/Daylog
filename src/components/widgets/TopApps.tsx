@@ -123,14 +123,14 @@ function AppGlyph({ icon, color }: { icon: string | null; color: string }) {
       <img
         src={icon}
         alt=""
-        className="size-4 shrink-0 rounded-sm object-contain"
+        className="size-6 shrink-0 rounded-sm object-contain"
         onError={() => setFailed(true)}
       />
     );
   }
   return (
-    <span className="flex size-4 shrink-0 items-center justify-center">
-      <span className="size-2 rounded-sm" style={{ background: color }} />
+    <span className="flex size-6 shrink-0 items-center justify-center">
+      <span className="size-3 rounded-sm" style={{ background: color }} />
     </span>
   );
 }

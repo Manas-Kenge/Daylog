@@ -171,7 +171,15 @@ export function MonthPage() {
       }
     >
       {isLoading ? (
-        <Skeleton className="h-32 w-full rounded-sm" />
+        <div className="overflow-x-auto pb-2">
+          <Skeleton
+            className="rounded-sm"
+            style={{
+              width: CELL_PX * 2 + GAP_PX * 2 + 53 * CELL_PX + 52 * GAP_PX,
+              height: 140,
+            }}
+          />
+        </div>
       ) : (
         <div className="overflow-x-auto pb-2">
           <div

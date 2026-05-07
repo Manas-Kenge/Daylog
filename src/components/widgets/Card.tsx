@@ -50,7 +50,7 @@ export function ListBody({
   return (
     <div
       className={cn(
-        "flex flex-col gap-0.5 rounded-md bg-background p-1",
+        "flex flex-col gap-0.5 rounded-md bg-popover p-1",
         className,
       )}
     >

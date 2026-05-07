@@ -58,7 +58,7 @@ export function TopCategories({
       {isLoading ? (
         <div className="flex flex-col gap-3">
           <Skeleton className="mx-auto size-40 rounded-full" />
-          <div className="flex flex-col gap-0.5 rounded-md bg-background p-1">
+          <div className="flex flex-col gap-0.5 rounded-md bg-popover p-1">
             {Array.from({ length: 5 }, (_, i) => (
               <div
                 key={i}
@@ -124,7 +124,7 @@ export function TopCategories({
             </PieChart>
           </ChartContainer>
 
-          <div className="flex flex-col gap-0.5 rounded-md bg-background p-1">
+          <div className="flex flex-col gap-0.5 rounded-md bg-popover p-1">
             {rows.map((r) => {
               const pct = total > 0 ? (r.duration / total) * 100 : 0;
               return (

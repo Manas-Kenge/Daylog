@@ -134,7 +134,6 @@ export function WeekHeatmap() {
                   key={`${ri}-${ci}`}
                   value={value}
                   max={max}
-                  isToday={ci === todayWeekIdx}
                   isFuture={ci > todayWeekIdx}
                   weekday={WEEKDAY_LABELS[ci]}
                   band={band}
@@ -151,14 +150,12 @@ export function WeekHeatmap() {
 function Cell({
   value,
   max,
-  isToday,
   isFuture,
   weekday,
   band,
 }: {
   value: number;
   max: number;
-  isToday: boolean;
   isFuture: boolean;
   weekday: string;
   band: { label: string; start: number; end: number };
@@ -174,10 +171,7 @@ function Cell({
     : `${weekday} ${band.label}–${String(band.end).padStart(2, "0")} · ${fmtDuration(value)}`;
   return (
     <div
-      className={cn(
-        "h-full w-full rounded-sm border border-border/30",
-        isToday && "ring-1 ring-foreground/70",
-      )}
+      className="h-full w-full rounded-sm border border-border/30"
       style={{ background: bg }}
       title={title}
     />
