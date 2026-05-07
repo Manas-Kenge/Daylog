@@ -8,7 +8,7 @@ import { RangeProvider } from "./context/RangeContext";
 import { PageProvider } from "./context/PageContext";
 import "./index.css";
 
-const APP_VERSION = "0.1.1";
+const APP_VERSION = "0.1.2";
 
 const queryClient = new QueryClient({
   defaultOptions: {
