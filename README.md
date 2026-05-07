@@ -2,8 +2,7 @@
 
 A Linux desktop app that shows you how you spent your time on your computer — broken down by app, category, hour of the day, and website. Today, this week, this month.
 
-<!-- TODO: replace with a real screenshot -->
-<!-- ![Daylog](docs/screenshot.png) -->
+![Daylog](public/demo.png)
 
 Daylog runs entirely on your machine. No cloud, no sign-in, no telemetry.
 
