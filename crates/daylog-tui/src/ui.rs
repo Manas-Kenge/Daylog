@@ -23,7 +23,8 @@ use crate::app::{App, RangeChip, Tab};
 use crate::theme::Theme;
 
 pub(crate) mod kpi_strip;
-mod overview;
+mod month;
+pub(crate) mod overview;
 pub(crate) mod sparkline;
 pub(crate) mod timeline;
 
@@ -122,6 +123,13 @@ fn header_status(theme: &Theme, app: &App) -> Line<'static> {
 
 fn render_range_chips(f: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
+
+    // Month is a scope-fixed view (year heatmap + trailing-30 rollup).
+    // The chips don't drive any Month widgets, so render the row dimmed
+    // and append a trailing scope hint instead of letting brackets
+    // suggest the active chip is steering this tab.
+    let inert = app.tab == Tab::Month;
+
     let mut spans: Vec<Span> = Vec::new();
     for (i, chip) in RangeChip::ALL.iter().enumerate() {
         // Leading space so the first chip doesn't sit flush against the
@@ -138,7 +146,7 @@ fn render_range_chips(f: &mut Frame, area: Rect, app: &App) {
         //   * Range chips: brackets [Today], BOLD + theme.fg (no ember)
         // Brackets are the ONLY active marker — there's no colour reuse
         // with the ember-accented tab strip above.
-        if *chip == app.range_chip {
+        if *chip == app.range_chip && !inert {
             spans.push(Span::styled(
                 format!("[{}]", chip.label()),
                 Style::default().fg(theme.fg).add_modifier(Modifier::BOLD),
@@ -149,6 +157,12 @@ fn render_range_chips(f: &mut Frame, area: Rect, app: &App) {
                 Style::default().fg(theme.dim),
             ));
         }
+    }
+    if inert {
+        spans.push(Span::styled(
+            "   trailing 30d · year overview",
+            Style::default().fg(theme.dim),
+        ));
     }
     let p = Paragraph::new(Line::from(spans)).alignment(Alignment::Left);
     f.render_widget(p, area);
@@ -214,6 +228,7 @@ fn render_tabs(f: &mut Frame, area: Rect, app: &App) {
 fn render_body(f: &mut Frame, area: Rect, app: &App) {
     match app.tab {
         Tab::Today => overview::render(f, area, app),
+        Tab::Month => month::render(f, area, app),
         _ => render_placeholder(f, area, app.tab, &app.theme),
     }
 }
