@@ -170,13 +170,14 @@ fn render_footer(f: &mut Frame, area: Rect, app: &App) {
 }
 
 fn render_help(f: &mut Frame, app: &App) {
-    let area = center_rect(f.area(), 50, 14);
+    let area = center_rect(f.area(), 50, 15);
     f.render_widget(Clear, area);
     let lines = vec![
         Line::from(Span::styled("Daylog TUI \u{2014} keys", Style::default().bold())),
         Line::from(""),
         Line::from("  1\u{2013}4           Jump to tab N"),
         Line::from("  Tab / Shift-Tab  Cycle tabs"),
+        Line::from("  \u{2190} / \u{2192}         Cycle tabs (arrows)"),
         Line::from("  h / l         Cycle tabs (vim)"),
         Line::from("  r             Cycle range forward"),
         Line::from("  Shift-R       Cycle range backward"),

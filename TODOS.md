@@ -44,31 +44,3 @@ Surfaced in /plan-design-review on 2026-05-08 against `crates/daylog-tui/DESIGN.
 **Context:** Pass 2 of the design review. Not critical because the offline indicator already covers the case where the tracker fails to start.
 
 **Depends on / blocked by:** None. Can land independently after the first TUI cut.
-
-### Distinguish fetch-error from no-data on TopCategories and Hourly
-
-**What:** Match TopApps's pattern — when `last_error()` is `Some`, render `fetch error · check footer` instead of falling back to `loading…`.
-
-**Why:** Today, a stuck fetch on TopCategories looks identical to a slow fetch. The user can't tell whether to wait or panic.
-
-**Pros:** ~6 lines of code, brings the three Overview panels to parity.
-
-**Cons:** None.
-
-**Context:** Pass 2 of the design review. Found in `crates/daylog-tui/src/ui/overview.rs` — TopApps does it right, the other two don't.
-
-**Depends on / blocked by:** None.
-
-### Arrow-key aliases for tab cycling
-
-**What:** Treat `KeyCode::Right` as `l` (next tab) and `KeyCode::Left` as `h` (prev tab) in `app::handle_key`.
-
-**Why:** Most users try arrow keys before vim keys. The current bindings reward people who already know the convention; the alias rewards everyone else without taking anything away.
-
-**Pros:** Two added match arms. No conflicts with existing keys.
-
-**Cons:** None.
-
-**Context:** Pass 6 of the design review.
-
-**Depends on / blocked by:** None.

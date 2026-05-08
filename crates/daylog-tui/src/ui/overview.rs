@@ -110,7 +110,12 @@ fn render_top_categories(f: &mut Frame, area: Rect, app: &App) {
         .title(title);
 
     let Some(rows) = app.data.top_categories.value() else {
-        let p = Paragraph::new("loading…")
+        let inner_msg = if app.data.top_categories.last_error().is_some() {
+            "fetch error · check footer"
+        } else {
+            "loading…"
+        };
+        let p = Paragraph::new(inner_msg)
             .block(block)
             .style(Style::default().dim());
         f.render_widget(p, area);
@@ -152,7 +157,12 @@ fn render_hourly(f: &mut Frame, area: Rect, app: &App) {
         .title(title);
 
     let Some(buckets) = app.data.hourly.value() else {
-        let p = Paragraph::new("loading…")
+        let inner_msg = if app.data.hourly.last_error().is_some() {
+            "fetch error · check footer"
+        } else {
+            "loading…"
+        };
+        let p = Paragraph::new(inner_msg)
             .block(block)
             .style(Style::default().dim());
         f.render_widget(p, area);

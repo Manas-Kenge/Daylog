@@ -237,11 +237,11 @@ fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
             app.help_visible = true;
             app.dirty = true;
         }
-        KeyCode::Tab | KeyCode::Char('l') => {
+        KeyCode::Tab | KeyCode::Char('l') | KeyCode::Right => {
             app.tab = app.tab.next();
             app.dirty = true;
         }
-        KeyCode::BackTab | KeyCode::Char('h') => {
+        KeyCode::BackTab | KeyCode::Char('h') | KeyCode::Left => {
             app.tab = app.tab.prev();
             app.dirty = true;
         }
@@ -256,7 +256,7 @@ fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
             app.cycle_range(false);
         }
         KeyCode::Char(d) if d.is_ascii_digit() && d != '0' => {
-            // 1..6 jump to tab N.
+            // 1..4 jump to tab N (Today/Week/Month/Settings).
             let idx = (d as u8 - b'1') as usize;
             if idx < Tab::ALL.len() {
                 app.tab = Tab::ALL[idx];
@@ -309,6 +309,17 @@ mod tests {
         handle_key(&mut app, KeyCode::Char('l'), KeyModifiers::NONE);
         assert_eq!(app.tab, Tab::Week);
         handle_key(&mut app, KeyCode::Char('h'), KeyModifiers::NONE);
+        assert_eq!(app.tab, Tab::Today);
+    }
+
+    #[test]
+    fn handle_key_arrow_keys_alias_tab_cycle() {
+        // Most users try arrow keys before vim keys. Right/Left should
+        // behave identically to l/h.
+        let mut app = App::new();
+        handle_key(&mut app, KeyCode::Right, KeyModifiers::NONE);
+        assert_eq!(app.tab, Tab::Week);
+        handle_key(&mut app, KeyCode::Left, KeyModifiers::NONE);
         assert_eq!(app.tab, Tab::Today);
     }
 
