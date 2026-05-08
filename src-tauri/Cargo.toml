@@ -19,6 +19,7 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 daylog-core = { path = "../crates/daylog-core" }
+daylog-tui = { path = "../crates/daylog-tui" }
 tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
 serde = { workspace = true }

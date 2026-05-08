@@ -1,0 +1,16 @@
+[package]
+name = "daylog-tui"
+version = "0.1.0"
+edition = "2021"
+description = "Daylog terminal UI — a ratatui surface that mirrors the desktop dashboard"
+license = "MIT"
+
+[dependencies]
+daylog-core = { path = "../daylog-core" }
+ratatui = "0.29"
+crossterm = { version = "0.28", features = ["event-stream"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "signal", "time"] }
+tokio-stream = "0.1"
+serde_json = { workspace = true }
+chrono = { workspace = true }
+thiserror = { workspace = true }

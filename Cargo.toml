@@ -1,5 +1,5 @@
 [workspace]
-members = ["src-tauri", "crates/daylog-core"]
+members = ["src-tauri", "crates/daylog-core", "crates/daylog-tui"]
 resolver = "2"
 
 # Shared dependency versions. Members opt into features per-crate so the TUI

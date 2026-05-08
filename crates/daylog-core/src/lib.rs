@@ -11,6 +11,7 @@
 pub mod aggregate;
 pub mod aw_client;
 pub mod categories;
+pub mod kpi;
 pub mod paths;
 pub mod queries;
 pub mod time;

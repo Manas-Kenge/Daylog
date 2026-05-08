@@ -4,6 +4,13 @@
 fn main() {
     let args: Vec<String> = std::env::args().collect();
 
+    // `daylog tui` and `daylog tui --help` route to the TUI binary entry
+    // before any Tauri runtime spins up. Avoids the WebKit init cost on a
+    // pure-terminal launch.
+    if args.get(1).map(String::as_str) == Some("tui") {
+        std::process::exit(daylog_tui::run(&args[2..]));
+    }
+
     if args.iter().any(|a| a == "--uninstall-tracking") {
         eprintln!("Daylog: stopping tracker and removing background services…");
         match daylog_lib::uninstall_blocking() {
@@ -27,9 +34,10 @@ fn main() {
         eprintln!("Daylog — local activity dashboard for ActivityWatch.");
         eprintln!();
         eprintln!("Usage:");
-        eprintln!("  daylog                      Open the dashboard window.");
+        eprintln!("  daylog                       Open the dashboard window.");
+        eprintln!("  daylog tui                   Open the terminal dashboard.");
         eprintln!("  daylog --uninstall-tracking  Stop and remove the bundled tracker.");
-        eprintln!("                              Leaves your data at ~/.local/share/activitywatch/ intact.");
+        eprintln!("                               Leaves your data at ~/.local/share/activitywatch/ intact.");
         eprintln!("  daylog --help                Show this help.");
         std::process::exit(0);
     }
