@@ -18,8 +18,11 @@ use ratatui::{
 };
 
 use crate::app::{App, RangeChip, Tab};
+use crate::theme::{LayoutMode, Theme};
 
+mod kpi_strip;
 mod overview;
+mod sparkline;
 
 pub type Backend = ratatui::backend::CrosstermBackend<Stdout>;
 
@@ -54,6 +57,7 @@ pub fn render(f: &mut Frame, app: &App) {
         .constraints([
             Constraint::Length(1), // tab strip
             Constraint::Length(1), // range chips
+            Constraint::Length(1), // KPI strip + sparkline (D1, D2)
             Constraint::Min(0),    // body
             Constraint::Length(1), // footer hints
         ])
@@ -61,11 +65,40 @@ pub fn render(f: &mut Frame, app: &App) {
 
     render_tabs(f, chunks[0], app);
     render_range_chips(f, chunks[1], app);
-    render_body(f, chunks[2], app);
-    render_footer(f, chunks[3], app);
+    render_kpi_row(f, chunks[2], app);
+    render_body(f, chunks[3], app);
+    render_footer(f, chunks[4], app);
 
     if app.help_visible {
         render_help(f, app);
+    }
+}
+
+/// KPI strip + sparkline live on a shared row above the body. Layout
+/// follows DESIGN.md §Today layout:
+/// - Wide: 70% KPI strip · 30% sparkline (with weekday-range label)
+/// - Narrow: same split, KPI shorthand, sparkline label dropped
+/// - Stacked: KPI strip alone, sparkline omitted
+fn render_kpi_row(f: &mut Frame, area: Rect, app: &App) {
+    let theme: &Theme = &app.theme;
+    let layout = Theme::layout_mode(area.width);
+    let kpi = app.data.kpi.value();
+    let kpi_err = app.data.kpi.last_error();
+    let trailing = app.data.trailing_active.value();
+    let today_active = kpi.map(|k| k.active_secs);
+
+    match layout {
+        LayoutMode::Stacked => {
+            kpi_strip::render(f, area, theme, layout, kpi, kpi_err);
+        }
+        LayoutMode::Wide | LayoutMode::Narrow => {
+            let cols = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Percentage(70), Constraint::Percentage(30)])
+                .split(area);
+            kpi_strip::render(f, cols[0], theme, layout, kpi, kpi_err);
+            sparkline::render(f, cols[1], theme, layout, today_active, trailing);
+        }
     }
 }
 
