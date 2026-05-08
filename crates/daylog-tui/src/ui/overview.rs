@@ -6,7 +6,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style, Stylize},
     text::{Line, Span},
-    widgets::{BarChart, Block, Borders, Cell, Paragraph, Row, Table},
+    widgets::{Bar, BarChart, BarGroup, Block, Borders, Cell, Paragraph, Row, Table},
     Frame,
 };
 
@@ -167,28 +167,28 @@ fn render_hourly(f: &mut Frame, area: Rect, app: &App) {
         return;
     }
 
-    // BarChart wants &[(&str, u64)]. Convert seconds → minutes for readable
-    // bar heights at typical terminal sizes.
-    let labels: Vec<String> = (0..24).map(|h| format!("{:02}", h)).collect();
-    let data: Vec<(&str, u64)> = buckets
+    // Per-bar spectrum colours per D6: hour bands map morning → night
+    // (orange → yellow → green → cyan → violet). Convert seconds →
+    // minutes for stable bar heights at typical terminal sizes.
+    let bars: Vec<Bar> = buckets
         .iter()
-        .filter_map(|b: &HourBucket| {
-            let label = labels.get(b.hour as usize)?;
-            Some((label.as_str(), (b.duration / 60.0).round() as u64))
+        .map(|b: &HourBucket| {
+            let minutes = (b.duration / 60.0).round() as u64;
+            let label = format!("{:02}", b.hour);
+            let band = app.theme.spectrum_color(b.hour);
+            Bar::default()
+                .label(label.into())
+                .value(minutes)
+                .style(Style::default().fg(band))
+                .value_style(Style::default().fg(app.theme.fg).bg(band))
         })
         .collect();
 
-    // Phase 8 will replace this single-color fill with per-bar spectrum
-    // colours via BarGroup. For now we paint with chart_3 (afternoon green)
-    // as a neutral placeholder so the cyan-everywhere look is gone.
-    let placeholder = app.theme.chart_3;
     let chart = BarChart::default()
         .block(block)
-        .data(&data)
+        .data(BarGroup::default().bars(&bars))
         .bar_width(2)
-        .bar_gap(1)
-        .bar_style(Style::default().fg(placeholder))
-        .value_style(Style::default().fg(app.theme.fg).bg(placeholder));
+        .bar_gap(1);
     f.render_widget(chart, area);
 }
 
@@ -362,5 +362,57 @@ mod tests {
             out.push('\n');
         }
         out
+    }
+
+    /// Per DESIGN.md D6 + the snapshot-test extension list: the hourly
+    /// chart must paint multiple spectrum bands, not a single colour.
+    /// We assert that chart_1 (orange, hours 0-4) AND chart_5 (violet,
+    /// hours 20-23) both appear in the rendered buffer when the fixture
+    /// has data in every band.
+    #[test]
+    fn hourly_chart_paints_multiple_spectrum_bands() {
+        use crate::theme::Theme;
+        let theme = Theme::from_env_pair(Some("truecolor"), None);
+        let mut app = App::with_theme(theme);
+        let now = Instant::now();
+        // 1800s in every hour, so every band contributes bars.
+        app.data.hourly.apply_success(
+            (0..24)
+                .map(|h| HourBucket {
+                    hour: h,
+                    duration: 1800.0,
+                })
+                .collect(),
+            now,
+        );
+
+        let backend = TestBackend::new(120, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|f| crate::ui::render(f, &app))
+            .expect("render frame");
+        let buf = terminal.backend().buffer().clone();
+
+        let mut saw_chart_1 = false;
+        let mut saw_chart_5 = false;
+        for y in 0..buf.area.height {
+            for x in 0..buf.area.width {
+                let fg = buf[(x, y)].style().fg;
+                if fg == Some(theme.chart_1) {
+                    saw_chart_1 = true;
+                }
+                if fg == Some(theme.chart_5) {
+                    saw_chart_5 = true;
+                }
+            }
+        }
+        assert!(
+            saw_chart_1,
+            "hourly chart should paint chart_1 (orange) for hours 0-4"
+        );
+        assert!(
+            saw_chart_5,
+            "hourly chart should paint chart_5 (violet) for hours 20-23"
+        );
     }
 }
