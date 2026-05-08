@@ -169,7 +169,7 @@ pub async fn event_loop(terminal: &mut Terminal<Backend>, app: &mut App) -> io::
     // Kick off the first set of fetches so the first frame doesn't wait
     // 250ms for the initial tick.
     let range = app.range();
-    dispatch_refetches(&mut app.data, range, &result_tx, Instant::now());
+    dispatch_refetches(&mut app.data, range, app.tab, &result_tx, Instant::now());
 
     loop {
         tokio::select! {
@@ -187,7 +187,7 @@ pub async fn event_loop(terminal: &mut Terminal<Backend>, app: &mut App) -> io::
             }
             _ = tick.tick() => {
                 let range = app.range();
-                dispatch_refetches(&mut app.data, range, &result_tx, Instant::now());
+                dispatch_refetches(&mut app.data, range, app.tab, &result_tx, Instant::now());
                 // Always redraw on tick so transient indicators (offline
                 // dot, "loading" tickers) animate without input.
                 app.dirty = true;

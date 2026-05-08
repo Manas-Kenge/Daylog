@@ -22,7 +22,7 @@ use ratatui::{
 };
 
 use crate::app::App;
-use crate::data::{TopAppRow, TopDomainRow};
+use crate::data::{Cached, TopAppRow, TopDomainRow};
 use crate::theme::{LayoutMode, Theme};
 use crate::ui::{format_duration, kpi_strip, sparkline, timeline};
 use daylog_core::aggregate::CategorySummary;
@@ -92,8 +92,14 @@ fn render_apps_categories_row(f: &mut Frame, area: Rect, app: &App) {
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
         .split(area);
-    render_top_apps(f, cols[0], app);
-    render_top_categories(f, cols[1], app);
+    render_top_apps_panel(f, cols[0], &app.theme, &app.data.top_apps, " Top apps ");
+    render_top_categories_panel(
+        f,
+        cols[1],
+        &app.theme,
+        &app.data.top_categories,
+        " Top categories ",
+    );
 }
 
 fn render_hourly_domains_row(f: &mut Frame, area: Rect, app: &App) {
@@ -102,13 +108,13 @@ fn render_hourly_domains_row(f: &mut Frame, area: Rect, app: &App) {
         .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
         .split(area);
     render_hourly(f, cols[0], app);
-    render_top_domains(f, cols[1], app);
+    render_top_domains_panel(f, cols[1], &app.theme, &app.data.top_domains, " Top domains ");
 }
 
 /// Bold + theme.fg panel title. Lives in the panel's top border but
 /// styled with stronger contrast than the surrounding dim border so the
 /// section header reads as a header, not part of the frame chrome.
-fn panel_title(theme: &Theme, base: &'static str, in_flight: bool) -> Line<'static> {
+pub(super) fn panel_title(theme: &Theme, base: &'static str, in_flight: bool) -> Line<'static> {
     let title_style = Style::default().fg(theme.fg).add_modifier(Modifier::BOLD);
     if in_flight {
         Line::from(vec![
@@ -121,14 +127,19 @@ fn panel_title(theme: &Theme, base: &'static str, in_flight: bool) -> Line<'stat
     }
 }
 
-fn render_top_apps(f: &mut Frame, area: Rect, app: &App) {
-    let theme = &app.theme;
+pub(super) fn render_top_apps_panel(
+    f: &mut Frame,
+    area: Rect,
+    theme: &Theme,
+    cache: &Cached<Vec<TopAppRow>>,
+    title: &'static str,
+) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(theme.border_dim_style())
-        .title(panel_title(theme, " Top apps ", app.data.top_apps.is_in_flight()));
+        .title(panel_title(theme, title, cache.is_in_flight()));
 
-    let Some(rows) = app.data.top_apps.value() else {
+    let Some(rows) = cache.value() else {
         let p = Paragraph::new("\u{2026}")
             .block(block)
             .style(Style::default().fg(theme.dim));
@@ -173,7 +184,12 @@ fn render_top_apps(f: &mut Frame, area: Rect, app: &App) {
     f.render_widget(table, area);
 }
 
-fn top_app_row(rank: usize, row: &TopAppRow, max_secs: f64, theme: &Theme) -> Row<'static> {
+pub(super) fn top_app_row(
+    rank: usize,
+    row: &TopAppRow,
+    max_secs: f64,
+    theme: &Theme,
+) -> Row<'static> {
     let bar = proportional_bar(row.duration_secs, max_secs, 8);
     Row::new(vec![
         Cell::from(format!(" {}", rank)).style(Style::default().fg(theme.dim)),
@@ -184,18 +200,19 @@ fn top_app_row(rank: usize, row: &TopAppRow, max_secs: f64, theme: &Theme) -> Ro
     ])
 }
 
-fn render_top_categories(f: &mut Frame, area: Rect, app: &App) {
-    let theme = &app.theme;
+pub(super) fn render_top_categories_panel(
+    f: &mut Frame,
+    area: Rect,
+    theme: &Theme,
+    cache: &Cached<Vec<CategorySummary>>,
+    title: &'static str,
+) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(theme.border_dim_style())
-        .title(panel_title(
-            theme,
-            " Top categories ",
-            app.data.top_categories.is_in_flight(),
-        ));
+        .title(panel_title(theme, title, cache.is_in_flight()));
 
-    let Some(rows) = app.data.top_categories.value() else {
+    let Some(rows) = cache.value() else {
         let p = Paragraph::new("\u{2026}")
             .block(block)
             .style(Style::default().fg(theme.dim));
@@ -239,7 +256,7 @@ fn render_top_categories(f: &mut Frame, area: Rect, app: &App) {
     f.render_widget(table, area);
 }
 
-fn category_row(
+pub(super) fn category_row(
     rank: usize,
     row: &CategorySummary,
     max_secs: f64,
@@ -259,18 +276,19 @@ fn category_row(
     ])
 }
 
-fn render_top_domains(f: &mut Frame, area: Rect, app: &App) {
-    let theme = &app.theme;
+pub(super) fn render_top_domains_panel(
+    f: &mut Frame,
+    area: Rect,
+    theme: &Theme,
+    cache: &Cached<Vec<TopDomainRow>>,
+    title: &'static str,
+) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(theme.border_dim_style())
-        .title(panel_title(
-            theme,
-            " Top domains ",
-            app.data.top_domains.is_in_flight(),
-        ));
+        .title(panel_title(theme, title, cache.is_in_flight()));
 
-    let Some(rows) = app.data.top_domains.value() else {
+    let Some(rows) = cache.value() else {
         let p = Paragraph::new("\u{2026}")
             .block(block)
             .style(Style::default().fg(theme.dim));
@@ -331,7 +349,7 @@ fn render_top_domains(f: &mut Frame, area: Rect, app: &App) {
     f.render_widget(table, area);
 }
 
-fn top_domain_row(
+pub(super) fn top_domain_row(
     rank: usize,
     row: &TopDomainRow,
     max_secs: f64,
@@ -349,7 +367,7 @@ fn top_domain_row(
 
 /// Proportional fill bar — full block + light shade for the unfilled
 /// remainder. Width is fixed so rows stay column-aligned.
-fn proportional_bar(value: f64, max: f64, width: usize) -> String {
+pub(super) fn proportional_bar(value: f64, max: f64, width: usize) -> String {
     let filled = if max > 0.0 {
         ((value / max) * width as f64).round() as usize
     } else {

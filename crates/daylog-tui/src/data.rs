@@ -20,6 +20,8 @@ use daylog_core::kpi::KpiSummary;
 use daylog_core::time::TimeRange;
 use serde_json::Value;
 
+use crate::app::Tab;
+
 /// Live cadence for today's slot — matches `useAw.ts` REFRESH_MS = 5_000.
 pub const REFRESH_LIVE: Duration = Duration::from_secs(5);
 
@@ -204,6 +206,20 @@ pub enum FetchResult {
     /// signal — the Rust query short-circuits when no aw-watcher-web-*
     /// bucket is registered.
     TopDomains(Result<Vec<TopDomainRow>, String>),
+    /// Trailing 365 days of active seconds for the Month tab heatmap.
+    /// Index `i` is days_ago = i + 1 (matches `TrailingActive`'s
+    /// convention so today's value composes from `kpi.active_secs`).
+    /// Vec, not [_; 365], because aw-server may have less than a year
+    /// of history on fresh installs.
+    MonthTrailingYear(Result<Vec<f64>, String>),
+    /// Top apps over the trailing 30 days. Independent of the active
+    /// `RangeChip`; the Month tab's view is scope-fixed.
+    MonthTopApps(Result<Vec<TopAppRow>, String>),
+    /// Top categories over the trailing 30 days.
+    MonthTopCategories(Result<Vec<CategorySummary>, String>),
+    /// Top web domains over the trailing 30 days. Empty `Ok(vec![])`
+    /// is again the "no web watcher" signal — same as `TopDomains`.
+    MonthTopDomains(Result<Vec<TopDomainRow>, String>),
 }
 
 /// Bundle of every cache entry the Today tab reads. Future tabs add
@@ -225,6 +241,19 @@ pub struct DataCache {
     /// Top web domains for today. Empty value with `last_error == None`
     /// means "no web watcher installed" — render the install hint.
     pub top_domains: Cached<Vec<TopDomainRow>>,
+    /// Trailing-365-day active-seconds-per-day window driving the Month
+    /// tab's year heatmap. Heavy first paint (365 fetches) — the
+    /// dispatcher gates this slot on `tab == Tab::Month` so Today's
+    /// cold-start budget is unaffected.
+    pub month_trailing_year: Cached<Vec<f64>>,
+    /// Trailing-30-day Top apps for the Month tab's rollup row.
+    /// Scope-fixed; not driven by the `RangeChip`.
+    pub month_top_apps: Cached<Vec<TopAppRow>>,
+    /// Trailing-30-day Top categories for the Month tab.
+    pub month_top_categories: Cached<Vec<CategorySummary>>,
+    /// Trailing-30-day Top web domains for the Month tab. Empty-Ok
+    /// means "no web watcher", same convention as `top_domains`.
+    pub month_top_domains: Cached<Vec<TopDomainRow>>,
 }
 
 impl DataCache {
@@ -237,6 +266,10 @@ impl DataCache {
             trailing_active: Cached::new(REFRESH_PAST_DAYS),
             timeline_events: Cached::new(REFRESH_LIVE),
             top_domains: Cached::new(REFRESH_LIVE),
+            month_trailing_year: Cached::new(REFRESH_PAST_DAYS),
+            month_top_apps: Cached::new(REFRESH_PAST_DAYS),
+            month_top_categories: Cached::new(REFRESH_PAST_DAYS),
+            month_top_domains: Cached::new(REFRESH_PAST_DAYS),
         }
     }
 
@@ -271,6 +304,18 @@ impl DataCache {
             FetchResult::TimelineEvents(Err(e)) => self.timeline_events.apply_failure(e, now),
             FetchResult::TopDomains(Ok(v)) => self.top_domains.apply_success(v, now),
             FetchResult::TopDomains(Err(e)) => self.top_domains.apply_failure(e, now),
+            FetchResult::MonthTrailingYear(Ok(v)) => self.month_trailing_year.apply_success(v, now),
+            FetchResult::MonthTrailingYear(Err(e)) => self.month_trailing_year.apply_failure(e, now),
+            FetchResult::MonthTopApps(Ok(v)) => self.month_top_apps.apply_success(v, now),
+            FetchResult::MonthTopApps(Err(e)) => self.month_top_apps.apply_failure(e, now),
+            FetchResult::MonthTopCategories(Ok(v)) => {
+                self.month_top_categories.apply_success(v, now)
+            }
+            FetchResult::MonthTopCategories(Err(e)) => {
+                self.month_top_categories.apply_failure(e, now)
+            }
+            FetchResult::MonthTopDomains(Ok(v)) => self.month_top_domains.apply_success(v, now),
+            FetchResult::MonthTopDomains(Err(e)) => self.month_top_domains.apply_failure(e, now),
         }
     }
 }
@@ -292,6 +337,7 @@ impl Default for DataCache {
 pub fn dispatch_refetches(
     cache: &mut DataCache,
     range: TimeRange,
+    tab: Tab,
     tx: &tokio::sync::mpsc::UnboundedSender<FetchResult>,
     now: Instant,
 ) {
@@ -396,6 +442,79 @@ pub fn dispatch_refetches(
                 .map(|raw| TopDomainRow::parse_many(&raw))
                 .map_err(|e| e.to_string());
             let _ = tx.send(FetchResult::TopDomains(result));
+        });
+    }
+
+    // Month-tab fetches are gated on the active tab so Today's
+    // cold-start budget isn't taxed by the 365-day fan-out. Bouncing
+    // back to Today doesn't invalidate already-fetched month caches —
+    // the gate only suppresses *new* dispatches, not in-flight or
+    // cached values.
+    if tab != Tab::Month {
+        return;
+    }
+
+    if cache.month_trailing_year.should_refetch(now) {
+        cache.month_trailing_year.mark_in_flight();
+        let tx = tx.clone();
+        tokio::spawn(async move {
+            // 365 concurrent per-day fetches under the hood. First paint
+            // is the dominant cost; staleness is 5min thereafter.
+            let result = daylog_core::queries::trailing_days_past(365)
+                .await
+                .map(|days| {
+                    let mut out = vec![0.0_f64; 365];
+                    for d in days {
+                        let idx = d.days_ago.saturating_sub(1) as usize;
+                        if idx < out.len() {
+                            out[idx] = d.afk.active_seconds;
+                        }
+                    }
+                    out
+                })
+                .map_err(|e| e.to_string());
+            let _ = tx.send(FetchResult::MonthTrailingYear(result));
+        });
+    }
+
+    if cache.month_top_apps.should_refetch(now) {
+        cache.month_top_apps.mark_in_flight();
+        let tx = tx.clone();
+        tokio::spawn(async move {
+            let client = daylog_core::aw_client::AwClient::new();
+            let result =
+                daylog_core::queries::top_apps(&client, TimeRange::LastNDays { days: 30 })
+                    .await
+                    .map(|raw| TopAppRow::parse_many(&raw))
+                    .map_err(|e| e.to_string());
+            let _ = tx.send(FetchResult::MonthTopApps(result));
+        });
+    }
+
+    if cache.month_top_categories.should_refetch(now) {
+        cache.month_top_categories.mark_in_flight();
+        let tx = tx.clone();
+        tokio::spawn(async move {
+            let client = daylog_core::aw_client::AwClient::new();
+            let result =
+                daylog_core::queries::top_categories(&client, TimeRange::LastNDays { days: 30 })
+                    .await
+                    .map_err(|e| e.to_string());
+            let _ = tx.send(FetchResult::MonthTopCategories(result));
+        });
+    }
+
+    if cache.month_top_domains.should_refetch(now) {
+        cache.month_top_domains.mark_in_flight();
+        let tx = tx.clone();
+        tokio::spawn(async move {
+            let client = daylog_core::aw_client::AwClient::new();
+            let result =
+                daylog_core::queries::top_domains(&client, TimeRange::LastNDays { days: 30 })
+                    .await
+                    .map(|raw| TopDomainRow::parse_many(&raw))
+                    .map_err(|e| e.to_string());
+            let _ = tx.send(FetchResult::MonthTopDomains(result));
         });
     }
 }
