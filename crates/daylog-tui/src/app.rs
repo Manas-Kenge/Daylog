@@ -11,6 +11,7 @@ use tokio::time::interval;
 use tokio_stream::StreamExt;
 
 use crate::data::{dispatch_refetches, DataCache, FetchResult};
+use crate::theme::Theme;
 use crate::ui::Backend;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -110,10 +111,21 @@ pub struct App {
     pub quit: bool,
     pub dirty: bool,
     pub data: DataCache,
+    /// Latched at startup from `$COLORTERM`/`$TERM`. Every widget pulls
+    /// colours and modifiers from here so the spec's token table is the
+    /// only source of truth.
+    pub theme: Theme,
 }
 
 impl App {
     pub fn new() -> Self {
+        Self::with_theme(Theme::detect())
+    }
+
+    /// Construct with an explicit theme. Tests pin a deterministic tier
+    /// via `Theme::from_env_pair(Some("truecolor"), None)` so snapshot
+    /// colour expectations don't drift with `$COLORTERM` on the host.
+    pub fn with_theme(theme: Theme) -> Self {
         Self {
             tab: Tab::Today,
             range_chip: RangeChip::Today,
@@ -121,6 +133,7 @@ impl App {
             quit: false,
             dirty: true,
             data: DataCache::new(),
+            theme,
         }
     }
 

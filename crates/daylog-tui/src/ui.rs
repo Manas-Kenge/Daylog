@@ -65,7 +65,7 @@ pub fn render(f: &mut Frame, app: &App) {
     render_footer(f, chunks[3], app);
 
     if app.help_visible {
-        render_help(f);
+        render_help(f, app);
     }
 }
 
@@ -119,7 +119,7 @@ fn render_footer(f: &mut Frame, area: Rect, app: &App) {
     if app.data.any_offline() {
         spans.push(Span::styled(
             "\u{25cb} tracker offline  \u{00b7}  ",
-            Style::default().fg(ratatui::style::Color::Red),
+            app.theme.error_style(),
         ));
     }
     spans.extend(vec![
@@ -136,7 +136,7 @@ fn render_footer(f: &mut Frame, area: Rect, app: &App) {
     f.render_widget(p, area);
 }
 
-fn render_help(f: &mut Frame) {
+fn render_help(f: &mut Frame, app: &App) {
     let area = center_rect(f.area(), 50, 14);
     f.render_widget(Clear, area);
     let lines = vec![
@@ -158,8 +158,8 @@ fn render_help(f: &mut Frame) {
     ];
     let block = Block::default()
         .borders(Borders::ALL)
-        .title(" help ")
-        .style(Style::default());
+        .border_style(app.theme.border_dim_style())
+        .title(" help ");
     let p = Paragraph::new(lines).block(block);
     f.render_widget(p, area);
 }

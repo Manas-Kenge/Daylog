@@ -64,10 +64,11 @@ fn render_top_apps(f: &mut Frame, area: Rect, app: &App) {
     }
 
     let max_secs = rows.iter().map(|r| r.duration_secs).fold(0.0_f64, f64::max);
+    let ember = app.theme.ember;
     let table_rows: Vec<Row> = rows
         .iter()
         .take(area.height.saturating_sub(2) as usize)
-        .map(|r| top_app_row(r, max_secs))
+        .map(|r| top_app_row(r, max_secs, ember))
         .collect();
 
     let widths = [
@@ -79,7 +80,7 @@ fn render_top_apps(f: &mut Frame, area: Rect, app: &App) {
     f.render_widget(table, area);
 }
 
-fn top_app_row(row: &TopAppRow, max_secs: f64) -> Row<'static> {
+fn top_app_row(row: &TopAppRow, max_secs: f64, bar_color: ratatui::style::Color) -> Row<'static> {
     let bar_width: usize = 14;
     let filled = if max_secs > 0.0 {
         ((row.duration_secs / max_secs) * bar_width as f64).round() as usize
@@ -93,7 +94,7 @@ fn top_app_row(row: &TopAppRow, max_secs: f64) -> Row<'static> {
     );
     Row::new(vec![
         Cell::from(row.name.clone()).style(Style::default().bold()),
-        Cell::from(bar).style(Style::default().fg(ratatui::style::Color::Cyan)),
+        Cell::from(bar).style(Style::default().fg(bar_color)),
         Cell::from(format_duration(row.duration_secs)),
     ])
 }
@@ -168,13 +169,17 @@ fn render_hourly(f: &mut Frame, area: Rect, app: &App) {
         })
         .collect();
 
+    // Phase 8 will replace this single-color fill with per-bar spectrum
+    // colours via BarGroup. For now we paint with chart_3 (afternoon green)
+    // as a neutral placeholder so the cyan-everywhere look is gone.
+    let placeholder = app.theme.chart_3;
     let chart = BarChart::default()
         .block(block)
         .data(&data)
         .bar_width(2)
         .bar_gap(1)
-        .bar_style(Style::default().fg(ratatui::style::Color::Cyan))
-        .value_style(Style::default().fg(ratatui::style::Color::Black).bg(ratatui::style::Color::Cyan));
+        .bar_style(Style::default().fg(placeholder))
+        .value_style(Style::default().fg(app.theme.fg).bg(placeholder));
     f.render_widget(chart, area);
 }
 
