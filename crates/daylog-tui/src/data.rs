@@ -15,7 +15,7 @@
 
 use std::time::{Duration, Instant};
 
-use daylog_core::aggregate::{CategorySummary, HourBucket};
+use daylog_core::aggregate::{CategorizedEvent, CategorySummary, HourBucket};
 use daylog_core::kpi::KpiSummary;
 use daylog_core::time::TimeRange;
 use serde_json::Value;
@@ -157,6 +157,33 @@ impl TopAppRow {
     }
 }
 
+/// One row in the Top Domains table. Same shape as TopAppRow but pulls
+/// from `data.$domain` (set by aw-watcher-web). When no web watcher is
+/// installed the underlying query returns `Ok(vec![])` so an empty cache
+/// value is the "no web watcher" signal — distinct from the loading /
+/// error states.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TopDomainRow {
+    pub domain: String,
+    pub duration_secs: f64,
+}
+
+impl TopDomainRow {
+    pub fn parse_many(events: &[Value]) -> Vec<Self> {
+        events
+            .iter()
+            .filter_map(|ev| {
+                let domain = ev.get("data")?.get("$domain")?.as_str()?.to_string();
+                let duration_secs = ev.get("duration")?.as_f64()?;
+                Some(Self {
+                    domain,
+                    duration_secs,
+                })
+            })
+            .collect()
+    }
+}
+
 /// Result message sent back to the App after a fetch resolves. The App
 /// matches on the variant to find which `Cached<T>` to update.
 #[derive(Debug)]
@@ -169,6 +196,14 @@ pub enum FetchResult {
     /// index 0 = yesterday, index 6 = 7 days ago. The sparkline widget
     /// composes this with today's `kpi.active_secs` at render time.
     TrailingActive(Result<[f64; 7], String>),
+    /// Today's categorized events for the 24h timeline widget. Same
+    /// data shape `top_categories` is aggregated from, but kept raw so
+    /// the bucketize96 step can place each event into 15-min slots.
+    TimelineEvents(Result<Vec<CategorizedEvent>, String>),
+    /// Top web domains. Empty `Ok(vec![])` is the "no web watcher"
+    /// signal — the Rust query short-circuits when no aw-watcher-web-*
+    /// bucket is registered.
+    TopDomains(Result<Vec<TopDomainRow>, String>),
 }
 
 /// Bundle of every cache entry the Today tab reads. Future tabs add
@@ -185,6 +220,11 @@ pub struct DataCache {
     /// Past-7-day active seconds for the sparkline. 5min cadence —
     /// past days don't change within a day.
     pub trailing_active: Cached<[f64; 7]>,
+    /// Raw categorized events for today; consumed by the 24h timeline.
+    pub timeline_events: Cached<Vec<CategorizedEvent>>,
+    /// Top web domains for today. Empty value with `last_error == None`
+    /// means "no web watcher installed" — render the install hint.
+    pub top_domains: Cached<Vec<TopDomainRow>>,
 }
 
 impl DataCache {
@@ -195,18 +235,23 @@ impl DataCache {
             top_categories: Cached::new(REFRESH_LIVE),
             kpi: Cached::new(REFRESH_LIVE),
             trailing_active: Cached::new(REFRESH_PAST_DAYS),
+            timeline_events: Cached::new(REFRESH_LIVE),
+            top_domains: Cached::new(REFRESH_LIVE),
         }
     }
 
     /// True if any tracked LIVE cache has crossed the offline threshold.
     /// Drives the footer's "○ tracker offline" indicator. The trailing
     /// past-days slot is excluded — its 5min cadence would create false
-    /// positives during transient blips.
+    /// positives during transient blips. `top_domains` is also excluded
+    /// because an empty-result is its normal state on machines without
+    /// a web watcher.
     pub fn any_offline(&self) -> bool {
         self.top_apps.is_offline()
             || self.hourly.is_offline()
             || self.top_categories.is_offline()
             || self.kpi.is_offline()
+            || self.timeline_events.is_offline()
     }
 
     /// Apply an incoming fetch result to the matching cache entry.
@@ -222,6 +267,10 @@ impl DataCache {
             FetchResult::Kpi(Err(e)) => self.kpi.apply_failure(e, now),
             FetchResult::TrailingActive(Ok(v)) => self.trailing_active.apply_success(v, now),
             FetchResult::TrailingActive(Err(e)) => self.trailing_active.apply_failure(e, now),
+            FetchResult::TimelineEvents(Ok(v)) => self.timeline_events.apply_success(v, now),
+            FetchResult::TimelineEvents(Err(e)) => self.timeline_events.apply_failure(e, now),
+            FetchResult::TopDomains(Ok(v)) => self.top_domains.apply_success(v, now),
+            FetchResult::TopDomains(Err(e)) => self.top_domains.apply_failure(e, now),
         }
     }
 }
@@ -320,6 +369,33 @@ pub fn dispatch_refetches(
                 })
                 .map_err(|e| e.to_string());
             let _ = tx.send(FetchResult::TrailingActive(result));
+        });
+    }
+
+    if cache.timeline_events.should_refetch(now) {
+        cache.timeline_events.mark_in_flight();
+        let tx = tx.clone();
+        let range = range.clone();
+        tokio::spawn(async move {
+            let client = daylog_core::aw_client::AwClient::new();
+            let result = daylog_core::queries::categorized_events(&client, range)
+                .await
+                .map_err(|e| e.to_string());
+            let _ = tx.send(FetchResult::TimelineEvents(result));
+        });
+    }
+
+    if cache.top_domains.should_refetch(now) {
+        cache.top_domains.mark_in_flight();
+        let tx = tx.clone();
+        let range = range.clone();
+        tokio::spawn(async move {
+            let client = daylog_core::aw_client::AwClient::new();
+            let result = daylog_core::queries::top_domains(&client, range)
+                .await
+                .map(|raw| TopDomainRow::parse_many(&raw))
+                .map_err(|e| e.to_string());
+            let _ = tx.send(FetchResult::TopDomains(result));
         });
     }
 }

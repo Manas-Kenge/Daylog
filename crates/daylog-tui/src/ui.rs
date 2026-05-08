@@ -2,6 +2,7 @@
 
 use std::io::{self, Stdout};
 
+use chrono::Local;
 use crossterm::{
     event::DisableMouseCapture,
     execute,
@@ -11,18 +12,20 @@ use crossterm::{
 };
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
-    style::{Modifier, Style, Stylize},
+    style::{Modifier, Style},
+    symbols,
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph, Tabs},
     Frame, Terminal,
 };
 
 use crate::app::{App, RangeChip, Tab};
-use crate::theme::{LayoutMode, Theme};
+use crate::theme::Theme;
 
-mod kpi_strip;
+pub(crate) mod kpi_strip;
 mod overview;
-mod sparkline;
+pub(crate) mod sparkline;
+pub(crate) mod timeline;
 
 pub type Backend = ratatui::backend::CrosstermBackend<Stdout>;
 
@@ -52,20 +55,34 @@ pub fn restore_terminal_raw() -> io::Result<()> {
 }
 
 pub fn render(f: &mut Frame, app: &App) {
+    let theme = &app.theme;
+
+    // Outer frame. Title is composed onto the top border itself: just
+    // "daylog" (bold) on the left, live-pulse dot + clock on the right.
+    // The active-tab name lives in the tab strip below — duplicating it
+    // here read as "two topbars" stacked.
+    let outer = Block::default()
+        .borders(Borders::ALL)
+        .border_style(theme.border_dim_style())
+        .title(header_title(theme))
+        .title(header_status(theme, app));
+    let inner = outer.inner(f.area());
+    f.render_widget(outer, f.area());
+
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(1), // tab strip
             Constraint::Length(1), // range chips
-            Constraint::Length(1), // KPI strip + sparkline (D1, D2)
-            Constraint::Min(0),    // body
-            Constraint::Length(1), // footer hints
+            Constraint::Length(1), // breathing-room gap before body
+            Constraint::Min(0),    // body (KPI strip lives inside Today's body now)
+            Constraint::Length(1), // footer
         ])
-        .split(f.area());
+        .split(inner);
 
     render_tabs(f, chunks[0], app);
     render_range_chips(f, chunks[1], app);
-    render_kpi_row(f, chunks[2], app);
+    // chunks[2] is intentionally blank — separates chrome from body.
     render_body(f, chunks[3], app);
     render_footer(f, chunks[4], app);
 
@@ -74,126 +91,220 @@ pub fn render(f: &mut Frame, app: &App) {
     }
 }
 
-/// KPI strip + sparkline live on a shared row above the body. Layout
-/// follows DESIGN.md §Today layout:
-/// - Wide: 70% KPI strip · 30% sparkline (with weekday-range label)
-/// - Narrow: same split, KPI shorthand, sparkline label dropped
-/// - Stacked: KPI strip alone, sparkline omitted
-fn render_kpi_row(f: &mut Frame, area: Rect, app: &App) {
-    let theme: &Theme = &app.theme;
-    let layout = Theme::layout_mode(area.width);
-    let kpi = app.data.kpi.value();
-    let kpi_err = app.data.kpi.last_error();
-    let trailing = app.data.trailing_active.value();
-    let today_active = kpi.map(|k| k.active_secs);
+fn header_title(theme: &Theme) -> Line<'static> {
+    Line::from(vec![
+        Span::raw(" "),
+        Span::styled(
+            "daylog",
+            Style::default().fg(theme.fg).add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(" "),
+    ])
+    .left_aligned()
+}
 
-    match layout {
-        LayoutMode::Stacked => {
-            kpi_strip::render(f, area, theme, layout, kpi, kpi_err);
-        }
-        LayoutMode::Wide | LayoutMode::Narrow => {
-            let cols = Layout::default()
-                .direction(Direction::Horizontal)
-                .constraints([Constraint::Percentage(70), Constraint::Percentage(30)])
-                .split(area);
-            kpi_strip::render(f, cols[0], theme, layout, kpi, kpi_err);
-            sparkline::render(f, cols[1], theme, layout, today_active, trailing);
-        }
-    }
+fn header_status(theme: &Theme, app: &App) -> Line<'static> {
+    let (dot, dot_style) = if app.data.any_offline() {
+        ("\u{25cb}", Style::default().fg(theme.error))
+    } else {
+        ("\u{25cf}", Style::default().fg(theme.chart_3))
+    };
+    let clock = Local::now().format("%-I:%M %p").to_string();
+    Line::from(vec![
+        Span::raw(" "),
+        Span::styled(dot, dot_style),
+        Span::styled(" live  ", Style::default().fg(theme.dim)),
+        Span::styled(clock, Style::default().fg(theme.dim)),
+        Span::raw(" "),
+    ])
+    .right_aligned()
 }
 
 fn render_range_chips(f: &mut Frame, area: Rect, app: &App) {
+    let theme = &app.theme;
     let mut spans: Vec<Span> = Vec::new();
     for (i, chip) in RangeChip::ALL.iter().enumerate() {
-        if i > 0 {
-            spans.push(Span::raw("  \u{00b7}  "));
+        // Leading space so the first chip doesn't sit flush against the
+        // left border. Same visual rhythm as the tab strip's leading pad.
+        if i == 0 {
+            spans.push(Span::raw(" "));
         }
-        let style = if *chip == app.range_chip {
-            Style::default().add_modifier(Modifier::REVERSED).bold()
+        if i > 0 {
+            spans.push(Span::styled("  ", Style::default()));
+        }
+        // Range chips use a different selection idiom from the tab strip
+        // so the two rows can't be misread as duplicate selectors:
+        //   * Tabs:        REVERSED + BOLD + ember
+        //   * Range chips: brackets [Today], BOLD + theme.fg (no ember)
+        // Brackets are the ONLY active marker — there's no colour reuse
+        // with the ember-accented tab strip above.
+        if *chip == app.range_chip {
+            spans.push(Span::styled(
+                format!("[{}]", chip.label()),
+                Style::default().fg(theme.fg).add_modifier(Modifier::BOLD),
+            ));
         } else {
-            Style::default().dim()
-        };
-        spans.push(Span::styled(format!(" {} ", chip.label()), style));
+            spans.push(Span::styled(
+                format!(" {} ", chip.label()),
+                Style::default().fg(theme.dim),
+            ));
+        }
     }
     let p = Paragraph::new(Line::from(spans)).alignment(Alignment::Left);
     f.render_widget(p, area);
 }
 
 fn render_tabs(f: &mut Frame, area: Rect, app: &App) {
-    let titles: Vec<Line> = Tab::ALL.iter().map(|t| Line::from(t.label())).collect();
+    let theme = &app.theme;
+
+    // Right-side keymap hint only appears when there's room for tabs +
+    // hint. Below 60 cols we drop the hint so the tab labels don't get
+    // clipped (the screenshot showed "Today | Week t … Month" — that
+    // ellipsis was a clipped tab title).
+    let show_hint = area.width >= 60;
+    let cols = if show_hint {
+        Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Min(20), Constraint::Length(20)])
+            .split(area)
+    } else {
+        Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(100)])
+            .split(area)
+    };
+
+    let titles: Vec<Line> = Tab::ALL
+        .iter()
+        .map(|t| Line::from(format!(" {} ", t.label())))
+        .collect();
+    let divider = Span::styled(
+        symbols::line::VERTICAL,
+        Style::default().fg(theme.border_dim),
+    );
     let tabs = Tabs::new(titles)
         .select(app.tab.index())
-        .style(Style::default().dim())
-        .highlight_style(Style::default().add_modifier(Modifier::REVERSED).not_dim());
-    f.render_widget(tabs, area);
+        // Inactive tabs: theme.fg, no DIM modifier. The eye finds the
+        // active tab by contrast change, not by un-greying every other
+        // label. This is the single fix for "tabs invisible until pressed".
+        .style(Style::default().fg(theme.fg))
+        // Active: REVERSED + BOLD with ember-fg as a back-up signal on
+        // tiers where REVERSED doesn't print background (linux fbcon).
+        .highlight_style(
+            Style::default()
+                .fg(theme.ember)
+                .add_modifier(Modifier::REVERSED | Modifier::BOLD),
+        )
+        .divider(divider);
+    f.render_widget(tabs, cols[0]);
+
+    if show_hint {
+        let hint = Paragraph::new(Line::from(vec![
+            Span::styled("1 2 3 4", Style::default().fg(theme.dim)),
+            Span::styled(" jump ", Style::default().fg(theme.dim)),
+            Span::styled("\u{00b7}", Style::default().fg(theme.border_dim)),
+            Span::styled(" ?", Style::default().fg(theme.dim)),
+            Span::raw(" "),
+        ]))
+        .alignment(Alignment::Right);
+        f.render_widget(hint, cols[1]);
+    }
 }
 
 fn render_body(f: &mut Frame, area: Rect, app: &App) {
     match app.tab {
         Tab::Today => overview::render(f, area, app),
-        _ => render_placeholder(f, area, app.tab),
+        _ => render_placeholder(f, area, app.tab, &app.theme),
     }
 }
 
-fn render_placeholder(f: &mut Frame, area: Rect, tab: Tab) {
+fn render_placeholder(f: &mut Frame, area: Rect, tab: Tab, theme: &Theme) {
     let placeholder = Paragraph::new(format!(
-        "{} — content lands in a later phase\n\nKeys: 1–4 jump tabs · Tab/Shift-Tab cycle · ? help · q quit",
+        "{} \u{2014} content lands in a later phase\n\nKeys: 1\u{2013}4 jump tabs \u{00b7} Tab/Shift-Tab cycle \u{00b7} ? help \u{00b7} q quit",
         tab.label()
     ))
     .alignment(Alignment::Center)
-    .style(Style::default().dim());
+    .style(Style::default().fg(theme.dim));
 
     let centered = center_rect(area, 60, 5);
     f.render_widget(placeholder, centered);
 }
 
 fn render_footer(f: &mut Frame, area: Rect, app: &App) {
+    let theme = &app.theme;
     let mut spans = Vec::new();
     if app.data.any_offline() {
         spans.push(Span::styled(
-            "\u{25cb} tracker offline  \u{00b7}  ",
-            app.theme.error_style(),
+            "\u{25cb} tracker offline",
+            theme.error_style(),
         ));
+        if area.width >= 60 {
+            spans.push(Span::styled(
+                "  \u{00b7}  ",
+                Style::default().fg(theme.border_dim),
+            ));
+        }
     }
-    spans.extend(vec![
-        Span::styled("Tab", Style::default().bold()),
-        Span::raw(" cycle  \u{00b7}  "),
-        Span::styled("?", Style::default().bold()),
-        Span::raw(" help  \u{00b7}  "),
-        Span::styled("q", Style::default().bold()),
-        Span::raw(" quit"),
-    ]);
-    let p = Paragraph::new(Line::from(spans))
-        .alignment(Alignment::Right)
-        .style(Style::default().dim());
+    // Hide key hints below 60 cols — same threshold the tab strip uses.
+    // On narrow terminals the offline pill stays visible (it's the single
+    // most actionable signal) and the hints drop out so nothing clips.
+    if area.width >= 60 {
+        let key = Style::default().fg(theme.fg).add_modifier(Modifier::BOLD);
+        let label = Style::default().fg(theme.dim);
+        let sep = Style::default().fg(theme.border_dim);
+        spans.extend(vec![
+            Span::styled("Tab", key),
+            Span::styled(" cycle  ", label),
+            Span::styled("\u{00b7}", sep),
+            Span::styled("  ?", key),
+            Span::styled(" help  ", label),
+            Span::styled("\u{00b7}", sep),
+            Span::styled("  q", key),
+            Span::styled(" quit ", label),
+        ]);
+    }
+    let p = Paragraph::new(Line::from(spans)).alignment(Alignment::Right);
     f.render_widget(p, area);
 }
 
 fn render_help(f: &mut Frame, app: &App) {
-    let area = center_rect(f.area(), 50, 15);
+    let theme = &app.theme;
+    let area = center_rect(f.area(), 56, 18);
     f.render_widget(Clear, area);
+
+    let key = Style::default().fg(theme.fg).add_modifier(Modifier::BOLD);
+    let body = Style::default().fg(theme.fg);
+    let dim = Style::default().fg(theme.dim);
+    let section = |s: &'static str| Line::from(Span::styled(s, key));
+
     let lines = vec![
-        Line::from(Span::styled("Daylog TUI \u{2014} keys", Style::default().bold())),
+        Line::from(Span::styled("Daylog TUI \u{2014} keys", key)),
         Line::from(""),
-        Line::from("  1\u{2013}4           Jump to tab N"),
-        Line::from("  Tab / Shift-Tab  Cycle tabs"),
-        Line::from("  \u{2190} / \u{2192}         Cycle tabs (arrows)"),
-        Line::from("  h / l         Cycle tabs (vim)"),
-        Line::from("  r             Cycle range forward"),
-        Line::from("  Shift-R       Cycle range backward"),
-        Line::from("  ?             Toggle this help"),
-        Line::from("  q / Esc       Quit"),
-        Line::from("  ctrl-c        Quit"),
+        section("  Tabs"),
+        Line::from(Span::styled("    1 2 3 4         Jump", body)),
+        Line::from(Span::styled("    Tab / \u{2192}         Next", body)),
+        Line::from(Span::styled("    Shift-Tab / \u{2190}   Prev", body)),
+        Line::from(Span::styled("    h / l           Vim cycle", body)),
         Line::from(""),
+        section("  Range"),
         Line::from(Span::styled(
-            "Press ? or Esc to dismiss",
-            Style::default().dim(),
+            "    r               Forward    Shift-R   Back",
+            body,
         )),
+        Line::from(""),
+        section("  General"),
+        Line::from(Span::styled("    ?               Toggle help", body)),
+        Line::from(Span::styled(
+            "    q / Esc         Quit       Ctrl-C    Quit",
+            body,
+        )),
+        Line::from(""),
+        Line::from(Span::styled("  Press ? or Esc to dismiss", dim)),
     ];
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(app.theme.border_dim_style())
-        .title(" help ");
+        .border_style(theme.border_dim_style())
+        .title(Span::styled(" help ", key));
     let p = Paragraph::new(lines).block(block);
     f.render_widget(p, area);
 }

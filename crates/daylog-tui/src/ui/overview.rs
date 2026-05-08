@@ -1,59 +1,137 @@
-//! Today tab — three widgets in a vertical stack:
-//!   1. Top apps table (left half)  +  Top categories list (right half)
-//!   2. Hourly distribution bar chart (full width)
+//! Today tab — desktop-parity layout.
+//!
+//! Five vertical bands inside the body:
+//!   1. KPI strip                            — 1 row, full-width
+//!   2. Today's timeline (24h heatmap)       — 3 rows, full-width
+//!   3. Top apps  +  Top categories          — 9 rows, split 50 / 50
+//!   4. Hourly distribution + Top domains    — Min(8), split 60 / 40
+//!   5. 7-day sparkline                      — 1 row, Wide only
+//!
+//! This mirrors `src/pages/Overview.tsx` minus the WeekHeatmap (which
+//! lives on the Week tab). Every panel has a stable shape so first-load
+//! skeletons don't reflow when data lands. Errors surface in the footer
+//! pill, not as inline banners.
 
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Modifier, Style, Stylize},
+    style::{Modifier, Style},
+    symbols::Marker,
     text::{Line, Span},
-    widgets::{Bar, BarChart, BarGroup, Block, Borders, Cell, Paragraph, Row, Table},
+    widgets::{Axis, Block, Borders, Cell, Chart, Dataset, GraphType, Paragraph, Row, Table},
     Frame,
 };
 
 use crate::app::App;
-use crate::data::TopAppRow;
-use crate::ui::format_duration;
-use daylog_core::aggregate::{CategorySummary, HourBucket};
+use crate::data::{TopAppRow, TopDomainRow};
+use crate::theme::{LayoutMode, Theme};
+use crate::ui::{format_duration, kpi_strip, sparkline, timeline};
+use daylog_core::aggregate::CategorySummary;
 
 pub fn render(f: &mut Frame, area: Rect, app: &App) {
+    let layout_mode = Theme::layout_mode(area.width);
+
+    // Sparkline only renders Wide. On Narrow / Stacked the slot collapses
+    // so the panels above absorb the room.
+    let sparkline_height = match layout_mode {
+        LayoutMode::Wide => 1,
+        _ => 0,
+    };
+
+    // Lengths are kept tight for the KPI strip + sparkline (literally 1
+    // row each) and the timeline (4 rows: borders + cells + axis tick
+    // row). Apps+Cats and Hourly+Domains use Min so they can compress on
+    // shorter terminals — without that, fixed Length values let trailing
+    // widgets overflow off-screen on 24-row terminals.
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(12), // top apps + categories row
-            Constraint::Min(0),     // hourly chart
+            Constraint::Length(1),                // KPI strip
+            Constraint::Length(4),                // 24h timeline (borders + cells + axis ticks)
+            Constraint::Min(7),                   // top apps + top categories (compresses)
+            Constraint::Min(8),                   // hourly chart + top domains (compresses)
+            Constraint::Length(sparkline_height), // 7-day sparkline (Wide only)
         ])
         .split(area);
 
-    render_top_row(f, chunks[0], app);
-    render_hourly(f, chunks[1], app);
+    render_kpi_strip(f, chunks[0], app, layout_mode);
+    render_timeline(f, chunks[1], app);
+    render_apps_categories_row(f, chunks[2], app);
+    render_hourly_domains_row(f, chunks[3], app);
+    if sparkline_height > 0 {
+        render_sparkline(f, chunks[4], app, layout_mode);
+    }
 }
 
-fn render_top_row(f: &mut Frame, area: Rect, app: &App) {
+fn render_kpi_strip(f: &mut Frame, area: Rect, app: &App, layout_mode: LayoutMode) {
+    let theme: &Theme = &app.theme;
+    let kpi = app.data.kpi.value();
+    let kpi_err = app.data.kpi.last_error();
+    kpi_strip::render(f, area, theme, layout_mode, kpi, kpi_err);
+}
+
+fn render_timeline(f: &mut Frame, area: Rect, app: &App) {
+    timeline::render(
+        f,
+        area,
+        &app.theme,
+        app.data.timeline_events.value(),
+        app.data.timeline_events.is_in_flight(),
+    );
+}
+
+fn render_sparkline(f: &mut Frame, area: Rect, app: &App, layout_mode: LayoutMode) {
+    let theme: &Theme = &app.theme;
+    let kpi = app.data.kpi.value();
+    let trailing = app.data.trailing_active.value();
+    let today_active = kpi.map(|k| k.active_secs);
+    sparkline::render(f, area, theme, layout_mode, today_active, trailing);
+}
+
+fn render_apps_categories_row(f: &mut Frame, area: Rect, app: &App) {
     let cols = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
         .split(area);
-
     render_top_apps(f, cols[0], app);
     render_top_categories(f, cols[1], app);
 }
 
+fn render_hourly_domains_row(f: &mut Frame, area: Rect, app: &App) {
+    let cols = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
+        .split(area);
+    render_hourly(f, cols[0], app);
+    render_top_domains(f, cols[1], app);
+}
+
+/// Bold + theme.fg panel title. Lives in the panel's top border but
+/// styled with stronger contrast than the surrounding dim border so the
+/// section header reads as a header, not part of the frame chrome.
+fn panel_title(theme: &Theme, base: &'static str, in_flight: bool) -> Line<'static> {
+    let title_style = Style::default().fg(theme.fg).add_modifier(Modifier::BOLD);
+    if in_flight {
+        Line::from(vec![
+            Span::styled(base, title_style),
+            Span::styled("\u{21bb}", Style::default().fg(theme.dim)),
+            Span::raw(" "),
+        ])
+    } else {
+        Line::from(Span::styled(base, title_style))
+    }
+}
+
 fn render_top_apps(f: &mut Frame, area: Rect, app: &App) {
-    let title = title_with_status(" Top apps ", app.data.top_apps.is_in_flight());
+    let theme = &app.theme;
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(app.theme.border_dim_style())
-        .title(title);
+        .border_style(theme.border_dim_style())
+        .title(panel_title(theme, " Top apps ", app.data.top_apps.is_in_flight()));
 
     let Some(rows) = app.data.top_apps.value() else {
-        let inner_msg = if app.data.top_apps.last_error().is_some() {
-            "fetch error · check footer"
-        } else {
-            "loading…"
-        };
-        let p = Paragraph::new(inner_msg)
+        let p = Paragraph::new("\u{2026}")
             .block(block)
-            .style(Style::default().dim());
+            .style(Style::default().fg(theme.dim));
         f.render_widget(p, area);
         return;
     };
@@ -61,63 +139,66 @@ fn render_top_apps(f: &mut Frame, area: Rect, app: &App) {
     if rows.is_empty() {
         let p = Paragraph::new("no app events yet")
             .block(block)
-            .style(Style::default().dim());
+            .style(Style::default().fg(theme.dim));
         f.render_widget(p, area);
         return;
     }
 
     let max_secs = rows.iter().map(|r| r.duration_secs).fold(0.0_f64, f64::max);
-    let ember = app.theme.ember;
-    let table_rows: Vec<Row> = rows
+
+    let header = Row::new(vec![
+        Cell::from(" #").style(Style::default().fg(theme.dim)),
+        Cell::from("App").style(Style::default().fg(theme.dim)),
+        Cell::from("Active").style(Style::default().fg(theme.dim)),
+        Cell::from(""),
+    ])
+    .height(1);
+
+    // -2 borders, -1 header line.
+    let max_rows = area.height.saturating_sub(3) as usize;
+    let body_rows: Vec<Row> = rows
         .iter()
-        .take(area.height.saturating_sub(2) as usize)
-        .map(|r| top_app_row(r, max_secs, ember))
+        .take(max_rows)
+        .enumerate()
+        .map(|(i, r)| top_app_row(i + 1, r, max_secs, theme))
         .collect();
 
     let widths = [
-        Constraint::Min(12),
-        Constraint::Length(16),
-        Constraint::Length(10),
+        Constraint::Length(3), // rank
+        Constraint::Min(8),    // app name
+        Constraint::Length(8), // active duration
+        Constraint::Length(8), // proportional bar (matches categories + domains)
     ];
-    let table = Table::new(table_rows, widths).block(block);
+    let table = Table::new(body_rows, widths).header(header).block(block);
     f.render_widget(table, area);
 }
 
-fn top_app_row(row: &TopAppRow, max_secs: f64, bar_color: ratatui::style::Color) -> Row<'static> {
-    let bar_width: usize = 14;
-    let filled = if max_secs > 0.0 {
-        ((row.duration_secs / max_secs) * bar_width as f64).round() as usize
-    } else {
-        0
-    };
-    let bar = format!(
-        "{}{}",
-        "\u{2588}".repeat(filled),
-        "\u{2591}".repeat(bar_width.saturating_sub(filled))
-    );
+fn top_app_row(rank: usize, row: &TopAppRow, max_secs: f64, theme: &Theme) -> Row<'static> {
+    let bar = proportional_bar(row.duration_secs, max_secs, 8);
     Row::new(vec![
-        Cell::from(row.name.clone()).style(Style::default().bold()),
-        Cell::from(bar).style(Style::default().fg(bar_color)),
-        Cell::from(format_duration(row.duration_secs)),
+        Cell::from(format!(" {}", rank)).style(Style::default().fg(theme.dim)),
+        Cell::from(row.name.clone())
+            .style(Style::default().fg(theme.fg).add_modifier(Modifier::BOLD)),
+        Cell::from(format_duration(row.duration_secs)).style(Style::default().fg(theme.fg)),
+        Cell::from(bar).style(Style::default().fg(theme.chart_3)),
     ])
 }
 
 fn render_top_categories(f: &mut Frame, area: Rect, app: &App) {
-    let title = title_with_status(" Top categories ", app.data.top_categories.is_in_flight());
+    let theme = &app.theme;
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(app.theme.border_dim_style())
-        .title(title);
+        .border_style(theme.border_dim_style())
+        .title(panel_title(
+            theme,
+            " Top categories ",
+            app.data.top_categories.is_in_flight(),
+        ));
 
     let Some(rows) = app.data.top_categories.value() else {
-        let inner_msg = if app.data.top_categories.last_error().is_some() {
-            "fetch error · check footer"
-        } else {
-            "loading…"
-        };
-        let p = Paragraph::new(inner_msg)
+        let p = Paragraph::new("\u{2026}")
             .block(block)
-            .style(Style::default().dim());
+            .style(Style::default().fg(theme.dim));
         f.render_widget(p, area);
         return;
     };
@@ -125,46 +206,178 @@ fn render_top_categories(f: &mut Frame, area: Rect, app: &App) {
     if rows.is_empty() {
         let p = Paragraph::new("no categorized events yet")
             .block(block)
-            .style(Style::default().dim());
+            .style(Style::default().fg(theme.dim));
         f.render_widget(p, area);
         return;
     }
 
-    let table_rows: Vec<Row> = rows
+    let max_secs = rows.iter().map(|r| r.duration).fold(0.0_f64, f64::max);
+
+    let header = Row::new(vec![
+        Cell::from(" #").style(Style::default().fg(theme.dim)),
+        Cell::from("Category").style(Style::default().fg(theme.dim)),
+        Cell::from("Active").style(Style::default().fg(theme.dim)),
+        Cell::from(""),
+    ])
+    .height(1);
+
+    let max_rows = area.height.saturating_sub(3) as usize;
+    let body_rows: Vec<Row> = rows
         .iter()
-        .take(area.height.saturating_sub(2) as usize)
-        .map(category_row)
+        .take(max_rows)
+        .enumerate()
+        .map(|(i, r)| category_row(i + 1, r, max_secs, theme))
         .collect();
 
-    let widths = [Constraint::Min(10), Constraint::Length(10)];
-    let table = Table::new(table_rows, widths).block(block);
+    let widths = [
+        Constraint::Length(3),  // rank
+        Constraint::Min(18),    // category name — must fit "Work / Programming"
+        Constraint::Length(8),  // active duration
+        Constraint::Length(8),  // proportional bar (matches apps + domains)
+    ];
+    let table = Table::new(body_rows, widths).header(header).block(block);
     f.render_widget(table, area);
 }
 
-fn category_row(row: &CategorySummary) -> Row<'static> {
+fn category_row(
+    rank: usize,
+    row: &CategorySummary,
+    max_secs: f64,
+    theme: &Theme,
+) -> Row<'static> {
     let name = row.name.join(" / ");
+    let bar = proportional_bar(row.duration, max_secs, 8);
+    // Single flat bar colour across all rows — matches Top apps (chart_3)
+    // and Top domains (chart_4). The category root is already carried by
+    // the name column AND by the timeline above; per-row bar colouring
+    // here was redundant and made the panel feel louder than its siblings.
     Row::new(vec![
-        Cell::from(name).style(Style::default().bold()),
-        Cell::from(format_duration(row.duration)),
+        Cell::from(format!(" {}", rank)).style(Style::default().fg(theme.dim)),
+        Cell::from(name).style(Style::default().fg(theme.fg).add_modifier(Modifier::BOLD)),
+        Cell::from(format_duration(row.duration)).style(Style::default().fg(theme.fg)),
+        Cell::from(bar).style(Style::default().fg(theme.chart_5)),
     ])
 }
 
-fn render_hourly(f: &mut Frame, area: Rect, app: &App) {
-    let title = title_with_status(" Hourly (today) ", app.data.hourly.is_in_flight());
+fn render_top_domains(f: &mut Frame, area: Rect, app: &App) {
+    let theme = &app.theme;
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(app.theme.border_dim_style())
-        .title(title);
+        .border_style(theme.border_dim_style())
+        .title(panel_title(
+            theme,
+            " Top domains ",
+            app.data.top_domains.is_in_flight(),
+        ));
+
+    let Some(rows) = app.data.top_domains.value() else {
+        let p = Paragraph::new("\u{2026}")
+            .block(block)
+            .style(Style::default().fg(theme.dim));
+        f.render_widget(p, area);
+        return;
+    };
+
+    if rows.is_empty() {
+        // Per `daylog_core::queries::top_domains`: an empty Ok-result is
+        // the "no aw-watcher-web bucket" signal. Mirror the desktop's
+        // WebPanel install hint instead of "no data" — it's an actionable
+        // message, not a transient empty state.
+        let lines = vec![
+            Line::from(Span::styled(
+                "no web watcher detected",
+                Style::default().fg(theme.dim),
+            )),
+            Line::from(""),
+            Line::from(Span::styled(
+                "install the firefox or chrome extension",
+                Style::default().fg(theme.dim),
+            )),
+            Line::from(Span::styled(
+                "to track domains and URLs",
+                Style::default().fg(theme.dim),
+            )),
+        ];
+        let p = Paragraph::new(lines).block(block);
+        f.render_widget(p, area);
+        return;
+    }
+
+    let max_secs = rows.iter().map(|r| r.duration_secs).fold(0.0_f64, f64::max);
+
+    let header = Row::new(vec![
+        Cell::from(" #").style(Style::default().fg(theme.dim)),
+        Cell::from("Domain").style(Style::default().fg(theme.dim)),
+        Cell::from("Active").style(Style::default().fg(theme.dim)),
+        Cell::from(""),
+    ])
+    .height(1);
+
+    let max_rows = area.height.saturating_sub(3) as usize;
+    let body_rows: Vec<Row> = rows
+        .iter()
+        .take(max_rows)
+        .enumerate()
+        .map(|(i, r)| top_domain_row(i + 1, r, max_secs, theme))
+        .collect();
+
+    let widths = [
+        Constraint::Length(3),  // rank
+        Constraint::Min(10),    // domain
+        Constraint::Length(8),  // active
+        Constraint::Length(8),  // bar (matches apps + categories)
+    ];
+    let table = Table::new(body_rows, widths).header(header).block(block);
+    f.render_widget(table, area);
+}
+
+fn top_domain_row(
+    rank: usize,
+    row: &TopDomainRow,
+    max_secs: f64,
+    theme: &Theme,
+) -> Row<'static> {
+    let bar = proportional_bar(row.duration_secs, max_secs, 8);
+    Row::new(vec![
+        Cell::from(format!(" {}", rank)).style(Style::default().fg(theme.dim)),
+        Cell::from(row.domain.clone())
+            .style(Style::default().fg(theme.fg).add_modifier(Modifier::BOLD)),
+        Cell::from(format_duration(row.duration_secs)).style(Style::default().fg(theme.fg)),
+        Cell::from(bar).style(Style::default().fg(theme.chart_4)),
+    ])
+}
+
+/// Proportional fill bar — full block + light shade for the unfilled
+/// remainder. Width is fixed so rows stay column-aligned.
+fn proportional_bar(value: f64, max: f64, width: usize) -> String {
+    let filled = if max > 0.0 {
+        ((value / max) * width as f64).round() as usize
+    } else {
+        0
+    };
+    let filled = filled.min(width);
+    format!(
+        "{}{}",
+        "\u{2588}".repeat(filled),
+        "\u{2591}".repeat(width.saturating_sub(filled))
+    )
+}
+
+fn render_hourly(f: &mut Frame, area: Rect, app: &App) {
+    let theme = &app.theme;
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(theme.border_dim_style())
+        .title(panel_title(
+            theme,
+            " Hourly distribution ",
+            app.data.hourly.is_in_flight(),
+        ));
 
     let Some(buckets) = app.data.hourly.value() else {
-        let inner_msg = if app.data.hourly.last_error().is_some() {
-            "fetch error · check footer"
-        } else {
-            "loading…"
-        };
-        let p = Paragraph::new(inner_msg)
+        let p = Paragraph::new("\u{2026}")
             .block(block)
-            .style(Style::default().dim());
+            .style(Style::default().fg(theme.dim));
         f.render_widget(p, area);
         return;
     };
@@ -172,52 +385,94 @@ fn render_hourly(f: &mut Frame, area: Rect, app: &App) {
     if buckets.is_empty() {
         let p = Paragraph::new("no hourly data")
             .block(block)
-            .style(Style::default().dim());
+            .style(Style::default().fg(theme.dim));
         f.render_widget(p, area);
         return;
     }
 
-    // Per-bar spectrum colours per D6: hour bands map morning → night
-    // (orange → yellow → green → cyan → violet). Convert seconds →
-    // minutes for stable bar heights at typical terminal sizes.
-    let bars: Vec<Bar> = buckets
+    // Bucket each hour into one of five spectrum bands so the per-bar
+    // colour signal survives. ratatui's Chart paints one colour per
+    // Dataset, so we emit five datasets — one per band — each carrying
+    // only the hours that fall in that band.
+    let mut band_data: [Vec<(f64, f64)>; 5] =
+        [Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new()];
+    let mut max_min = 0.0_f64;
+    for b in buckets {
+        let h = b.hour as usize;
+        let band_idx = match b.hour {
+            0..=4 => 0,
+            5..=9 => 1,
+            10..=14 => 2,
+            15..=19 => 3,
+            _ => 4,
+        };
+        let minutes = (b.duration / 60.0).max(0.0);
+        if minutes > max_min {
+            max_min = minutes;
+        }
+        band_data[band_idx].push((h as f64, minutes));
+    }
+
+    let band_colors = [
+        theme.chart_1,
+        theme.chart_2,
+        theme.chart_3,
+        theme.chart_4,
+        theme.chart_5,
+    ];
+
+    let datasets: Vec<Dataset> = band_data
         .iter()
-        .map(|b: &HourBucket| {
-            let minutes = (b.duration / 60.0).round() as u64;
-            let label = format!("{:02}", b.hour);
-            let band = app.theme.spectrum_color(b.hour);
-            Bar::default()
-                .label(label.into())
-                .value(minutes)
-                .style(Style::default().fg(band))
-                .value_style(Style::default().fg(app.theme.fg).bg(band))
+        .enumerate()
+        .map(|(i, data)| {
+            Dataset::default()
+                .data(data)
+                .graph_type(GraphType::Bar)
+                .marker(Marker::Block)
+                .style(Style::default().fg(band_colors[i]))
         })
         .collect();
 
-    let chart = BarChart::default()
-        .block(block)
-        .data(BarGroup::default().bars(&bars))
-        .bar_width(2)
-        .bar_gap(1);
-    f.render_widget(chart, area);
-}
+    // Y-ceiling rounds to the next 30-min so axis labels stay
+    // round-numbered. Floor at 60m so an empty-ish day doesn't squish
+    // bars to nothing.
+    let y_ceiling = ((max_min / 30.0).ceil() * 30.0).max(60.0);
+    let y_mid = (y_ceiling / 2.0).round() as u64;
+    let y_top = y_ceiling.round() as u64;
+    let axis_style = Style::default().fg(theme.dim);
 
-fn title_with_status<'a>(base: &'a str, in_flight: bool) -> Line<'a> {
-    if in_flight {
-        Line::from(vec![
-            Span::raw(base),
-            Span::styled("\u{21bb}", Style::default().add_modifier(Modifier::DIM)),
-            Span::raw(" "),
-        ])
-    } else {
-        Line::from(base)
-    }
+    let chart = Chart::new(datasets)
+        .block(block)
+        .x_axis(
+            Axis::default()
+                .bounds([0.0, 23.0])
+                .labels(vec![
+                    Span::styled("00", axis_style),
+                    Span::styled("06", axis_style),
+                    Span::styled("12", axis_style),
+                    Span::styled("18", axis_style),
+                    Span::styled("23", axis_style),
+                ])
+                .style(axis_style),
+        )
+        .y_axis(
+            Axis::default()
+                .bounds([0.0, y_ceiling])
+                .labels(vec![
+                    Span::styled("0", axis_style),
+                    Span::styled(y_mid.to_string(), axis_style),
+                    Span::styled(format!("{}m", y_top), axis_style),
+                ])
+                .style(axis_style),
+        );
+    f.render_widget(chart, area);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::app::App;
+    use daylog_core::aggregate::HourBucket;
     use ratatui::backend::TestBackend;
     use ratatui::Terminal;
     use std::time::Instant;
@@ -270,15 +525,22 @@ mod tests {
                 .collect(),
             now,
         );
+        // top_domains: empty Ok = "no web watcher" hint. Tests don't
+        // exercise the populated path here; that's covered by a unit
+        // test inside the rendering module.
+        app.data.top_domains.apply_success(vec![], now);
+        // timeline_events: empty so the timeline renders the dim "·"
+        // placeholder strip instead of the skeleton ellipsis.
+        app.data.timeline_events.apply_success(vec![], now);
         app
     }
 
-    /// Snapshot test per decision 3D: render the Today tab to a TestBackend
-    /// and assert presence of the key visual elements. We assert by
-    /// content rather than byte-exact match so trivial layout tweaks
-    /// don't cascade into a thousand expected-string updates.
+    /// Snapshot test: render the Today tab to a TestBackend and assert
+    /// presence of the key visual elements. Asserts by content rather
+    /// than byte-exact match so trivial layout tweaks don't cascade
+    /// into a thousand expected-string updates.
     #[test]
-    fn overview_renders_top_apps_categories_and_hourly() {
+    fn overview_renders_full_layout() {
         let app = app_with_fixture();
         let backend = TestBackend::new(120, 30);
         let mut terminal = Terminal::new(backend).unwrap();
@@ -292,6 +554,12 @@ mod tests {
         assert!(
             rendered.contains("Today"),
             "tab strip missing Today\n{rendered}"
+        );
+
+        // Timeline panel
+        assert!(
+            rendered.contains("Today's timeline"),
+            "missing Today's timeline title\n{rendered}"
         );
 
         // Top apps panel: title + at least one app name + a duration label
@@ -313,8 +581,18 @@ mod tests {
             "missing nested category label"
         );
 
+        // Top domains panel — title shows even with no web watcher
+        assert!(rendered.contains("Top domains"), "missing Top domains title");
+        assert!(
+            rendered.contains("no web watcher"),
+            "no-web-watcher hint missing in domains panel\n{rendered}"
+        );
+
         // Hourly chart
-        assert!(rendered.contains("Hourly"), "missing Hourly title");
+        assert!(
+            rendered.contains("Hourly distribution"),
+            "missing Hourly title"
+        );
 
         // Footer hints
         assert!(
@@ -329,10 +607,12 @@ mod tests {
         );
     }
 
+    /// First-load skeleton: panel structure + KPI labels render even
+    /// before any data lands. No "loading" banners, no "kpi unavailable"
+    /// text — those were Phase 1 / Phase 2 banners that the redesign
+    /// replaced with shape-stable skeletons.
     #[test]
-    fn overview_renders_loading_when_caches_empty() {
-        // Fresh App: no data has resolved yet. Each panel should show
-        // its loading skeleton instead of crashing or rendering blank.
+    fn overview_renders_skeleton_when_caches_empty() {
         let app = App::new();
         let backend = TestBackend::new(120, 30);
         let mut terminal = Terminal::new(backend).unwrap();
@@ -340,7 +620,26 @@ mod tests {
             .draw(|f| crate::ui::render(f, &app))
             .expect("render frame");
         let rendered = buffer_to_string(terminal.backend().buffer());
-        assert!(rendered.contains("loading"), "expected at least one loading skeleton");
+        assert!(
+            rendered.contains("Active"),
+            "KPI skeleton should render the Active label even with no data\n{rendered}"
+        );
+        assert!(
+            rendered.contains("Top apps"),
+            "Top apps panel chrome should render even with no data\n{rendered}"
+        );
+        assert!(
+            rendered.contains("Today's timeline"),
+            "Timeline panel chrome should render even with no data\n{rendered}"
+        );
+        assert!(
+            rendered.contains("Top domains"),
+            "Top domains panel chrome should render even with no data\n{rendered}"
+        );
+        assert!(
+            !rendered.contains("kpi unavailable"),
+            "Phase 2 removes the red 'kpi unavailable' banner\n{rendered}"
+        );
     }
 
     #[test]
@@ -374,18 +673,15 @@ mod tests {
         out
     }
 
-    /// Per DESIGN.md D6 + the snapshot-test extension list: the hourly
-    /// chart must paint multiple spectrum bands, not a single colour.
-    /// We assert that chart_1 (orange, hours 0-4) AND chart_5 (violet,
-    /// hours 20-23) both appear in the rendered buffer when the fixture
-    /// has data in every band.
+    /// Per DESIGN.md D6: hourly chart paints multiple spectrum bands.
+    /// Phase 2 switched BarChart → Chart with per-band Datasets; this
+    /// test guards the per-band colouring.
     #[test]
     fn hourly_chart_paints_multiple_spectrum_bands() {
         use crate::theme::Theme;
         let theme = Theme::from_env_pair(Some("truecolor"), None);
         let mut app = App::with_theme(theme);
         let now = Instant::now();
-        // 1800s in every hour, so every band contributes bars.
         app.data.hourly.apply_success(
             (0..24)
                 .map(|h| HourBucket {

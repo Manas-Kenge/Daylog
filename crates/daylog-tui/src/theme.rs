@@ -190,7 +190,10 @@ impl Theme {
     }
 
     pub fn kpi_label_style(&self) -> Style {
-        Style::default().fg(self.dim).add_modifier(Modifier::DIM)
+        // Real grey colour only — no DIM modifier on top. DIM modifier
+        // composed with an already-dim colour ("double dim") drops to
+        // invisible on linux console + several 256-colour terminals.
+        Style::default().fg(self.dim)
     }
 
     pub fn kpi_value_style(&self) -> Style {
@@ -202,6 +205,21 @@ impl Theme {
     /// directly so the ANSI-16 BOLD-collision lift comes along for free.
     pub fn chart_2_style(&self) -> Style {
         Style::default().fg(self.chart_2).add_modifier(self.chart_2_extra)
+    }
+
+    /// Map a category root (`name[0]`) to a chart colour. Mirrors the
+    /// desktop's `category-colors.ts` ROOT_TO_COLOR table — same chart
+    /// index per root so the two surfaces colour the same activity the
+    /// same way. Unknown roots fall through to `dim` (= Uncategorized).
+    pub fn category_color(&self, root: &str) -> Color {
+        match root {
+            "Work" | "Programming" => self.chart_1,
+            "Comms" => self.chart_2,
+            "Media" => self.chart_3,
+            "Browsing" => self.chart_4,
+            "Documents" => self.chart_5,
+            _ => self.dim,
+        }
     }
 }
 
@@ -277,7 +295,11 @@ mod tests {
     fn style_helpers_compose_correctly() {
         let t = Theme::from_env_pair(Some("truecolor"), None);
         assert!(t.kpi_value_style().add_modifier.contains(Modifier::BOLD));
-        assert!(t.kpi_label_style().add_modifier.contains(Modifier::DIM));
+        // kpi_label_style: real grey colour, no DIM modifier on top.
+        // Dropped from the helper to avoid the "double dim" dropout on
+        // linux console + several 256-colour terminals.
+        assert!(!t.kpi_label_style().add_modifier.contains(Modifier::DIM));
+        assert_eq!(t.kpi_label_style().fg, Some(t.dim));
         let active = t.active_tab_style();
         assert!(active.add_modifier.contains(Modifier::REVERSED));
         assert!(!active.add_modifier.contains(Modifier::DIM));

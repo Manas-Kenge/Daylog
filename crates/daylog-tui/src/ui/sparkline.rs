@@ -48,32 +48,36 @@ pub fn render(
         return;
     }
 
-    // Wide mode reserves a small slot on the right for the weekday
-    // range label (e.g. "Sat-Fri" when today is Friday).
-    let (chart_area, label_area) = match layout {
+    // Wide mode reserves a slot on the LEFT for the inline label
+    // (e.g. "7-day Sat-Fri  ▁▂▄▅█▇▆"). Reading order matches the
+    // sparkline's left→right time progression.
+    let (label_area, chart_area) = match layout {
         LayoutMode::Wide => {
             let chunks = Layout::default()
                 .direction(Direction::Horizontal)
-                .constraints([Constraint::Min(7), Constraint::Length(8)])
+                .constraints([Constraint::Length(15), Constraint::Min(7)])
                 .split(area);
-            (chunks[0], Some(chunks[1]))
+            (Some(chunks[0]), chunks[1])
         }
-        LayoutMode::Narrow | LayoutMode::Stacked => (area, None),
+        LayoutMode::Narrow | LayoutMode::Stacked => (None, area),
     };
-
-    let spark = Sparkline::default()
-        .data(&series)
-        .style(Style::default().fg(theme.ember));
-    f.render_widget(spark, chart_area);
 
     if let Some(label_area) = label_area {
         let label = weekday_range_label(Local::now().weekday());
         let p = Paragraph::new(Line::from(Span::styled(
-            format!(" {}", label),
-            theme.dim_style(),
+            format!("7-day {}  ", label),
+            Style::default().fg(theme.dim),
         )));
         f.render_widget(p, label_area);
     }
+
+    // Green (chart_3) instead of ember — reserves ember for the KPI
+    // strip's pattern-shift accent. Two ember surfaces in one row would
+    // wash out which one is the actual signal.
+    let spark = Sparkline::default()
+        .data(&series)
+        .style(Style::default().fg(theme.chart_3));
+    f.render_widget(spark, chart_area);
 }
 
 /// Build a 7-element series of active minutes, oldest-to-newest. Today

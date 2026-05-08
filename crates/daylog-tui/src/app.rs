@@ -19,23 +19,20 @@ pub enum Tab {
     Today,
     Week,
     Month,
-    Settings,
 }
 
 impl Tab {
-    pub const ALL: &'static [Tab] = &[
-        Tab::Today,
-        Tab::Week,
-        Tab::Month,
-        Tab::Settings,
-    ];
+    // Settings was a stub ("content lands in a later phase") and has
+    // been dropped until it has real content (read-only diagnostic
+    // panel — server info, watcher list, cache health). Listing a tab
+    // the user cycles into a placeholder reads as broken.
+    pub const ALL: &'static [Tab] = &[Tab::Today, Tab::Week, Tab::Month];
 
     pub fn label(self) -> &'static str {
         match self {
             Tab::Today => "Today",
             Tab::Week => "Week",
             Tab::Month => "Month",
-            Tab::Settings => "Settings",
         }
     }
 
@@ -282,8 +279,8 @@ mod tests {
 
     #[test]
     fn tab_cycle_backward_wraps() {
-        assert_eq!(Tab::Today.prev(), Tab::Settings);
-        assert_eq!(Tab::Settings.next(), Tab::Today);
+        assert_eq!(Tab::Today.prev(), Tab::Month);
+        assert_eq!(Tab::Month.next(), Tab::Today);
     }
 
     #[test]
