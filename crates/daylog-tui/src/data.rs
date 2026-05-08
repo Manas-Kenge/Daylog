@@ -15,6 +15,7 @@
 
 use std::time::{Duration, Instant};
 
+use chrono::{Datelike, Local, NaiveDate, Weekday};
 use daylog_core::aggregate::{CategorizedEvent, CategorySummary, HourBucket};
 use daylog_core::kpi::KpiSummary;
 use daylog_core::time::TimeRange;
@@ -186,6 +187,33 @@ impl TopDomainRow {
     }
 }
 
+/// One day in the calendar-week view (Mon–Sun). Aggregates a day's
+/// categorized events into per-root active seconds. `is_future` flags the
+/// days that haven't elapsed yet so the renderer paints the axis label
+/// without a bar.
+#[derive(Debug, Clone, PartialEq)]
+pub struct WeekDayBuckets {
+    pub date: NaiveDate,
+    pub weekday: Weekday,
+    pub is_future: bool,
+    /// `(category_root, active_seconds)` sorted by ROOT_ORDER then alpha
+    /// for stable stacking. Empty when no events.
+    pub roots: Vec<(String, f64)>,
+    pub total_active_secs: f64,
+}
+
+/// Stable display order for category roots in the legend / stack. Matches
+/// the desktop's `WeekPage.tsx` ROOT_ORDER. Roots not in this list sort
+/// after these, alphabetically.
+pub const WEEK_ROOT_ORDER: &[&str] = &[
+    "Work",
+    "Comms",
+    "Documents",
+    "Browsing",
+    "Media",
+    "Uncategorized",
+];
+
 /// Result message sent back to the App after a fetch resolves. The App
 /// matches on the variant to find which `Cached<T>` to update.
 #[derive(Debug)]
@@ -206,6 +234,9 @@ pub enum FetchResult {
     /// signal — the Rust query short-circuits when no aw-watcher-web-*
     /// bucket is registered.
     TopDomains(Result<Vec<TopDomainRow>, String>),
+    /// Calendar-week (Mon → Sun) categorized totals. Always 7 entries.
+    /// Future days carry `is_future = true` and empty `roots`.
+    Week(Result<Vec<WeekDayBuckets>, String>),
     /// Trailing 365 days of active seconds for the Month tab heatmap.
     /// Index `i` is days_ago = i + 1 (matches `TrailingActive`'s
     /// convention so today's value composes from `kpi.active_secs`).
@@ -241,6 +272,10 @@ pub struct DataCache {
     /// Top web domains for today. Empty value with `last_error == None`
     /// means "no web watcher installed" — render the install hint.
     pub top_domains: Cached<Vec<TopDomainRow>>,
+    /// Calendar-week (Mon → Sun) per-day, per-root active seconds for the
+    /// Week tab's stacked-bar chart. Past-days cadence; today's column
+    /// catches up via the same 5min refresh.
+    pub week: Cached<Vec<WeekDayBuckets>>,
     /// Trailing-365-day active-seconds-per-day window driving the Month
     /// tab's year heatmap. Heavy first paint (365 fetches) — the
     /// dispatcher gates this slot on `tab == Tab::Month` so Today's
@@ -266,6 +301,7 @@ impl DataCache {
             trailing_active: Cached::new(REFRESH_PAST_DAYS),
             timeline_events: Cached::new(REFRESH_LIVE),
             top_domains: Cached::new(REFRESH_LIVE),
+            week: Cached::new(REFRESH_PAST_DAYS),
             month_trailing_year: Cached::new(REFRESH_PAST_DAYS),
             month_top_apps: Cached::new(REFRESH_PAST_DAYS),
             month_top_categories: Cached::new(REFRESH_PAST_DAYS),
@@ -304,6 +340,8 @@ impl DataCache {
             FetchResult::TimelineEvents(Err(e)) => self.timeline_events.apply_failure(e, now),
             FetchResult::TopDomains(Ok(v)) => self.top_domains.apply_success(v, now),
             FetchResult::TopDomains(Err(e)) => self.top_domains.apply_failure(e, now),
+            FetchResult::Week(Ok(v)) => self.week.apply_success(v, now),
+            FetchResult::Week(Err(e)) => self.week.apply_failure(e, now),
             FetchResult::MonthTrailingYear(Ok(v)) => self.month_trailing_year.apply_success(v, now),
             FetchResult::MonthTrailingYear(Err(e)) => self.month_trailing_year.apply_failure(e, now),
             FetchResult::MonthTopApps(Ok(v)) => self.month_top_apps.apply_success(v, now),
@@ -445,6 +483,37 @@ pub fn dispatch_refetches(
         });
     }
 
+    if cache.week.should_refetch(now) {
+        cache.week.mark_in_flight();
+        let tx = tx.clone();
+        tokio::spawn(async move {
+            // Calendar-week semantics — pair the trailing past-week bundle
+            // with a live today-slice so the rightmost column is current.
+            let today = Local::now().date_naive();
+            let client = daylog_core::aw_client::AwClient::new();
+            let past_fut = daylog_core::queries::trailing_days_past(7);
+            let today_fut =
+                daylog_core::queries::categorized_events(&client, TimeRange::Today);
+            let (past_res, today_res) = tokio::join!(past_fut, today_fut);
+            let past = match past_res {
+                Ok(p) => p,
+                Err(e) => {
+                    let _ = tx.send(FetchResult::Week(Err(e.to_string())));
+                    return;
+                }
+            };
+            let today_events = match today_res {
+                Ok(e) => e,
+                Err(e) => {
+                    let _ = tx.send(FetchResult::Week(Err(e.to_string())));
+                    return;
+                }
+            };
+            let weeks = build_week_buckets(today, &today_events, &past);
+            let _ = tx.send(FetchResult::Week(Ok(weeks)));
+        });
+    }
+
     // Month-tab fetches are gated on the active tab so Today's
     // cold-start budget isn't taxed by the 365-day fan-out. Bouncing
     // back to Today doesn't invalidate already-fetched month caches —
@@ -517,6 +586,85 @@ pub fn dispatch_refetches(
             let _ = tx.send(FetchResult::MonthTopDomains(result));
         });
     }
+}
+
+/// ISO Monday of the calendar week containing `today`. Mirrors the desktop
+/// `isoMonday` in `WeekPage.tsx`.
+pub fn iso_monday(today: NaiveDate) -> NaiveDate {
+    let days_from_monday = today.weekday().num_days_from_monday() as i64;
+    today - chrono::Duration::days(days_from_monday)
+}
+
+/// Build the 7-day Mon → Sun calendar week from a today-slice and the
+/// trailing-7 past-day payloads. Days strictly after `today` carry
+/// `is_future = true` and empty roots.
+pub fn build_week_buckets(
+    today: NaiveDate,
+    today_events: &[CategorizedEvent],
+    past: &[daylog_core::queries::TrailingDayPayload],
+) -> Vec<WeekDayBuckets> {
+    let monday = iso_monday(today);
+    (0..7)
+        .map(|i| {
+            let date = monday + chrono::Duration::days(i);
+            if date > today {
+                return WeekDayBuckets {
+                    date,
+                    weekday: date.weekday(),
+                    is_future: true,
+                    roots: Vec::new(),
+                    total_active_secs: 0.0,
+                };
+            }
+            let roots = if date == today {
+                bucketize_roots(today_events)
+            } else {
+                let days_ago = (today - date).num_days() as u32;
+                past.iter()
+                    .find(|d| d.days_ago == days_ago)
+                    .map(|d| bucketize_roots(&d.events))
+                    .unwrap_or_default()
+            };
+            let total_active_secs = roots.iter().map(|(_, s)| *s).sum();
+            WeekDayBuckets {
+                date,
+                weekday: date.weekday(),
+                is_future: false,
+                roots,
+                total_active_secs,
+            }
+        })
+        .collect()
+}
+
+/// Group categorized events by their root category (`category[0]`,
+/// defaulting to "Uncategorized" — the parser already enforces this) and
+/// sum durations. Output is sorted by `WEEK_ROOT_ORDER` first, then any
+/// other roots alphabetically. Sort key is stable across days so segment
+/// stacks line up visually.
+fn bucketize_roots(events: &[CategorizedEvent]) -> Vec<(String, f64)> {
+    let mut totals: std::collections::BTreeMap<String, f64> =
+        std::collections::BTreeMap::new();
+    for ev in events {
+        let root = ev
+            .category
+            .first()
+            .cloned()
+            .unwrap_or_else(|| "Uncategorized".to_string());
+        *totals.entry(root).or_insert(0.0) += ev.duration;
+    }
+    let mut out: Vec<(String, f64)> = totals.into_iter().collect();
+    out.sort_by(|a, b| {
+        let ai = WEEK_ROOT_ORDER.iter().position(|r| *r == a.0);
+        let bi = WEEK_ROOT_ORDER.iter().position(|r| *r == b.0);
+        match (ai, bi) {
+            (Some(x), Some(y)) => x.cmp(&y),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => a.0.cmp(&b.0),
+        }
+    });
+    out
 }
 
 #[cfg(test)]
@@ -736,6 +884,125 @@ mod tests {
             dc.top_apps.apply_failure("err".into(), now);
         }
         assert!(dc.any_offline(), "one offline cache flips the aggregate flag");
+    }
+
+    #[test]
+    fn data_cache_week_offline_does_not_flip_aggregate_flag() {
+        // Week runs at 5min cadence. Surfacing offline on its blips would
+        // create false positives — same precedent as `trailing_active`.
+        let mut dc = DataCache::new();
+        let now = Instant::now();
+        for _ in 0..(OFFLINE_THRESHOLD + 2) {
+            dc.week.apply_failure("err".into(), now);
+        }
+        assert!(
+            !dc.any_offline(),
+            "week failures alone must not flag the tracker offline"
+        );
+    }
+
+    #[test]
+    fn data_cache_apply_routes_week_results() {
+        let mut dc = DataCache::new();
+        let now = Instant::now();
+        let week = vec![WeekDayBuckets {
+            date: NaiveDate::from_ymd_opt(2026, 5, 4).unwrap(),
+            weekday: Weekday::Mon,
+            is_future: false,
+            roots: vec![("Work".into(), 3600.0)],
+            total_active_secs: 3600.0,
+        }];
+        dc.apply(FetchResult::Week(Ok(week.clone())), now);
+        assert_eq!(dc.week.value(), Some(&week));
+    }
+
+    #[test]
+    fn iso_monday_for_known_dates() {
+        // Wednesday May 6, 2026 → Monday May 4, 2026.
+        let wed = NaiveDate::from_ymd_opt(2026, 5, 6).unwrap();
+        let mon = NaiveDate::from_ymd_opt(2026, 5, 4).unwrap();
+        assert_eq!(iso_monday(wed), mon);
+        // Sunday lands back on the previous Monday (ISO week starts on Mon).
+        let sun = NaiveDate::from_ymd_opt(2026, 5, 10).unwrap();
+        assert_eq!(iso_monday(sun), mon);
+        // Monday is a fixed point.
+        assert_eq!(iso_monday(mon), mon);
+    }
+
+    fn ev(cat: &[&str], duration: f64) -> CategorizedEvent {
+        CategorizedEvent {
+            timestamp: chrono::Utc::now(),
+            duration,
+            data: serde_json::Value::Null,
+            category: cat.iter().map(|s| (*s).to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn build_week_marks_future_days() {
+        // "Today" is Wed May 6; Mon-Tue are past, Wed is today, Thu-Sun are future.
+        let today = NaiveDate::from_ymd_opt(2026, 5, 6).unwrap();
+        let past = vec![
+            daylog_core::queries::TrailingDayPayload {
+                days_ago: 1,
+                events: vec![ev(&["Work"], 7200.0)],
+                afk: daylog_core::aggregate::AfkSummary {
+                    active_seconds: 7200.0,
+                    afk_seconds: 0.0,
+                    active_ratio: 1.0,
+                    intervals: Vec::new(),
+                },
+            },
+            daylog_core::queries::TrailingDayPayload {
+                days_ago: 2,
+                events: vec![ev(&["Browsing"], 3600.0)],
+                afk: daylog_core::aggregate::AfkSummary {
+                    active_seconds: 3600.0,
+                    afk_seconds: 0.0,
+                    active_ratio: 1.0,
+                    intervals: Vec::new(),
+                },
+            },
+        ];
+        let today_events = vec![ev(&["Comms"], 1800.0)];
+        let week = build_week_buckets(today, &today_events, &past);
+        assert_eq!(week.len(), 7);
+        // Mon (May 4) — past, has Browsing 1h.
+        assert_eq!(week[0].date, NaiveDate::from_ymd_opt(2026, 5, 4).unwrap());
+        assert!(!week[0].is_future);
+        assert_eq!(week[0].roots, vec![("Browsing".to_string(), 3600.0)]);
+        // Tue (May 5) — past, has Work 2h.
+        assert!(!week[1].is_future);
+        assert_eq!(week[1].roots, vec![("Work".to_string(), 7200.0)]);
+        // Wed (May 6) — today, has Comms 30m.
+        assert!(!week[2].is_future);
+        assert_eq!(week[2].roots, vec![("Comms".to_string(), 1800.0)]);
+        // Thu through Sun must be flagged future with no roots.
+        for i in 3..7 {
+            assert!(week[i].is_future, "day index {i} must be future");
+            assert!(week[i].roots.is_empty());
+            assert_eq!(week[i].total_active_secs, 0.0);
+        }
+    }
+
+    #[test]
+    fn build_week_orders_roots_by_week_root_order() {
+        let today = NaiveDate::from_ymd_opt(2026, 5, 8).unwrap();
+        // Today has Browsing, Work, ZZUnknown — output must be Work, Browsing, ZZUnknown.
+        let today_events = vec![
+            ev(&["Browsing"], 1000.0),
+            ev(&["Work", "Programming"], 2000.0),
+            ev(&["ZZUnknown"], 500.0),
+        ];
+        let week = build_week_buckets(today, &today_events, &[]);
+        let today_idx = week.iter().position(|d| !d.is_future).unwrap_or(0);
+        let last_past = week.iter().rposition(|d| !d.is_future).unwrap();
+        let today_row = &week[last_past];
+        assert!(today_row.date == today);
+        let names: Vec<&str> = today_row.roots.iter().map(|(n, _)| n.as_str()).collect();
+        // Work first (ROOT_ORDER index 0), then Browsing (index 3), then ZZUnknown.
+        assert_eq!(names, vec!["Work", "Browsing", "ZZUnknown"]);
+        let _ = today_idx;
     }
 
     #[test]

@@ -26,7 +26,9 @@ pub(crate) mod kpi_strip;
 mod month;
 pub(crate) mod overview;
 pub(crate) mod sparkline;
+pub(crate) mod stacked_bars;
 pub(crate) mod timeline;
+pub(crate) mod week;
 
 pub type Backend = ratatui::backend::CrosstermBackend<Stdout>;
 
@@ -228,21 +230,9 @@ fn render_tabs(f: &mut Frame, area: Rect, app: &App) {
 fn render_body(f: &mut Frame, area: Rect, app: &App) {
     match app.tab {
         Tab::Today => overview::render(f, area, app),
+        Tab::Week => week::render(f, area, app),
         Tab::Month => month::render(f, area, app),
-        _ => render_placeholder(f, area, app.tab, &app.theme),
     }
-}
-
-fn render_placeholder(f: &mut Frame, area: Rect, tab: Tab, theme: &Theme) {
-    let placeholder = Paragraph::new(format!(
-        "{} \u{2014} content lands in a later phase\n\nKeys: 1\u{2013}4 jump tabs \u{00b7} Tab/Shift-Tab cycle \u{00b7} ? help \u{00b7} q quit",
-        tab.label()
-    ))
-    .alignment(Alignment::Center)
-    .style(Style::default().fg(theme.dim));
-
-    let centered = center_rect(area, 60, 5);
-    f.render_widget(placeholder, centered);
 }
 
 fn render_footer(f: &mut Frame, area: Rect, app: &App) {
