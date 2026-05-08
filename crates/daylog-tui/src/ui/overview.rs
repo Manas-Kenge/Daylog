@@ -40,7 +40,10 @@ fn render_top_row(f: &mut Frame, area: Rect, app: &App) {
 
 fn render_top_apps(f: &mut Frame, area: Rect, app: &App) {
     let title = title_with_status(" Top apps ", app.data.top_apps.is_in_flight());
-    let block = Block::default().borders(Borders::ALL).title(title);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(app.theme.border_dim_style())
+        .title(title);
 
     let Some(rows) = app.data.top_apps.value() else {
         let inner_msg = if app.data.top_apps.last_error().is_some() {
@@ -101,7 +104,10 @@ fn top_app_row(row: &TopAppRow, max_secs: f64, bar_color: ratatui::style::Color)
 
 fn render_top_categories(f: &mut Frame, area: Rect, app: &App) {
     let title = title_with_status(" Top categories ", app.data.top_categories.is_in_flight());
-    let block = Block::default().borders(Borders::ALL).title(title);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(app.theme.border_dim_style())
+        .title(title);
 
     let Some(rows) = app.data.top_categories.value() else {
         let p = Paragraph::new("loading…")
@@ -140,7 +146,10 @@ fn category_row(row: &CategorySummary) -> Row<'static> {
 
 fn render_hourly(f: &mut Frame, area: Rect, app: &App) {
     let title = title_with_status(" Hourly (today) ", app.data.hourly.is_in_flight());
-    let block = Block::default().borders(Borders::ALL).title(title);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(app.theme.border_dim_style())
+        .title(title);
 
     let Some(buckets) = app.data.hourly.value() else {
         let p = Paragraph::new("loading…")
