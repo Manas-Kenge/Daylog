@@ -330,6 +330,16 @@ mod tests {
     }
 
     #[test]
+    fn handle_key_2_lands_on_week() {
+        // Pin numeric routing so reordering Tab::ALL doesn't silently
+        // re-route the Week shortcut.
+        let mut app = App::new();
+        assert_eq!(app.tab, Tab::Today);
+        handle_key(&mut app, KeyCode::Char('2'), KeyModifiers::NONE);
+        assert_eq!(app.tab, Tab::Week);
+    }
+
+    #[test]
     fn range_chip_cycle_wraps_both_directions() {
         let mut chip = RangeChip::Today;
         for _ in 0..RangeChip::ALL.len() {
