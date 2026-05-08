@@ -16,11 +16,17 @@
 use std::time::{Duration, Instant};
 
 use daylog_core::aggregate::{CategorySummary, HourBucket};
+use daylog_core::kpi::KpiSummary;
 use daylog_core::time::TimeRange;
 use serde_json::Value;
 
 /// Live cadence for today's slot — matches `useAw.ts` REFRESH_MS = 5_000.
 pub const REFRESH_LIVE: Duration = Duration::from_secs(5);
+
+/// Cadence for past-day data. Matches desktop's `PAST_DAY_STALE_MS`.
+/// Past days don't change until midnight; a 5min staleness check is
+/// effectively cached-for-the-day after the first paint.
+pub const REFRESH_PAST_DAYS: Duration = Duration::from_secs(5 * 60);
 
 /// After this many consecutive failures, the cache surfaces as offline.
 /// Tuned so a single transient blip doesn't flicker the indicator: at
@@ -158,15 +164,27 @@ pub enum FetchResult {
     TopApps(Result<Vec<TopAppRow>, String>),
     Hourly(Result<Vec<HourBucket>, String>),
     TopCategories(Result<Vec<CategorySummary>, String>),
+    Kpi(Result<KpiSummary, String>),
+    /// Past 7 days of active seconds. Index `i` is days_ago = i + 1, so
+    /// index 0 = yesterday, index 6 = 7 days ago. The sparkline widget
+    /// composes this with today's `kpi.active_secs` at render time.
+    TrailingActive(Result<[f64; 7], String>),
 }
 
-/// Bundle of every cache entry the Overview tab reads. Future tabs add
+/// Bundle of every cache entry the Today tab reads. Future tabs add
 /// their own fields to this struct.
 #[derive(Debug)]
 pub struct DataCache {
     pub top_apps: Cached<Vec<TopAppRow>>,
     pub hourly: Cached<Vec<HourBucket>>,
     pub top_categories: Cached<Vec<CategorySummary>>,
+    /// Live KPI summary backing the compact strip (Active · Longest ·
+    /// pattern shift). One IPC roundtrip pulls today + trailing-7
+    /// baselines so the strip never needs to recompose.
+    pub kpi: Cached<KpiSummary>,
+    /// Past-7-day active seconds for the sparkline. 5min cadence —
+    /// past days don't change within a day.
+    pub trailing_active: Cached<[f64; 7]>,
 }
 
 impl DataCache {
@@ -175,13 +193,20 @@ impl DataCache {
             top_apps: Cached::new(REFRESH_LIVE),
             hourly: Cached::new(REFRESH_LIVE),
             top_categories: Cached::new(REFRESH_LIVE),
+            kpi: Cached::new(REFRESH_LIVE),
+            trailing_active: Cached::new(REFRESH_PAST_DAYS),
         }
     }
 
-    /// True if any tracked cache has crossed the offline threshold.
-    /// Drives the footer's "○ tracker offline" indicator.
+    /// True if any tracked LIVE cache has crossed the offline threshold.
+    /// Drives the footer's "○ tracker offline" indicator. The trailing
+    /// past-days slot is excluded — its 5min cadence would create false
+    /// positives during transient blips.
     pub fn any_offline(&self) -> bool {
-        self.top_apps.is_offline() || self.hourly.is_offline() || self.top_categories.is_offline()
+        self.top_apps.is_offline()
+            || self.hourly.is_offline()
+            || self.top_categories.is_offline()
+            || self.kpi.is_offline()
     }
 
     /// Apply an incoming fetch result to the matching cache entry.
@@ -193,6 +218,10 @@ impl DataCache {
             FetchResult::Hourly(Err(e)) => self.hourly.apply_failure(e, now),
             FetchResult::TopCategories(Ok(v)) => self.top_categories.apply_success(v, now),
             FetchResult::TopCategories(Err(e)) => self.top_categories.apply_failure(e, now),
+            FetchResult::Kpi(Ok(v)) => self.kpi.apply_success(v, now),
+            FetchResult::Kpi(Err(e)) => self.kpi.apply_failure(e, now),
+            FetchResult::TrailingActive(Ok(v)) => self.trailing_active.apply_success(v, now),
+            FetchResult::TrailingActive(Err(e)) => self.trailing_active.apply_failure(e, now),
         }
     }
 }
@@ -254,6 +283,43 @@ pub fn dispatch_refetches(
                 .await
                 .map_err(|e| e.to_string());
             let _ = tx.send(FetchResult::TopCategories(result));
+        });
+    }
+
+    if cache.kpi.should_refetch(now) {
+        cache.kpi.mark_in_flight();
+        let tx = tx.clone();
+        let range = range.clone();
+        tokio::spawn(async move {
+            let client = daylog_core::aw_client::AwClient::new();
+            let result = daylog_core::queries::kpi(&client, range)
+                .await
+                .map_err(|e| e.to_string());
+            let _ = tx.send(FetchResult::Kpi(result));
+        });
+    }
+
+    if cache.trailing_active.should_refetch(now) {
+        cache.trailing_active.mark_in_flight();
+        let tx = tx.clone();
+        tokio::spawn(async move {
+            // trailing_days_past returns days 1..=7. Project to active
+            // seconds and drop the events array — the sparkline only
+            // needs daily totals.
+            let result = daylog_core::queries::trailing_days_past(7)
+                .await
+                .map(|days| {
+                    let mut out = [0.0_f64; 7];
+                    for d in days {
+                        let idx = d.days_ago.saturating_sub(1) as usize;
+                        if idx < 7 {
+                            out[idx] = d.afk.active_seconds;
+                        }
+                    }
+                    out
+                })
+                .map_err(|e| e.to_string());
+            let _ = tx.send(FetchResult::TrailingActive(result));
         });
     }
 }
@@ -397,7 +463,74 @@ mod tests {
         assert!(dc.top_apps.value().is_none());
         assert!(dc.hourly.value().is_none());
         assert!(dc.top_categories.value().is_none());
+        assert!(dc.kpi.value().is_none());
+        assert!(dc.trailing_active.value().is_none());
         assert!(!dc.any_offline());
+    }
+
+    #[test]
+    fn data_cache_kpi_offline_flips_aggregate_flag() {
+        let mut dc = DataCache::new();
+        let now = Instant::now();
+        for _ in 0..OFFLINE_THRESHOLD {
+            dc.kpi.apply_failure("err".into(), now);
+        }
+        assert!(dc.any_offline(), "kpi failures must flip the aggregate flag");
+    }
+
+    #[test]
+    fn data_cache_trailing_offline_does_not_flip_aggregate_flag() {
+        // trailing_active runs at 5min cadence; surfacing offline on
+        // its blips would create false positives. Live slots are the
+        // signal for the footer indicator.
+        let mut dc = DataCache::new();
+        let now = Instant::now();
+        for _ in 0..(OFFLINE_THRESHOLD + 2) {
+            dc.trailing_active.apply_failure("err".into(), now);
+        }
+        assert!(
+            !dc.any_offline(),
+            "trailing_active failures alone must not flag the tracker offline"
+        );
+    }
+
+    #[test]
+    fn data_cache_apply_routes_kpi_and_trailing_results() {
+        let mut dc = DataCache::new();
+        let now = Instant::now();
+        let summary = daylog_core::kpi::KpiSummary {
+            active_secs: 1234.0,
+            afk_secs: 100.0,
+            active_ratio: 1234.0 / 1334.0,
+            longest_stretch: None,
+            best_window: None,
+            pattern_shift: None,
+            focus_by_hour: [0.0; 24],
+            active_baseline: daylog_core::kpi::BaselineStats {
+                effective_days: 0,
+                median: 0.0,
+                mean: 0.0,
+                stdev: 0.0,
+            },
+            longest_baseline: daylog_core::kpi::BaselineStats {
+                effective_days: 0,
+                median: 0.0,
+                mean: 0.0,
+                stdev: 0.0,
+            },
+            best_window_baseline: daylog_core::kpi::BaselineStats {
+                effective_days: 0,
+                median: 0.0,
+                mean: 0.0,
+                stdev: 0.0,
+            },
+        };
+        dc.apply(FetchResult::Kpi(Ok(summary.clone())), now);
+        assert_eq!(dc.kpi.value().map(|s| s.active_secs), Some(1234.0));
+
+        let trailing: [f64; 7] = [10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0];
+        dc.apply(FetchResult::TrailingActive(Ok(trailing)), now);
+        assert_eq!(dc.trailing_active.value().copied(), Some(trailing));
     }
 
     #[test]
