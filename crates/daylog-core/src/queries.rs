@@ -14,6 +14,7 @@ use crate::aggregate::{
 };
 use crate::aw_client::{queries, AwClient, AwError, Bucket, Event, ServerInfo};
 use crate::categories::{self, CategoryError};
+use crate::kpi::{self, KpiSummary};
 use crate::time::TimeRange;
 
 /// Errors surfaced by the high-level query API. Both Tauri IPC and the TUI
@@ -177,6 +178,43 @@ async fn fetch_trailing_day(n: u32) -> Result<TrailingDayPayload, QueryError> {
         events,
         afk,
     })
+}
+
+/// One-shot KPI strip payload: today's active/AFK + categorized events,
+/// plus trailing-7 past days for baselines and pattern-shift detection.
+/// Past days are fetched concurrently. The desktop's KpiStrip becomes a
+/// thin wrapper over this command; the TUI consumes the same payload via
+/// `daylog_core::queries::kpi` directly without IPC.
+pub async fn kpi(client: &AwClient, range: TimeRange) -> Result<KpiSummary, QueryError> {
+    let cfg = categories::load(client).await?;
+    let classes_json = categories::classes_to_aql(&cfg);
+
+    // Today: events + AFK in parallel.
+    let timeperiods = [range.as_aw_timeperiod()];
+    let today_aql = queries::categorized_events(&classes_json);
+    let (today_events_res, today_afk_events) = tokio::join!(
+        client.query(&today_aql, &timeperiods),
+        fetch_afk_events(client, &range),
+    );
+    let today_events = parse_categorized_events(&unwrap_first_array(today_events_res?));
+    let today_afk = summarize_afk(&today_afk_events?, false);
+
+    // Past 7 days for baselines + pattern shift. Reuse the existing
+    // bundled query so concurrency lives in one place.
+    let past = trailing_days_past(7).await?;
+    let past_days: Vec<Vec<CategorizedEvent>> =
+        past.iter().map(|d| d.events.clone()).collect();
+    let past_active: Vec<f64> = past.iter().map(|d| d.afk.active_seconds).collect();
+
+    let weekday = kpi::weekday_label(chrono::Utc::now());
+    Ok(kpi::summarize(
+        &today_events,
+        &past_days,
+        &past_active,
+        today_afk.active_seconds,
+        today_afk.afk_seconds,
+        &weekday,
+    ))
 }
 
 pub async fn has_web_watcher(client: &AwClient) -> Result<bool, AwError> {

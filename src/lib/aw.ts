@@ -10,6 +10,7 @@ import type {
   CategorySummary,
   DomainData,
   HourBucket,
+  KpiSummary,
   TimeRange,
 } from "./aw-types";
 
@@ -43,6 +44,14 @@ export const awTrailingDaysPast = (days: number) =>
 
 export const awAfkSummary = (range: TimeRange, includeIntervals = false) =>
   invoke<AfkSummary>("aw_afk_summary", { range, includeIntervals });
+
+/**
+ * One-shot KPI strip payload — today's active/AFK + per-card baselines
+ * computed from trailing-7. Replaces the old composition of
+ * useCategorizedEvents + useAfkSummary + useTrailingDays + TS-side math.
+ */
+export const awKpi = (range: TimeRange) =>
+  invoke<KpiSummary>("aw_kpi", { range });
 
 export const awHasWebWatcher = () => invoke<boolean>("aw_has_web_watcher");
 

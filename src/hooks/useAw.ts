@@ -7,6 +7,16 @@ import * as aw from "@/lib/aw";
 import type { CategorizedEvent, TimeRange } from "@/lib/aw-types";
 import { DaysAgo, Today, Yesterday } from "@/lib/aw-types";
 
+export function useKpi(rangeOverride?: TimeRange) {
+  const { range: ctxRange } = useRange();
+  const range = rangeOverride ?? ctxRange;
+  return useQuery({
+    queryKey: ["aw_kpi", ...rangeKey(range)],
+    queryFn: () => aw.awKpi(range),
+    refetchInterval: REFRESH_MS,
+  });
+}
+
 const REFRESH_MS = 5_000;
 /** Past days don't change until the wall clock crosses midnight, so a
  *  5-minute staleTime is more than enough — it's effectively cached for

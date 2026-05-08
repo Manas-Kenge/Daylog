@@ -5,6 +5,7 @@ use chrono::{DateTime, Utc};
 use daylog_core::aggregate::{AfkSummary, CategorizedEvent, CategorySummary, HourBucket};
 use daylog_core::aw_client::{AwClient, AwError, Bucket, Event, ServerInfo};
 use daylog_core::categories::{self, CategoryConfig, CategoryError};
+use daylog_core::kpi::KpiSummary;
 use daylog_core::queries as q;
 use daylog_core::queries::{QueryError, TrailingDayPayload};
 use daylog_core::time::TimeRange;
@@ -94,6 +95,11 @@ async fn aw_categorized_events(range: TimeRange) -> Result<Vec<CategorizedEvent>
 #[tauri::command]
 async fn aw_trailing_days_past(days: u32) -> Result<Vec<TrailingDayPayload>, QueryError> {
     q::trailing_days_past(days).await
+}
+
+#[tauri::command]
+async fn aw_kpi(range: TimeRange) -> Result<KpiSummary, QueryError> {
+    q::kpi(&AwClient::new(), range).await
 }
 
 #[tauri::command]
@@ -266,6 +272,7 @@ pub fn run() {
             aw_hourly,
             aw_categorized_events,
             aw_trailing_days_past,
+            aw_kpi,
             aw_afk_summary,
             aw_has_web_watcher,
             aw_top_domains,

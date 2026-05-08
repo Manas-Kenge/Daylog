@@ -23,17 +23,9 @@ import {
   type ChartConfig,
 } from "@/components/ui/chart";
 import { Skeleton } from "@/components/ui/skeleton";
-import {
-  useAfkSummary,
-  useCategorizedEvents,
-  useHourly,
-  useTrailingDays,
-} from "@/hooks/useAw";
+import { useHourly, useKpi } from "@/hooks/useAw";
 import { fmtDuration } from "@/lib/format";
-import { focusByHour, longestFocus } from "@/lib/kpi";
-import { bestWindow } from "@/lib/best-window";
-import { trailingStats } from "@/lib/baselines";
-import { useId, useMemo, type ReactNode } from "react";
+import { useId, type ReactNode } from "react";
 
 interface SparkProps {
   values: number[];
@@ -283,54 +275,36 @@ function ActiveAfkBar({ activeRatio }: { activeRatio: number }) {
 }
 
 export function KpiStrip() {
-  const { data: today, isLoading: todayLoading } = useCategorizedEvents();
+  const { data: kpi, isLoading: kpiLoading } = useKpi();
   const { data: hourly, isLoading: hourlyLoading } = useHourly();
-  const { data: afk, isLoading: afkLoading } = useAfkSummary(true);
-  const { data: trailing, isLoading: trailingLoading } = useTrailingDays(8);
 
-  const todayEvents = today ?? [];
-  const activeSec = afk?.active_seconds ?? 0;
-  const afkSec = afk?.afk_seconds ?? 0;
+  const activeSec = kpi?.active_secs ?? 0;
+  const afkSec = kpi?.afk_secs ?? 0;
   const trackedSec = activeSec + afkSec;
-  const activeRatio = afk?.active_ratio ?? 0;
-  const afkAvailable = afk != null;
-  const longest = longestFocus(todayEvents);
-  const window = bestWindow(todayEvents);
-  const focusSpark = focusByHour(todayEvents);
+  const activeRatio = kpi?.active_ratio ?? 0;
+  // Once kpi resolves, AFK is "available" if the tracker reported anything.
+  // The Rust side returns zeros when the AFK bucket is missing entirely.
+  const afkAvailable = kpi != null && trackedSec > 0;
+  const longest = kpi?.longest_stretch ?? null;
+  const window = kpi?.best_window ?? null;
+  const focusSpark = kpi?.focus_by_hour ?? new Array(24).fill(0);
   const activeSpark = (hourly ?? []).map((h) => h.duration);
 
-  // Trailing-7 baselines (skip index 0 which is today itself)
-  const past = useMemo(
-    () => (trailing ?? []).filter((d) => d.daysAgo > 0 && d.events != null),
-    [trailing],
-  );
-  const pastActiveSec = past.map((d) => d.activeSec ?? 0);
-
-  const activeStats = trailingStats(pastActiveSec, pastActiveSec);
-  const longestStats = trailingStats(
-    past.map((d) => longestFocus(d.events ?? []).seconds),
-    pastActiveSec,
-  );
-  const bestWindowStats = trailingStats(
-    past.map((d) => bestWindow(d.events ?? [])?.seconds ?? 0),
-    pastActiveSec,
-  );
-
-  const baselineDaysReady = activeStats.effectiveDays;
+  const activeBaseline = kpi?.active_baseline;
+  const longestBaseline = kpi?.longest_baseline;
+  const bestWindowBaseline = kpi?.best_window_baseline;
+  const baselineDaysReady = activeBaseline?.effective_days ?? 0;
   const baselinePlaceholder =
-    baselineDaysReady === 0
-      ? `building baseline (${past.length}/7 days)`
+    kpi != null && baselineDaysReady === 0
+      ? `building baseline (${baselineDaysReady}/7 days)`
       : null;
 
-  const loading =
-    todayLoading || hourlyLoading || afkLoading || trailingLoading;
+  const loading = kpiLoading || hourlyLoading;
 
-  const activeVsTypical = vsTypical(
-    activeSec,
-    activeStats.median,
-    activeStats.effectiveDays,
-    fmtDuration,
-  );
+  const activeVsTypical =
+    activeBaseline
+      ? vsTypical(activeSec, activeBaseline.median, activeBaseline.effective_days, fmtDuration)
+      : null;
 
   return (
     <>
@@ -369,18 +343,20 @@ export function KpiStrip() {
         label="Best window"
         value={
           window
-            ? `${String(window.startHour).padStart(2, "0")}:00–${String(window.endHour).padStart(2, "0")}:00`
+            ? `${String(window.start_hour).padStart(2, "0")}:00–${String(window.end_hour).padStart(2, "0")}:00`
             : "—"
         }
         sub={
           window
             ? (baselinePlaceholder ??
-              vsTypical(
-                window.seconds,
-                bestWindowStats.median,
-                bestWindowStats.effectiveDays,
-                fmtDuration,
-              ) ??
+              (bestWindowBaseline
+                ? vsTypical(
+                    window.seconds,
+                    bestWindowBaseline.median,
+                    bestWindowBaseline.effective_days,
+                    fmtDuration,
+                  )
+                : null) ??
               `${fmtDuration(window.seconds)} focused`)
             : "no focused window yet"
         }
@@ -390,7 +366,7 @@ export function KpiStrip() {
           color: "var(--chart-2)",
           format: fmtDuration,
           shape: "bar",
-          markRange: window ? [window.startHour, window.endHour - 1] : null,
+          markRange: window ? [window.start_hour, window.end_hour - 1] : null,
         }}
         loading={loading}
         tip="Densest 3-hour window of focused stretches today (≥2m on a single category root). Highlighted bars show that window."
@@ -399,15 +375,17 @@ export function KpiStrip() {
       <KpiCard
         icon={RocketIcon}
         label="Longest stretch"
-        value={longest.seconds > 0 ? fmtDuration(longest.seconds) : "—"}
+        value={longest && longest.seconds > 0 ? fmtDuration(longest.seconds) : "—"}
         sub={
-          longest.seconds > 0
-            ? (vsTypical(
-                longest.seconds,
-                longestStats.median,
-                longestStats.effectiveDays,
-                fmtDuration,
-              ) ?? `in ${longest.root ?? ""}`)
+          longest && longest.seconds > 0
+            ? ((longestBaseline
+                ? vsTypical(
+                    longest.seconds,
+                    longestBaseline.median,
+                    longestBaseline.effective_days,
+                    fmtDuration,
+                  )
+                : null) ?? `in ${longest.category_root}`)
             : "no focused stretches yet"
         }
         spark={{
@@ -419,7 +397,7 @@ export function KpiStrip() {
         }}
         loading={loading}
         emptyHint={
-          activeSec > 0 && longest.seconds === 0
+          activeSec > 0 && (longest?.seconds ?? 0) === 0
             ? "No focused runs ≥ 2m yet"
             : undefined
         }

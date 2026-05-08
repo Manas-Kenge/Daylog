@@ -148,7 +148,7 @@ pub fn summarize_afk(events: &[Value], include_intervals: bool) -> AfkSummary {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct CategorizedEvent {
     pub timestamp: DateTime<Utc>,
     pub duration: f64,

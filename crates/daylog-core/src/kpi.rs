@@ -62,10 +62,22 @@ pub struct BaselineStats {
 pub struct KpiSummary {
     pub active_secs: f64,
     pub afk_secs: f64,
+    /// `active_secs / (active_secs + afk_secs)`, clamped to 0 when both are zero.
+    pub active_ratio: f64,
     pub longest_stretch: Option<LongestStretch>,
     pub best_window: Option<BestWindow>,
+    /// Dominant-changed category-root delta vs the trailing-7 median of
+    /// the same root. The TUI's compact strip surfaces this; the desktop
+    /// ignores it (the per-card baselines below back its three sub-lines).
     pub pattern_shift: Option<PatternShift>,
     pub focus_by_hour: [f64; 24],
+    /// Trailing-7 baseline of total active seconds. Backs the desktop's
+    /// "Active / AFK" card "vs typical" sub-line.
+    pub active_baseline: BaselineStats,
+    /// Trailing-7 baseline of `longest_stretch.seconds` per past day.
+    pub longest_baseline: BaselineStats,
+    /// Trailing-7 baseline of `best_window.seconds` per past day.
+    pub best_window_baseline: BaselineStats,
 }
 
 /// First segment of the nested category path, falling back to
@@ -315,24 +327,47 @@ pub fn weekday_label(at: DateTime<Utc>) -> String {
         .to_string()
 }
 
-/// Compose the whole strip in one call. `active_secs` and `afk_secs`
-/// come from `summarize_afk`; we don't recompute them here so callers
-/// keep one source of truth for AFK accounting.
+/// Compose the whole strip in one call. `active_secs`, `afk_secs`, and
+/// the past-day active totals come from `summarize_afk`; we don't
+/// recompute them here so callers keep one source of truth for AFK
+/// accounting. `past_active_secs` is parallel to `past_days`: index `i`
+/// is the active seconds for day `past_days[i]`.
 pub fn summarize(
     today: &[CategorizedEvent],
     past_days: &[Vec<CategorizedEvent>],
+    past_active_secs: &[f64],
     active_secs: f64,
     afk_secs: f64,
     today_weekday_label: &str,
 ) -> KpiSummary {
     let focus_by_hour_arr = focus_by_hour(today, FOCUS_FLOOR_SECS);
+
+    let past_longest: Vec<f64> = past_days
+        .iter()
+        .map(|d| longest_focus(d, FOCUS_FLOOR_SECS).map(|s| s.seconds).unwrap_or(0.0))
+        .collect();
+    let past_best_window: Vec<f64> = past_days
+        .iter()
+        .map(|d| {
+            let fbh = focus_by_hour(d, FOCUS_FLOOR_SECS);
+            best_window(&fbh).map(|w| w.seconds).unwrap_or(0.0)
+        })
+        .collect();
+
+    let tracked = active_secs + afk_secs;
+    let active_ratio = if tracked > 0.0 { active_secs / tracked } else { 0.0 };
+
     KpiSummary {
         active_secs,
         afk_secs,
+        active_ratio,
         longest_stretch: longest_focus(today, FOCUS_FLOOR_SECS),
         best_window: best_window(&focus_by_hour_arr),
         pattern_shift: pattern_shift(today, past_days, today_weekday_label),
         focus_by_hour: focus_by_hour_arr,
+        active_baseline: trailing_stats(past_active_secs, past_active_secs),
+        longest_baseline: trailing_stats(&past_longest, past_active_secs),
+        best_window_baseline: trailing_stats(&past_best_window, past_active_secs),
     }
 }
 
@@ -551,9 +586,12 @@ mod tests {
             ev(16, 1800.0, &["Work"]),
         ];
         let past: Vec<Vec<CategorizedEvent>> = vec![];
-        let s = summarize(&today, &past, 6000.0, 1200.0, "Fri");
+        let past_active: Vec<f64> = vec![];
+        let s = summarize(&today, &past, &past_active, 6000.0, 1200.0, "Fri");
         assert_eq!(s.active_secs, 6000.0);
         assert_eq!(s.afk_secs, 1200.0);
+        // 6000 / (6000 + 1200) ≈ 0.833.
+        assert!((s.active_ratio - 6000.0 / 7200.0).abs() < 1e-6);
         let stretch = s.longest_stretch.expect("some");
         // Matches desktop's longestFocus: same-root events sum regardless of
         // time gaps between them, so all four Work events fold into one run.
@@ -565,5 +603,9 @@ mod tests {
         // No past days → no pattern shift signal worth surfacing.
         assert_eq!(s.pattern_shift, None);
         assert_eq!(s.focus_by_hour[14], 1800.0);
+        // No past days → empty baselines (effective_days==0).
+        assert_eq!(s.active_baseline.effective_days, 0);
+        assert_eq!(s.longest_baseline.effective_days, 0);
+        assert_eq!(s.best_window_baseline.effective_days, 0);
     }
 }

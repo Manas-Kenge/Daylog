@@ -62,6 +62,45 @@ export interface CategorizedEvent {
   category: string[];
 }
 
+/** Mirror of daylog_core::kpi types. */
+export interface LongestStretch {
+  seconds: number;
+  category_root: string;
+}
+
+export interface BestWindow {
+  start_hour: number;
+  end_hour: number;
+  seconds: number;
+}
+
+export interface PatternShift {
+  category_root: string;
+  delta_secs: number;
+  weekday_label: string;
+}
+
+export interface BaselineStats {
+  effective_days: number;
+  median: number;
+  mean: number;
+  stdev: number;
+}
+
+export interface KpiSummary {
+  active_secs: number;
+  afk_secs: number;
+  active_ratio: number;
+  longest_stretch: LongestStretch | null;
+  best_window: BestWindow | null;
+  pattern_shift: PatternShift | null;
+  /** Per-hour focused-time spark, length 24. */
+  focus_by_hour: number[];
+  active_baseline: BaselineStats;
+  longest_baseline: BaselineStats;
+  best_window_baseline: BaselineStats;
+}
+
 export type Rule =
   | { type: "regex"; regex: string; ignore_case?: boolean }
   | { type: "none" };
