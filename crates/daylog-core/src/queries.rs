@@ -145,9 +145,33 @@ pub async fn trailing_days_past(days: u32) -> Result<Vec<TrailingDayPayload>, Qu
     let client = AwClient::new();
     let _ = categories::load(&client).await?;
 
+    // Bound the fan-out. Each per-day task issues 2 concurrent HTTP
+    // calls (categorized query + AFK events), so a cap of 2 here means
+    // at most 4 in-flight HTTP requests, which aw-server-rust handles
+    // reliably. Higher caps (4+) intermittently overwhelm its accept
+    // queue and reqwest reports the connect failures as `is_connect()`
+    // -> AwError::Unreachable, even though the server is up. The retry
+    // below handles the rare residual blip without surfacing it.
+    let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(2));
     let mut handles = Vec::with_capacity(days as usize);
     for n in 1..=days {
-        handles.push(tokio::spawn(async move { fetch_trailing_day(n).await }));
+        let permit = sem.clone().acquire_owned().await.map_err(|e| {
+            QueryError::Join(format!("semaphore closed: {e}"))
+        })?;
+        handles.push(tokio::spawn(async move {
+            let _permit = permit; // released when task ends
+            // One retry on connect failure: the cap above prevents most
+            // overload, but a single Unreachable can still slip through
+            // under load. Refusing to swallow non-connect errors keeps
+            // real outages visible.
+            match fetch_trailing_day(n).await {
+                Err(QueryError::Aw(AwError::Unreachable(_))) => {
+                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                    fetch_trailing_day(n).await
+                }
+                other => other,
+            }
+        }));
     }
     let mut out = Vec::with_capacity(handles.len());
     for h in handles {

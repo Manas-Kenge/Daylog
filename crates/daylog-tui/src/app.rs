@@ -70,15 +70,6 @@ impl RangeChip {
         RangeChip::Last30,
     ];
 
-    pub fn label(self) -> &'static str {
-        match self {
-            RangeChip::Today => "Today",
-            RangeChip::Yesterday => "Yesterday",
-            RangeChip::Last7 => "Last 7",
-            RangeChip::Last30 => "Last 30",
-        }
-    }
-
     pub fn to_range(self) -> TimeRange {
         match self {
             RangeChip::Today => TimeRange::Today,

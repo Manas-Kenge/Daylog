@@ -567,11 +567,6 @@ mod tests {
             rendered.contains("Top domains"),
             "missing 'Top domains' rollup title"
         );
-        // Inert chip-row hint
-        assert!(
-            rendered.contains("trailing 30d"),
-            "missing inert chip-row scope hint"
-        );
         // Fixture data points landed
         assert!(rendered.contains("kitty"), "fixture top app missing");
         assert!(

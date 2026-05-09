@@ -1,11 +1,14 @@
 //! Today tab — desktop-parity layout.
 //!
-//! Five vertical bands inside the body:
+//! Vertical bands inside the body, sized to their content (no panel
+//! stretches to fill the terminal):
 //!   1. KPI strip                            — 1 row, full-width
-//!   2. Today's timeline (24h heatmap)       — 3 rows, full-width
-//!   3. Top apps  +  Top categories          — 9 rows, split 50 / 50
-//!   4. Hourly distribution + Top domains    — Min(8), split 60 / 40
-//!   5. 7-day sparkline                      — 1 row, Wide only
+//!   2. Spacer                               — 1 row, blank
+//!   3. Today's timeline (24h barcode)       — 6 rows, full-width
+//!   4. Top apps  +  Top categories          — 11 rows, split 50 / 50
+//!   5. Hourly distribution + Top domains    — 10 rows, hourly fixed 46 cols
+//!   6. 7-day sparkline                      — 1 row, Wide only
+//!   7. Flex blank                           — soaks up leftover terminal rows
 //!
 //! This mirrors `src/pages/Overview.tsx` minus the WeekHeatmap (which
 //! lives on the Week tab). Every panel has a stable shape so first-load
@@ -37,29 +40,33 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
         _ => 0,
     };
 
-    // Lengths are kept tight for the KPI strip + sparkline (literally 1
-    // row each) and the timeline (4 rows: borders + cells + axis tick
-    // row). Apps+Cats and Hourly+Domains use Min so they can compress on
-    // shorter terminals — without that, fixed Length values let trailing
-    // widgets overflow off-screen on 24-row terminals.
+    // Each panel gets exactly the rows it needs; the trailing Min(0)
+    // soaks up leftover terminal height so panels don't stretch. On
+    // terminals shorter than the body's natural height (~30 inner rows
+    // for the Today tab) the bottom panels clip — accepted trade-off
+    // for the bare-minimum density the user asked for.
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(1),                // KPI strip
-            Constraint::Length(4),                // 24h timeline (borders + cells + axis ticks)
-            Constraint::Min(7),                   // top apps + top categories (compresses)
-            Constraint::Min(8),                   // hourly chart + top domains (compresses)
+            Constraint::Length(1),                // spacer (KPI ↔ timeline)
+            Constraint::Length(6),                // 24h timeline (borders + 3 stripes + axis + border)
+            Constraint::Length(11),               // top apps + categories (8 rows + header + borders)
+            Constraint::Length(10),               // hourly + domains
             Constraint::Length(sparkline_height), // 7-day sparkline (Wide only)
+            Constraint::Min(0),                   // flex blank
         ])
         .split(area);
 
     render_kpi_strip(f, chunks[0], app, layout_mode);
-    render_timeline(f, chunks[1], app);
-    render_apps_categories_row(f, chunks[2], app);
-    render_hourly_domains_row(f, chunks[3], app);
+    // chunks[1] intentionally blank — gap between Active/Longest/Best and timeline.
+    render_timeline(f, chunks[2], app);
+    render_apps_categories_row(f, chunks[3], app);
+    render_hourly_domains_row(f, chunks[4], app);
     if sparkline_height > 0 {
-        render_sparkline(f, chunks[4], app, layout_mode);
+        render_sparkline(f, chunks[5], app, layout_mode);
     }
+    // chunks[6] is the flex blank — left empty intentionally.
 }
 
 fn render_kpi_strip(f: &mut Frame, area: Rect, app: &App, layout_mode: LayoutMode) {
@@ -103,9 +110,13 @@ fn render_apps_categories_row(f: &mut Frame, area: Rect, app: &App) {
 }
 
 fn render_hourly_domains_row(f: &mut Frame, area: Rect, app: &App) {
+    // Fixed-width hourly column keeps its 24 bars dense regardless of
+    // terminal width. With ~46 cols (− 2 borders − ~5 Y-axis-label cols)
+    // each hour gets ~1.6 columns — bars sit close instead of sparse.
+    // Top domains absorbs the rest.
     let cols = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
+        .constraints([Constraint::Length(46), Constraint::Min(20)])
         .split(area);
     render_hourly(f, cols[0], app);
     render_top_domains_panel(f, cols[1], &app.theme, &app.data.top_domains, " Top domains ");

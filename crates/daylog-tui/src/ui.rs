@@ -2,7 +2,6 @@
 
 use std::io::{self, Stdout};
 
-use chrono::Local;
 use crossterm::{
     event::DisableMouseCapture,
     execute,
@@ -19,7 +18,7 @@ use ratatui::{
     Frame, Terminal,
 };
 
-use crate::app::{App, RangeChip, Tab};
+use crate::app::{App, Tab};
 use crate::theme::Theme;
 
 pub(crate) mod kpi_strip;
@@ -60,15 +59,14 @@ pub fn restore_terminal_raw() -> io::Result<()> {
 pub fn render(f: &mut Frame, app: &App) {
     let theme = &app.theme;
 
-    // Outer frame. Title is composed onto the top border itself: just
-    // "daylog" (bold) on the left, live-pulse dot + clock on the right.
-    // The active-tab name lives in the tab strip below — duplicating it
-    // here read as "two topbars" stacked.
+    // Outer frame. Just "daylog" (bold) in the top border; the active-tab
+    // name lives in the tab strip below. Live indicator + clock used to
+    // sit on the right of this border but were removed in the chrome
+    // cleanup pass — offline state surfaces in the footer pill instead.
     let outer = Block::default()
         .borders(Borders::ALL)
         .border_style(theme.border_dim_style())
-        .title(header_title(theme))
-        .title(header_status(theme, app));
+        .title(header_title(theme));
     let inner = outer.inner(f.area());
     f.render_widget(outer, f.area());
 
@@ -76,18 +74,14 @@ pub fn render(f: &mut Frame, app: &App) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(1), // tab strip
-            Constraint::Length(1), // range chips
-            Constraint::Length(1), // breathing-room gap before body
-            Constraint::Min(0),    // body (KPI strip lives inside Today's body now)
+            Constraint::Min(0),    // body
             Constraint::Length(1), // footer
         ])
         .split(inner);
 
     render_tabs(f, chunks[0], app);
-    render_range_chips(f, chunks[1], app);
-    // chunks[2] is intentionally blank — separates chrome from body.
-    render_body(f, chunks[3], app);
-    render_footer(f, chunks[4], app);
+    render_body(f, chunks[1], app);
+    render_footer(f, chunks[2], app);
 
     if app.help_visible {
         render_help(f, app);
@@ -106,90 +100,8 @@ fn header_title(theme: &Theme) -> Line<'static> {
     .left_aligned()
 }
 
-fn header_status(theme: &Theme, app: &App) -> Line<'static> {
-    let (dot, dot_style) = if app.data.any_offline() {
-        ("\u{25cb}", Style::default().fg(theme.error))
-    } else {
-        ("\u{25cf}", Style::default().fg(theme.chart_3))
-    };
-    let clock = Local::now().format("%-I:%M %p").to_string();
-    Line::from(vec![
-        Span::raw(" "),
-        Span::styled(dot, dot_style),
-        Span::styled(" live  ", Style::default().fg(theme.dim)),
-        Span::styled(clock, Style::default().fg(theme.dim)),
-        Span::raw(" "),
-    ])
-    .right_aligned()
-}
-
-fn render_range_chips(f: &mut Frame, area: Rect, app: &App) {
-    let theme = &app.theme;
-
-    // Month is a scope-fixed view (year heatmap + trailing-30 rollup).
-    // The chips don't drive any Month widgets, so render the row dimmed
-    // and append a trailing scope hint instead of letting brackets
-    // suggest the active chip is steering this tab.
-    let inert = app.tab == Tab::Month;
-
-    let mut spans: Vec<Span> = Vec::new();
-    for (i, chip) in RangeChip::ALL.iter().enumerate() {
-        // Leading space so the first chip doesn't sit flush against the
-        // left border. Same visual rhythm as the tab strip's leading pad.
-        if i == 0 {
-            spans.push(Span::raw(" "));
-        }
-        if i > 0 {
-            spans.push(Span::styled("  ", Style::default()));
-        }
-        // Range chips use a different selection idiom from the tab strip
-        // so the two rows can't be misread as duplicate selectors:
-        //   * Tabs:        REVERSED + BOLD + ember
-        //   * Range chips: brackets [Today], BOLD + theme.fg (no ember)
-        // Brackets are the ONLY active marker — there's no colour reuse
-        // with the ember-accented tab strip above.
-        if *chip == app.range_chip && !inert {
-            spans.push(Span::styled(
-                format!("[{}]", chip.label()),
-                Style::default().fg(theme.fg).add_modifier(Modifier::BOLD),
-            ));
-        } else {
-            spans.push(Span::styled(
-                format!(" {} ", chip.label()),
-                Style::default().fg(theme.dim),
-            ));
-        }
-    }
-    if inert {
-        spans.push(Span::styled(
-            "   trailing 30d · year overview",
-            Style::default().fg(theme.dim),
-        ));
-    }
-    let p = Paragraph::new(Line::from(spans)).alignment(Alignment::Left);
-    f.render_widget(p, area);
-}
-
 fn render_tabs(f: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
-
-    // Right-side keymap hint only appears when there's room for tabs +
-    // hint. Below 60 cols we drop the hint so the tab labels don't get
-    // clipped (the screenshot showed "Today | Week t … Month" — that
-    // ellipsis was a clipped tab title).
-    let show_hint = area.width >= 60;
-    let cols = if show_hint {
-        Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Min(20), Constraint::Length(20)])
-            .split(area)
-    } else {
-        Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(100)])
-            .split(area)
-    };
-
     let titles: Vec<Line> = Tab::ALL
         .iter()
         .map(|t| Line::from(format!(" {} ", t.label())))
@@ -212,19 +124,7 @@ fn render_tabs(f: &mut Frame, area: Rect, app: &App) {
                 .add_modifier(Modifier::REVERSED | Modifier::BOLD),
         )
         .divider(divider);
-    f.render_widget(tabs, cols[0]);
-
-    if show_hint {
-        let hint = Paragraph::new(Line::from(vec![
-            Span::styled("1 2 3 4", Style::default().fg(theme.dim)),
-            Span::styled(" jump ", Style::default().fg(theme.dim)),
-            Span::styled("\u{00b7}", Style::default().fg(theme.border_dim)),
-            Span::styled(" ?", Style::default().fg(theme.dim)),
-            Span::raw(" "),
-        ]))
-        .alignment(Alignment::Right);
-        f.render_widget(hint, cols[1]);
-    }
+    f.render_widget(tabs, area);
 }
 
 fn render_body(f: &mut Frame, area: Rect, app: &App) {
