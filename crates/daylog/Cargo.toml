@@ -5,12 +5,17 @@ edition = "2021"
 description = "Terminal screen time and activity tracker for Linux"
 license = "MIT"
 
+[[bin]]
+name = "daylog"
+path = "src/main.rs"
+
 [dependencies]
 daylog-core = { path = "../daylog-core" }
 ratatui = "0.29"
 crossterm = { version = "0.28", features = ["event-stream"] }
-tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "signal", "time"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "signal", "time", "process"] }
 tokio-stream = "0.1"
 serde_json = { workspace = true }
 chrono = { workspace = true }
 thiserror = { workspace = true }
+dirs = "5"

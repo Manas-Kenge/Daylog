@@ -1,10 +1,8 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use serde::Serialize;
-use tauri::AppHandle;
-
 use daylog_core::aw_client::AwClient;
+
 use crate::tracking::{config_dir, systemd, xdg_autostart, BinDir, InstallError};
 
 #[derive(Debug, thiserror::Error)]
@@ -21,32 +19,24 @@ pub enum LifecycleError {
     Install(#[from] InstallError),
 }
 
-impl serde::Serialize for LifecycleError {
-    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        s.serialize_str(&self.to_string())
-    }
-}
-
 impl From<std::io::Error> for LifecycleError {
     fn from(e: std::io::Error) -> Self {
         LifecycleError::Io(e.to_string())
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "kebab-case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Supervisor {
     Systemd,
     XdgAutostart,
-    /// Daylog is using a pre-existing aw-server we don't manage. Constructed
-    /// by the 5e first-launch wizard when `tracking_detect()` finds AW
-    /// already running on :5600. Not produced by `lifecycle::detect()`.
+    /// daylog is using a pre-existing aw-server we don't manage. Constructed
+    /// by the first-launch wizard when probing :5600 finds AW already
+    /// running. Not produced by `lifecycle::detect()`.
     #[allow(dead_code)]
     External,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "kebab-case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnitState {
     Active,
     Inactive,
@@ -54,7 +44,7 @@ pub enum UnitState {
     Unknown,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone)]
 pub struct TrackerStatus {
     pub supervisor: Supervisor,
     pub server: UnitState,
@@ -74,10 +64,10 @@ pub fn detect() -> Supervisor {
 /// Install + start the tracker. Picks systemd or XDG-autostart based on
 /// `detect()`. Idempotent — re-running on an already-installed system
 /// re-renders templates and restarts services.
-pub async fn install_supervisor(app: &AppHandle, bin_dir: &BinDir) -> Result<(), LifecycleError> {
+pub async fn install_supervisor(bin_dir: &BinDir) -> Result<(), LifecycleError> {
     match detect() {
-        Supervisor::Systemd => systemd::install(app, &bin_dir.path).await,
-        Supervisor::XdgAutostart => xdg_autostart::install(app, &bin_dir.path).await,
+        Supervisor::Systemd => systemd::install(&bin_dir.path).await,
+        Supervisor::XdgAutostart => xdg_autostart::install(&bin_dir.path).await,
         Supervisor::External => Ok(()),
     }
 }
@@ -112,7 +102,7 @@ pub async fn status() -> Result<TrackerStatus, LifecycleError> {
 /// Pause tracking. On systemd: stops the watcher only — server keeps running
 /// so historical queries still work. On XDG-autostart: stops the supervisor
 /// (and therefore both binaries), since selectively pausing a child of a
-/// shell-loop supervisor is fragile. Documented limitation.
+/// shell-loop supervisor is fragile.
 pub async fn pause() -> Result<(), LifecycleError> {
     match detect() {
         Supervisor::Systemd => systemd::stop_watcher().await,
@@ -121,7 +111,7 @@ pub async fn pause() -> Result<(), LifecycleError> {
     }
 }
 
-pub async fn resume(_app: &AppHandle, bin_dir: &BinDir) -> Result<(), LifecycleError> {
+pub async fn resume(bin_dir: &BinDir) -> Result<(), LifecycleError> {
     match detect() {
         Supervisor::Systemd => systemd::start_watcher().await,
         Supervisor::XdgAutostart => xdg_autostart::start(&bin_dir.path).await,
@@ -129,9 +119,8 @@ pub async fn resume(_app: &AppHandle, bin_dir: &BinDir) -> Result<(), LifecycleE
     }
 }
 
-/// Disable + stop everything. Used on the Settings → "Stop background tracking"
-/// toggle. Leaves unit files / autostart entries / binaries in place so a
-/// re-enable is one command. For full removal, see `uninstall()`.
+/// Disable + stop everything. Leaves unit files / autostart entries / binaries
+/// in place so a re-enable is one command. For full removal, see `uninstall()`.
 pub async fn stop() -> Result<(), LifecycleError> {
     match detect() {
         Supervisor::Systemd => systemd::disable_all().await,
@@ -141,31 +130,23 @@ pub async fn stop() -> Result<(), LifecycleError> {
 }
 
 /// Full removal: stop services, delete unit files / autostart entries, delete
-/// the user-extracted binaries dir. Used by `daylog --uninstall-tracking` (the
-/// AppImage user's escape hatch) and the future Settings → "Uninstall tracking"
-/// button. Best-effort — missing files are not errors.
+/// the user-extracted binaries dir. Used by `daylog --uninstall-tracking`.
+/// Best-effort — missing files are not errors.
 ///
 /// We do **not** delete `~/.local/share/activitywatch/` — that's the user's
 /// tracking history, not ours to remove.
 pub async fn uninstall() -> Result<(), LifecycleError> {
-    // 1. Stop and disable everything we can. Errors here are best-effort.
     let _ = stop().await;
 
-    // 2. Remove our unit files / autostart entries. Missing files are fine.
     let cfg = config_dir()?;
     let _ = std::fs::remove_file(cfg.join("systemd").join("user").join(systemd::SERVER_UNIT));
     let _ = std::fs::remove_file(cfg.join("systemd").join("user").join(systemd::WATCHER_UNIT));
     let _ = std::fs::remove_file(cfg.join("autostart").join("daylog-tracker.desktop"));
 
-    // 3. systemd needs a daemon-reload after removing unit files so it forgets them.
-    //    Best-effort; user may not have systemd or the units may already be gone.
     if Path::new("/run/systemd/system").exists() {
         let _ = systemd::daemon_reload().await;
     }
 
-    // 4. Remove the AppImage-extracted binaries dir, if any. System packages
-    //    (.deb / .rpm) own their copies under /usr/lib/<bundle-id>/ and the
-    //    package manager handles cleanup; nothing to do for those.
     if let Some(dir) = user_bin_dir() {
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -173,14 +154,8 @@ pub async fn uninstall() -> Result<(), LifecycleError> {
     Ok(())
 }
 
-/// `~/.local/share/daylog/bin/` (or under `$XDG_DATA_HOME`). Mirrors the path
-/// `install::place_binaries` uses on the AppImage carrier. Returns `None` if
-/// neither `XDG_DATA_HOME` nor `HOME` is set.
 fn user_bin_dir() -> Option<PathBuf> {
-    std::env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local").join("share")))
-        .map(|d| d.join("daylog").join("bin"))
+    dirs::data_dir().map(|d| d.join("daylog").join("bin"))
 }
 
 /// Poll `127.0.0.1:5600/api/0/info` until it answers, or `timeout_secs` elapses.

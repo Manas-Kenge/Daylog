@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Fetch pinned upstream binaries and place them in src-tauri/binaries/
-# under Tauri's externalBin target-triple naming convention.
+# Fetch pinned upstream binaries and place them in crates/daylog/binaries/
+# (and the GNOME extension zip in crates/daylog/extensions/) so daylog can
+# embed them via include_bytes! at compile time.
 #
 # Deps: curl, unzip, sha256sum, awk. No dpkg-deb, no jq.
 # Idempotent: re-running with a satisfied lockfile is a no-op.
@@ -30,14 +31,14 @@ resolve() {
       ARCHIVE_URL="https://github.com/ActivityWatch/activitywatch/releases/download/${version}/activitywatch-${version}-linux-${arch}.zip"
       ARCHIVE_NAME="activitywatch-${version}-linux-${arch}.zip"
       EXTRACT_PATH="activitywatch/aw-server-rust/aw-server-rust"
-      OUT_PATH="$REPO_ROOT/src-tauri/binaries/aw-server-rust"
+      OUT_PATH="$REPO_ROOT/crates/daylog/binaries/aw-server-rust"
       OUT_MODE="0755"
       ;;
     aw-awatcher)
       ARCHIVE_URL="https://github.com/2e3s/awatcher/releases/download/${version}/aw-awatcher.zip"
       ARCHIVE_NAME="aw-awatcher-${version}.zip"
       EXTRACT_PATH="aw-awatcher"
-      OUT_PATH="$REPO_ROOT/src-tauri/binaries/aw-awatcher"
+      OUT_PATH="$REPO_ROOT/crates/daylog/binaries/aw-awatcher"
       OUT_MODE="0755"
       ;;
     focused-window-dbus@flexagoon.com)
@@ -45,7 +46,7 @@ resolve() {
       ARCHIVE_URL="https://extensions.gnome.org/download-extension/focused-window-dbus@flexagoon.com.shell-extension.zip?version_tag=${version}"
       ARCHIVE_NAME="focused-window-dbus-${version}.zip"
       EXTRACT_PATH=""
-      OUT_PATH="$REPO_ROOT/src-tauri/extensions/focused-window-dbus@flexagoon.com.zip"
+      OUT_PATH="$REPO_ROOT/crates/daylog/extensions/focused-window-dbus@flexagoon.com.zip"
       OUT_MODE="0644"
       ;;
     *) echo "fatal: unknown component $component" >&2; exit 1 ;;
@@ -116,7 +117,7 @@ main() {
     fi
   done
 
-  echo "Daylog binaries + extensions → src-tauri/{binaries,extensions}/"
+  echo "Daylog binaries + extensions → crates/daylog/{binaries,extensions}/"
   while IFS=$'\t' read -r component version target sha; do
     case "$component" in '#'*|'') continue ;; esac
     fetch_one "$component" "$version" "$target" "$sha"

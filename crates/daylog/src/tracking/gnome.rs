@@ -1,14 +1,13 @@
-use serde::Serialize;
-use tauri::path::BaseDirectory;
-use tauri::{AppHandle, Manager};
+use std::io::Write;
+
 use tokio::process::Command;
 
 use crate::tracking::lifecycle::LifecycleError;
 
 const EXT_UUID: &str = "focused-window-dbus@flexagoon.com";
-const EXT_RESOURCE: &str = "extensions/focused-window-dbus@flexagoon.com.zip";
+const EXT_ZIP: &[u8] = include_bytes!("../../extensions/focused-window-dbus@flexagoon.com.zip");
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone)]
 pub struct ExtensionStatus {
     /// True iff this is a GNOME-Wayland session (the only case that needs the
     /// extension). aw-awatcher handles X11, KDE-Wayland, and wlroots-Wayland
@@ -19,7 +18,7 @@ pub struct ExtensionStatus {
     pub installed: bool,
     pub enabled: bool,
     /// Set to true after a successful install/enable on GNOME-Wayland — the
-    /// frontend should prompt for a logout/login since Wayland can't live-reload.
+    /// caller should prompt for a logout/login since Wayland can't live-reload.
     pub needs_relogin: bool,
 }
 
@@ -70,7 +69,7 @@ pub async fn status() -> ExtensionStatus {
 
 /// Install + enable the extension if we're on GNOME-Wayland and the host has
 /// `gnome-extensions`. No-op (returns `applicable: false`) on every other DE.
-pub async fn setup(app: &AppHandle) -> Result<ExtensionStatus, LifecycleError> {
+pub async fn setup() -> Result<ExtensionStatus, LifecycleError> {
     if !is_gnome_wayland() {
         return Ok(ExtensionStatus::not_applicable());
     }
@@ -84,18 +83,22 @@ pub async fn setup(app: &AppHandle) -> Result<ExtensionStatus, LifecycleError> {
         });
     }
 
-    let zip = app
-        .path()
-        .resolve(EXT_RESOURCE, BaseDirectory::Resource)
-        .map_err(|e| LifecycleError::Io(format!("resolve {EXT_RESOURCE}: {e}")))?;
+    // gnome-extensions install needs a path on disk, not bytes — write the
+    // embedded zip to a temp file before passing it.
+    let mut tmp = tempfile()?;
+    tmp.write_all(EXT_ZIP)
+        .map_err(|e| LifecycleError::Io(format!("write extension zip: {e}")))?;
+    tmp.flush()
+        .map_err(|e| LifecycleError::Io(format!("flush extension zip: {e}")))?;
+    let zip_path = tmp.path();
 
     // `gnome-extensions install --force <pack>` is the official path: handles
     // versioning, places under ~/.local/share/gnome-shell/extensions/, and
-    // overwrites cleanly on upgrade. No need to unzip ourselves.
+    // overwrites cleanly on upgrade.
     let out = Command::new("gnome-extensions")
         .arg("install")
         .arg("--force")
-        .arg(&zip)
+        .arg(zip_path)
         .output()
         .await
         .map_err(|e| LifecycleError::Io(format!("exec gnome-extensions: {e}")))?;
@@ -115,7 +118,6 @@ pub async fn setup(app: &AppHandle) -> Result<ExtensionStatus, LifecycleError> {
         .map_err(|e| LifecycleError::Io(format!("exec gnome-extensions: {e}")))?;
     if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
-        // "already enabled" is fine; other errors propagate.
         if !stderr.contains("already") {
             return Err(LifecycleError::Io(format!(
                 "gnome-extensions enable failed: {stderr}"
@@ -130,6 +132,45 @@ pub async fn setup(app: &AppHandle) -> Result<ExtensionStatus, LifecycleError> {
         enabled: ext_enabled(EXT_UUID).await,
         needs_relogin: true,
     })
+}
+
+/// Minimal NamedTempFile substitute so we don't pull in a tempfile crate
+/// just for this one place. Cleans up on drop.
+struct TempFile {
+    path: std::path::PathBuf,
+    file: std::fs::File,
+}
+
+impl TempFile {
+    fn path(&self) -> &std::path::Path {
+        &self.path
+    }
+}
+
+impl Write for TempFile {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.file.write(buf)
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.file.flush()
+    }
+}
+
+impl Drop for TempFile {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+fn tempfile() -> Result<TempFile, LifecycleError> {
+    let dir = std::env::temp_dir();
+    let path = dir.join(format!(
+        "daylog-gnome-ext-{}.zip",
+        std::process::id()
+    ));
+    let file = std::fs::File::create(&path)
+        .map_err(|e| LifecycleError::Io(format!("create temp {}: {e}", path.display())))?;
+    Ok(TempFile { path, file })
 }
 
 async fn ext_present(uuid: &str) -> bool {
@@ -147,11 +188,9 @@ async fn ext_enabled(uuid: &str) -> bool {
         .output()
         .await;
     match out {
-        Ok(o) if o.status.success() => {
-            String::from_utf8_lossy(&o.stdout)
-                .lines()
-                .any(|line| line.trim() == uuid)
-        }
+        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout)
+            .lines()
+            .any(|line| line.trim() == uuid),
         _ => false,
     }
 }

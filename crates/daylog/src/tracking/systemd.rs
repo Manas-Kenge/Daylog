@@ -1,31 +1,20 @@
 use std::path::Path;
 
-use tauri::AppHandle;
 use tokio::process::Command;
 
 use crate::tracking::lifecycle::{LifecycleError, UnitState};
-use crate::tracking::{config_dir, render_template};
+use crate::tracking::{config_dir, render_template, SERVER_TEMPLATE, WATCHER_TEMPLATE};
 
 pub const SERVER_UNIT: &str = "daylog-aw-server.service";
 pub const WATCHER_UNIT: &str = "daylog-awatcher.service";
 
-pub async fn install(app: &AppHandle, bin_dir: &Path) -> Result<(), LifecycleError> {
+pub async fn install(bin_dir: &Path) -> Result<(), LifecycleError> {
     let unit_dir = config_dir()?.join("systemd").join("user");
     std::fs::create_dir_all(&unit_dir)
         .map_err(|e| LifecycleError::Io(format!("mkdir {}: {e}", unit_dir.display())))?;
 
-    render_template(
-        app,
-        "daylog-aw-server.service.tmpl",
-        &unit_dir.join(SERVER_UNIT),
-        bin_dir,
-    )?;
-    render_template(
-        app,
-        "daylog-awatcher.service.tmpl",
-        &unit_dir.join(WATCHER_UNIT),
-        bin_dir,
-    )?;
+    render_template(SERVER_TEMPLATE, &unit_dir.join(SERVER_UNIT), bin_dir)?;
+    render_template(WATCHER_TEMPLATE, &unit_dir.join(WATCHER_UNIT), bin_dir)?;
 
     run("systemctl", &["--user", "daemon-reload"]).await?;
     run(

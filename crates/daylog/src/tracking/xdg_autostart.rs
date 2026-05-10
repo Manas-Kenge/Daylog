@@ -1,29 +1,26 @@
 use std::path::Path;
 
-use tauri::AppHandle;
 use tokio::process::Command;
 
 use crate::tracking::lifecycle::{LifecycleError, UnitState};
-use crate::tracking::{config_dir, render_template};
+use crate::tracking::{config_dir, render_template, AUTOSTART_TEMPLATE, SUPERVISOR_TEMPLATE};
 
 const AUTOSTART_FILE: &str = "daylog-tracker.desktop";
 const SUPERVISOR_FILE: &str = "daylog-supervisor.sh";
 
-pub async fn install(app: &AppHandle, bin_dir: &Path) -> Result<(), LifecycleError> {
+pub async fn install(bin_dir: &Path) -> Result<(), LifecycleError> {
     // 1. Drop the supervisor script into bin_dir, executable.
     let supervisor = bin_dir.join(SUPERVISOR_FILE);
-    render_template(app, "daylog-supervisor.sh.tmpl", &supervisor, bin_dir)?;
+    render_template(SUPERVISOR_TEMPLATE, &supervisor, bin_dir)?;
     chmod_exec(&supervisor)?;
 
     // 2. Drop the autostart .desktop entry so the user picks up tracking
     //    after their next login automatically.
     let autostart_dir = config_dir()?.join("autostart");
-    std::fs::create_dir_all(&autostart_dir).map_err(|e| {
-        LifecycleError::Io(format!("mkdir {}: {e}", autostart_dir.display()))
-    })?;
+    std::fs::create_dir_all(&autostart_dir)
+        .map_err(|e| LifecycleError::Io(format!("mkdir {}: {e}", autostart_dir.display())))?;
     render_template(
-        app,
-        "daylog-tracker.desktop.tmpl",
+        AUTOSTART_TEMPLATE,
         &autostart_dir.join(AUTOSTART_FILE),
         bin_dir,
     )?;
@@ -49,7 +46,7 @@ pub async fn start(bin_dir: &Path) -> Result<(), LifecycleError> {
                 supervisor.display()
             ))
         })?;
-    // Detached: don't await the child. The supervisor outlives this Tauri command.
+    // Detached: don't await the child. The supervisor outlives this call.
     Ok(())
 }
 
@@ -69,8 +66,6 @@ pub async fn uninstall() -> Result<(), LifecycleError> {
     stop().await?;
     let autostart_path = config_dir()?.join("autostart").join(AUTOSTART_FILE);
     let _ = std::fs::remove_file(&autostart_path);
-    // We deliberately leave the supervisor.sh + binaries in bin_dir so a
-    // re-enable is one command. Full cleanup happens on `daylog --uninstall-tracking`.
     Ok(())
 }
 

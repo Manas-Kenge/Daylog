@@ -263,6 +263,7 @@ dependencies = [
  "chrono",
  "crossterm",
  "daylog-core",
+ "dirs",
  "ratatui",
  "serde_json",
  "thiserror 2.0.18",
