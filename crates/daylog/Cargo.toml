@@ -1,16 +1,24 @@
 [package]
-name = "daylog"
+name = "daylog-tui"
 version = "0.1.0"
 edition = "2021"
-description = "Terminal screen time and activity tracker for Linux"
+description = "Terminal screen-time and activity tracker for Linux"
 license = "MIT"
+repository = "https://github.com/Manas-Kenge/Daylog"
+homepage = "https://github.com/Manas-Kenge/Daylog"
+readme = "README.md"
+keywords = ["screen-time", "tui", "time-tracking", "productivity", "terminal"]
+categories = ["command-line-utilities"]
 
+# The crates.io name is `daylog-tui` (the bare `daylog` is taken by an
+# unrelated project). The user-facing binary keeps the short `daylog`
+# name — `cargo install daylog-tui` puts a `daylog` executable on $PATH.
 [[bin]]
 name = "daylog"
 path = "src/main.rs"
 
 [dependencies]
-daylog-core = { path = "../daylog-core" }
+daylog-core = { path = "../daylog-core", version = "0.1.0" }
 ratatui = "0.29"
 crossterm = { version = "0.28", features = ["event-stream"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "signal", "time", "process"] }
@@ -19,3 +27,7 @@ serde_json = { workspace = true }
 chrono = { workspace = true }
 thiserror = { workspace = true }
 dirs = "5"
+reqwest = { workspace = true, features = ["stream"] }
+sha2 = "0.10"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+futures-util = "0.3"

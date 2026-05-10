@@ -2,8 +2,13 @@
 name = "daylog-core"
 version = "0.1.0"
 edition = "2021"
-description = "Shared Daylog data layer: aw-server client, aggregations, categories, time ranges"
+description = "Shared data layer for the daylog screen-time tracker: aw-server client, aggregations, categories, time ranges"
 license = "MIT"
+repository = "https://github.com/Manas-Kenge/Daylog"
+homepage = "https://github.com/Manas-Kenge/Daylog"
+readme = "README.md"
+keywords = ["screen-time", "time-tracking", "productivity"]
+categories = ["api-bindings"]
 
 [dependencies]
 serde = { workspace = true }

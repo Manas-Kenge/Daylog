@@ -113,10 +113,8 @@ async fn install_tracker(
     terminal: &mut Terminal<Backend>,
     theme: &Theme,
 ) -> Result<(), WizardError> {
-    render_progress(terminal, theme, "Extracting tracker binaries…")?;
-    let bin_dir = tokio::task::spawn_blocking(tracking::place_binaries)
-        .await
-        .map_err(|e| WizardError::Io(io::Error::new(io::ErrorKind::Other, e.to_string())))??;
+    render_progress(terminal, theme, "Downloading tracker (~44 MB)…")?;
+    let bin_dir = tracking::place_binaries().await?;
 
     render_progress(terminal, theme, "Installing supervisor…")?;
     tracking::install_supervisor(&bin_dir).await?;

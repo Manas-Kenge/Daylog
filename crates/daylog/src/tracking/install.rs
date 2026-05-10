@@ -1,25 +1,20 @@
-//! Place the embedded aw-server-rust and aw-awatcher binaries into the
-//! user's data dir. Idempotent — re-running on an already-installed system
-//! is a no-op when the stamped daylog version matches.
+//! Place the upstream tracker binaries (aw-server-rust + aw-awatcher)
+//! into the user's data dir on first launch.
 //!
-//! The two binaries are pulled in at compile time via `include_bytes!`
-//! and live in `crates/daylog/binaries/`. `scripts/fetch-binaries.sh`
-//! refreshes them from upstream pinned versions in `scripts/binaries.lock`.
+//! Binaries are NOT bundled in the daylog crate — they're fetched from
+//! pinned URLs in `pins.rs`, sha256-verified, cached at
+//! `~/.cache/daylog/binaries/`, and extracted into
+//! `~/.local/share/daylog/bin/`. This keeps the published crate small
+//! enough to fit crates.io's 10 MB tarball limit.
 //!
-//! Bin dir resolution prefers `$XDG_DATA_HOME/daylog/bin/`, falling back
-//! to `~/.local/share/daylog/bin/`. We never write under `/usr/lib` —
-//! daylog is a userspace install, no sudo required.
+//! Idempotent — re-running on an already-installed system with the same
+//! daylog version is a no-op.
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
-const AW_SERVER_RUST: &[u8] = include_bytes!("../../binaries/aw-server-rust");
-const AW_AWATCHER: &[u8] = include_bytes!("../../binaries/aw-awatcher");
-
-const BINARIES: &[(&str, &[u8])] = &[
-    ("aw-server-rust", AW_SERVER_RUST),
-    ("aw-awatcher", AW_AWATCHER),
-];
+use crate::tracking::download::{extract_one_from_zip, fetch_archive};
+use crate::tracking::pins::{Extraction, TRACKER_BINARIES};
 
 const STAMP_FILENAME: &str = ".version";
 
@@ -29,6 +24,12 @@ pub enum InstallError {
     NoHome,
     #[error("io: {0}")]
     Io(String),
+    #[error("network: {0}")]
+    Network(String),
+    #[error("sha256 mismatch for {name}: expected {expected}")]
+    Sha256Mismatch { name: String, expected: String },
+    #[error("zip: {0}")]
+    Zip(String),
 }
 
 impl From<std::io::Error> for InstallError {
@@ -44,7 +45,7 @@ pub struct BinDir {
     pub stamped_version: Option<String>,
 }
 
-/// Inspect the bin-dir state without performing any extraction. Returns
+/// Inspect the bin-dir state without performing any download. Returns
 /// where `{BIN_DIR}` is (or would be) and what version is stamped there,
 /// if anything.
 pub fn resolve_bin_dir() -> Result<BinDir, InstallError> {
@@ -56,11 +57,11 @@ pub fn resolve_bin_dir() -> Result<BinDir, InstallError> {
     })
 }
 
-/// Resolve `{BIN_DIR}` and ensure the embedded binaries are extracted +
-/// executable. Re-extracts when the stamped daylog version differs from
-/// the running one (covers upgrades that ship newer pinned upstream
-/// binaries).
-pub fn place_binaries() -> Result<BinDir, InstallError> {
+/// Resolve `{BIN_DIR}` and ensure all pinned binaries are present +
+/// executable. Downloads any missing/stale archives. Re-extracts when the
+/// stamped daylog version differs from the running one (covers upgrades
+/// that ship newer pinned upstream binaries).
+pub async fn place_binaries() -> Result<BinDir, InstallError> {
     let path = user_bin_dir()?;
     fs::create_dir_all(&path)?;
 
@@ -75,9 +76,18 @@ pub fn place_binaries() -> Result<BinDir, InstallError> {
         });
     }
 
-    for (name, bytes) in BINARIES {
-        let dst = path.join(name);
-        atomic_install(bytes, &dst)?;
+    for pin in TRACKER_BINARIES {
+        let archive = fetch_archive(pin).await?;
+        match &pin.extract {
+            Extraction::OneFromZip { archive_path } => {
+                let dst = path.join(pin.name);
+                extract_one_from_zip(&archive, archive_path, &dst)?;
+            }
+            Extraction::WholeZip => {
+                let dst = path.join(pin.name);
+                fs::copy(&archive, &dst)?;
+            }
+        }
     }
     fs::write(&stamp, want)?;
     Ok(BinDir {
@@ -96,24 +106,8 @@ fn user_bin_dir() -> Result<PathBuf, InstallError> {
         .ok_or(InstallError::NoHome)
 }
 
-fn all_present(dir: &Path) -> bool {
-    BINARIES.iter().all(|(name, _)| dir.join(name).is_file())
-}
-
-#[cfg(unix)]
-fn atomic_install(bytes: &[u8], dst: &Path) -> Result<(), InstallError> {
-    use std::os::unix::fs::PermissionsExt;
-    // Per-PID tmp name so two simultaneous daylog processes don't clobber.
-    let tmp = dst.with_extension(format!("tmp.{}", std::process::id()));
-    fs::write(&tmp, bytes)?;
-    let mut perms = fs::metadata(&tmp)?.permissions();
-    perms.set_mode(0o755);
-    fs::set_permissions(&tmp, perms)?;
-    fs::rename(&tmp, dst)?;
-    Ok(())
-}
-
-#[cfg(not(unix))]
-fn atomic_install(_bytes: &[u8], _dst: &Path) -> Result<(), InstallError> {
-    compile_error!("daylog is Linux-only");
+fn all_present(dir: &std::path::Path) -> bool {
+    TRACKER_BINARIES
+        .iter()
+        .all(|pin| dir.join(pin.name).is_file())
 }

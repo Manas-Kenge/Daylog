@@ -1,11 +1,10 @@
-use std::io::Write;
-
 use tokio::process::Command;
 
+use crate::tracking::download::fetch_archive;
 use crate::tracking::lifecycle::LifecycleError;
+use crate::tracking::pins::GNOME_EXTENSION;
 
 const EXT_UUID: &str = "focused-window-dbus@flexagoon.com";
-const EXT_ZIP: &[u8] = include_bytes!("../../extensions/focused-window-dbus@flexagoon.com.zip");
 
 #[derive(Debug, Clone)]
 pub struct ExtensionStatus {
@@ -83,14 +82,10 @@ pub async fn setup() -> Result<ExtensionStatus, LifecycleError> {
         });
     }
 
-    // gnome-extensions install needs a path on disk, not bytes — write the
-    // embedded zip to a temp file before passing it.
-    let mut tmp = tempfile()?;
-    tmp.write_all(EXT_ZIP)
-        .map_err(|e| LifecycleError::Io(format!("write extension zip: {e}")))?;
-    tmp.flush()
-        .map_err(|e| LifecycleError::Io(format!("flush extension zip: {e}")))?;
-    let zip_path = tmp.path();
+    // Download the extension zip + sha256-verify; cache hits make this a no-op.
+    let zip_path = fetch_archive(&GNOME_EXTENSION)
+        .await
+        .map_err(|e| LifecycleError::Io(format!("fetch GNOME extension: {e}")))?;
 
     // `gnome-extensions install --force <pack>` is the official path: handles
     // versioning, places under ~/.local/share/gnome-shell/extensions/, and
@@ -98,7 +93,7 @@ pub async fn setup() -> Result<ExtensionStatus, LifecycleError> {
     let out = Command::new("gnome-extensions")
         .arg("install")
         .arg("--force")
-        .arg(zip_path)
+        .arg(&zip_path)
         .output()
         .await
         .map_err(|e| LifecycleError::Io(format!("exec gnome-extensions: {e}")))?;
@@ -132,45 +127,6 @@ pub async fn setup() -> Result<ExtensionStatus, LifecycleError> {
         enabled: ext_enabled(EXT_UUID).await,
         needs_relogin: true,
     })
-}
-
-/// Minimal NamedTempFile substitute so we don't pull in a tempfile crate
-/// just for this one place. Cleans up on drop.
-struct TempFile {
-    path: std::path::PathBuf,
-    file: std::fs::File,
-}
-
-impl TempFile {
-    fn path(&self) -> &std::path::Path {
-        &self.path
-    }
-}
-
-impl Write for TempFile {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.file.write(buf)
-    }
-    fn flush(&mut self) -> std::io::Result<()> {
-        self.file.flush()
-    }
-}
-
-impl Drop for TempFile {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.path);
-    }
-}
-
-fn tempfile() -> Result<TempFile, LifecycleError> {
-    let dir = std::env::temp_dir();
-    let path = dir.join(format!(
-        "daylog-gnome-ext-{}.zip",
-        std::process::id()
-    ));
-    let file = std::fs::File::create(&path)
-        .map_err(|e| LifecycleError::Io(format!("create temp {}: {e}", path.display())))?;
-    Ok(TempFile { path, file })
 }
 
 async fn ext_present(uuid: &str) -> bool {

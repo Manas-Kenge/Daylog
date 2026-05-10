@@ -1,18 +1,23 @@
 //! Tracker bootstrap + lifecycle for the daylog TUI.
 //!
-//! On first launch, daylog extracts the embedded aw-server-rust and
-//! aw-awatcher binaries into `~/.local/share/daylog/bin/`, writes either
-//! systemd-user units or an XDG-autostart supervisor (depending on what
-//! the host distro supports), and starts both. On GNOME-Wayland it also
-//! offers to install the upstream `focused-window-dbus` GNOME shell
-//! extension that aw-watcher-window relies on for window titles.
+//! On first launch, daylog downloads pinned upstream binaries
+//! (aw-server-rust + aw-awatcher) into `~/.cache/daylog/binaries/`,
+//! sha256-verifies them, extracts to `~/.local/share/daylog/bin/`, then
+//! writes either systemd-user units or an XDG-autostart supervisor
+//! (depending on what the host distro supports), and starts both. On
+//! GNOME-Wayland it also offers to install the upstream
+//! `focused-window-dbus` shell extension that aw-watcher-window relies
+//! on for window titles.
 //!
-//! No Tauri dependencies. Service templates and binaries are embedded at
-//! compile time via `include_str!` / `include_bytes!`.
+//! Service templates are tiny and embedded at compile time via
+//! `include_str!`. Upstream binaries are NOT bundled in the crate (would
+//! blow past crates.io's 10 MB limit) — they're fetched lazily.
 
+pub mod download;
 pub mod gnome;
 pub mod install;
 pub mod lifecycle;
+pub mod pins;
 pub mod systemd;
 pub mod xdg_autostart;
 
