@@ -4,30 +4,21 @@ on:
   push:
     tags:
       - "v*.*.*"
-  # Allow manual triggering for dry-runs of the smoke matrix on master
-  # without minting a release. The "release" job below skips when the
-  # ref isn't a tag.
+  # Allow manual triggering of the build path without minting a release.
   workflow_dispatch:
 
 jobs:
   # ---------------------------------------------------------------------------
-  # 1. Build — produces .AppImage, .deb, and .rpm on a single Ubuntu host.
-  #    Artifact target glibc is whatever ubuntu-22.04 ships (currently 2.35),
-  #    which gives forward compat to every supported desktop distro below.
+  # Build a stripped-and-tarred Linux x86_64 binary. Cross-platform builds
+  # are out of scope for v0.1 — the wizard's tracker installer is Linux-only.
   # ---------------------------------------------------------------------------
   build:
     runs-on: ubuntu-22.04
-    timeout-minutes: 30
+    timeout-minutes: 20
     outputs:
-      appimage_name: ${{ steps.locate.outputs.appimage_name }}
-      deb_name: ${{ steps.locate.outputs.deb_name }}
-      rpm_name: ${{ steps.locate.outputs.rpm_name }}
+      tarball: ${{ steps.pack.outputs.tarball }}
     steps:
       - uses: actions/checkout@v4
-
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -35,282 +26,100 @@ jobs:
         with:
           workspaces: .
 
-      - name: Cache upstream binaries
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/daylog/binaries
-          key: daylog-binaries-${{ hashFiles('scripts/binaries.lock') }}
+      - name: cargo build (release)
+        run: cargo build --release --locked -p daylog-tui
 
-      - name: Install Tauri Linux build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            libwebkit2gtk-4.1-dev \
-            build-essential curl wget file unzip rpm \
-            libxdo-dev libssl-dev \
-            libayatana-appindicator3-dev \
-            librsvg2-dev patchelf
+      - name: Strip
+        run: strip target/release/daylog
 
-      - run: bun install --frozen-lockfile
-      - run: scripts/fetch-binaries.sh
-      - run: bun run tauri build
+      - name: smoke — daylog --help
+        run: target/release/daylog --help
 
-      - name: Locate produced artifacts
-        id: locate
+      - name: Pack tarball
+        id: pack
         run: |
           set -euo pipefail
-          # Workspace root puts target/ at the repo root; tauri build follows.
-          BUNDLE=target/release/bundle
-          ls -la "$BUNDLE"/appimage/ "$BUNDLE"/deb/ "$BUNDLE"/rpm/ || true
-          APPIMAGE=$(ls "$BUNDLE"/appimage/*.AppImage | head -1)
-          DEB=$(ls "$BUNDLE"/deb/*.deb | head -1)
-          RPM=$(ls "$BUNDLE"/rpm/*.rpm | head -1)
-          echo "appimage_name=$(basename "$APPIMAGE")" >> "$GITHUB_OUTPUT"
-          echo "deb_name=$(basename "$DEB")" >> "$GITHUB_OUTPUT"
-          echo "rpm_name=$(basename "$RPM")" >> "$GITHUB_OUTPUT"
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: appimage
-          path: target/release/bundle/appimage/*.AppImage
-          if-no-files-found: error
-      - uses: actions/upload-artifact@v4
-        with:
-          name: deb
-          path: target/release/bundle/deb/*.deb
-          if-no-files-found: error
-      - uses: actions/upload-artifact@v4
-        with:
-          name: rpm
-          path: target/release/bundle/rpm/*.rpm
-          if-no-files-found: error
-
-  # ---------------------------------------------------------------------------
-  # 2a. Native .deb install + binary smoke test on the Debian/Ubuntu family.
-  #     Covers Mint, Pop!_OS, Zorin, elementary, KDE Neon, etc. by inheritance.
-  # ---------------------------------------------------------------------------
-  smoke-deb:
-    needs: build
-    runs-on: ubuntu-22.04
-    strategy:
-      fail-fast: false
-      matrix:
-        image:
-          - ubuntu:22.04
-          - ubuntu:24.04
-          - debian:12
-    container:
-      image: ${{ matrix.image }}
-    steps:
-      - name: Bootstrap container
-        run: |
-          set -eu
-          export DEBIAN_FRONTEND=noninteractive
-          apt-get update
-          apt-get install -y --no-install-recommends ca-certificates
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: deb
-          path: artifact
-
-      - name: Install Daylog .deb (resolves deps via apt)
-        run: |
-          set -eu
-          export DEBIAN_FRONTEND=noninteractive
-          # `apt install ./pkg.deb` resolves declared dependencies (incl. WebKit)
-          # in one step. The `./` prefix is mandatory — without it apt parses
-          # `artifact/foo.deb` as `release/package` and fails to locate it.
-          apt-get install -y ./artifact/*.deb
-
-      - name: Smoke test — daylog --help
-        run: daylog --help
-
-      - name: Smoke test — daylog --uninstall-tracking (no-op in container)
-        run: daylog --uninstall-tracking
-
-  # ---------------------------------------------------------------------------
-  # 2b. Native .rpm install on the Red Hat / SUSE family.
-  #     Covers Rocky, Alma, RHEL, CentOS Stream, openSUSE Leap by inheritance.
-  # ---------------------------------------------------------------------------
-  smoke-rpm-fedora:
-    needs: build
-    runs-on: ubuntu-22.04
-    container:
-      image: fedora:41
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: rpm
-          path: artifact
-
-      - name: Install Daylog .rpm (resolves deps via dnf)
-        run: dnf install -y artifact/*.rpm
-
-      - run: daylog --help
-      - run: daylog --uninstall-tracking
-
-  smoke-rpm-opensuse:
-    needs: build
-    runs-on: ubuntu-22.04
-    container:
-      image: opensuse/tumbleweed
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: rpm
-          path: artifact
-
-      - name: Install Daylog .rpm
-        run: zypper --non-interactive --no-gpg-checks install artifact/*.rpm
-
-      - run: daylog --help
-      - run: daylog --uninstall-tracking
-
-  # ---------------------------------------------------------------------------
-  # 3. AppImage smoke. Covers Arch-family (Manjaro, EndeavourOS, Omarchy,
-  #    Garuda) plus broad re-confirmation across the deb/rpm bases.
-  #    APPIMAGE_EXTRACT_AND_RUN=1 bypasses fuse (which containers lack).
-  # ---------------------------------------------------------------------------
-  smoke-appimage:
-    needs: build
-    runs-on: ubuntu-22.04
-    strategy:
-      fail-fast: false
-      matrix:
-        image:
-          - ubuntu:24.04
-          - debian:12
-          - fedora:41
-          - archlinux:latest
-          - opensuse/tumbleweed
-    container:
-      image: ${{ matrix.image }}
-    steps:
-      - name: Bootstrap container
-        run: |
-          set -e
-          # Tauri's AppImage bundles webkit/gtk but links against the host's
-          # libX11, libfontconfig, and the rest of the X/GTK runtime. Real
-          # desktop distros ship these by default; minimal CI containers don't.
-          # Installing webkit2gtk pulls the full runtime chain (X11, GTK, Pango,
-          # Cairo, fontconfig) transitively, which mirrors a real desktop.
-          if command -v apt-get >/dev/null; then
-            export DEBIAN_FRONTEND=noninteractive
-            apt-get update
-            apt-get install -y --no-install-recommends \
-              ca-certificates file fontconfig libwebkit2gtk-4.1-0
-          elif command -v dnf >/dev/null; then
-            dnf install -y file fontconfig webkit2gtk4.1
-          elif command -v pacman >/dev/null; then
-            pacman -Sy --noconfirm file fontconfig webkit2gtk-4.1
-          elif command -v zypper >/dev/null; then
-            zypper --non-interactive install file fontconfig libwebkit2gtk-4_1-0
+          VERSION="${GITHUB_REF_NAME#v}"
+          if [ "$GITHUB_REF_TYPE" != "tag" ]; then
+            VERSION="dev-$(git rev-parse --short HEAD)"
           fi
+          NAME="daylog-${VERSION}-x86_64-unknown-linux-gnu"
+          mkdir -p dist
+          tar -czf "dist/${NAME}.tar.gz" -C target/release daylog
+          echo "tarball=${NAME}.tar.gz" >> "$GITHUB_OUTPUT"
+          ls -lh dist/
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
-          name: appimage
-          path: artifact
-
-      - name: Smoke test — daylog --help via AppImage
-        env:
-          APPIMAGE_EXTRACT_AND_RUN: "1"
-        run: |
-          set -eu
-          chmod +x artifact/*.AppImage
-          ./artifact/*.AppImage --help
+          name: tarball
+          path: dist/*.tar.gz
+          if-no-files-found: error
 
   # ---------------------------------------------------------------------------
-  # 4. Non-systemd informational test. Confirms AppImage launches on Void
-  #    (XDG-autostart fallback path). Marked continue-on-error: a transient
-  #    Void mirror outage shouldn't block a release.
+  # Publish to crates.io. Triggers on tag push only. daylog-core publishes
+  # first; daylog-tui is gated on it. Both are one-way doors — yank ≠ delete.
   # ---------------------------------------------------------------------------
-  smoke-appimage-void:
-    needs: build
-    runs-on: ubuntu-22.04
-    continue-on-error: true
-    container:
-      image: ghcr.io/void-linux/void-glibc-full:latest
-    steps:
-      - name: Bootstrap
-        # bash: AppImage's AppRun shebang needs it; void-glibc-full doesn't
-        # ship bash by default. webkit2gtk: same X/GTK runtime story as the
-        # smoke-appimage matrix above.
-        run: xbps-install -Sy bash file webkit2gtk
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: appimage
-          path: artifact
-
-      - name: Smoke test on non-systemd
-        env:
-          APPIMAGE_EXTRACT_AND_RUN: "1"
-        run: |
-          chmod +x artifact/*.AppImage
-          ./artifact/*.AppImage --help
-
-  # ---------------------------------------------------------------------------
-  # 5. musl informational test. Expected to fail (glibc-built AppImage on musl
-  #    libc). If it ever passes, our README's "Alpine needs distrobox" note is
-  #    out of date — we want to know.
-  # ---------------------------------------------------------------------------
-  smoke-appimage-alpine:
-    needs: build
-    runs-on: ubuntu-22.04
-    continue-on-error: true
-    container:
-      image: alpine:latest
-    steps:
-      - name: Bootstrap
-        run: apk add --no-cache file
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: appimage
-          path: artifact
-
-      - name: Expected fail on musl
-        env:
-          APPIMAGE_EXTRACT_AND_RUN: "1"
-        run: |
-          chmod +x artifact/*.AppImage
-          # We expect this to fail with glibc errors. If it succeeds, README is wrong.
-          if ./artifact/*.AppImage --help; then
-            echo "::warning::AppImage unexpectedly worked on Alpine. README's 'Alpine needs distrobox' note may be obsolete."
-          else
-            echo "Expected failure on musl libc — README guidance holds."
-            exit 0
-          fi
-
-  # ---------------------------------------------------------------------------
-  # 6. Cut the GitHub Release (only on tag pushes; manual workflow runs skip).
-  # ---------------------------------------------------------------------------
-  release:
-    needs:
-      - build
-      - smoke-deb
-      - smoke-rpm-fedora
-      - smoke-rpm-opensuse
-      - smoke-appimage
+  publish:
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-22.04
-    permissions:
-      contents: write
+    needs: build
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: .
+
+      - name: cargo publish daylog-core
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish -p daylog-core --locked
+
+      # Index propagation takes 30–90s. Poll until daylog-core resolves
+      # before publishing daylog-tui (which depends on it).
+      - name: Wait for daylog-core on the index
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 30); do
+            if cargo search daylog-core | grep -q '^daylog-core ='; then
+              echo "daylog-core visible on the index"
+              exit 0
+            fi
+            echo "  waiting (attempt $i/30)…"
+            sleep 5
+          done
+          echo "daylog-core never appeared on the index" >&2
+          exit 1
+
+      - name: cargo publish daylog-tui
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish -p daylog-tui --locked
+
+  # ---------------------------------------------------------------------------
+  # Cut the GitHub Release. Tag push only. Attaches the tarball produced by
+  # `build`. Gated on `publish` so a crates.io failure pulls the GitHub
+  # Release with it (no half-published versions).
+  # ---------------------------------------------------------------------------
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-22.04
+    needs: [build, publish]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
       - uses: actions/download-artifact@v4
         with:
-          path: artifacts
-          merge-multiple: true
+          name: tarball
+          path: dist/
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            artifacts/*.AppImage
-            artifacts/*.deb
-            artifacts/*.rpm
-          generate_release_notes: true
+          files: dist/*.tar.gz
           fail_on_unmatched_files: true
+          generate_release_notes: true

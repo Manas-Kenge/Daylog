@@ -13,13 +13,9 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-22.04
-    timeout-minutes: 25
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -27,42 +23,17 @@ jobs:
         with:
           workspaces: .
 
-      - name: Cache upstream binaries
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/daylog/binaries
-          key: daylog-binaries-${{ hashFiles('scripts/binaries.lock') }}
-
-      - name: Install Tauri Linux build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            libwebkit2gtk-4.1-dev \
-            build-essential curl wget file unzip \
-            libxdo-dev libssl-dev \
-            libayatana-appindicator3-dev \
-            librsvg2-dev patchelf
-
-      - name: Install npm deps
-        run: bun install --frozen-lockfile
-
-      - name: Fetch upstream binaries (aw-server-rust + aw-awatcher + GNOME ext)
-        run: scripts/fetch-binaries.sh
-
-      - name: Rust — cargo check
+      - name: cargo check
         run: cargo check --workspace --all-targets
 
-      - name: Rust — cargo test
+      - name: cargo test
         run: cargo test --workspace
 
-      - name: Frontend — type check
-        run: bunx tsc --noEmit
+      - name: cargo build (release)
+        run: cargo build --release -p daylog-tui
 
-      - name: Frontend — vite build
-        run: bun run build
+      - name: smoke — daylog --help
+        run: target/release/daylog --help
 
-      # Full Tauri build (release): catches packaging/bundling regressions
-      # that earlier steps don't see. Slow (~6–8 min) but worth it on PR
-      # since 5g's release path depends on this working.
-      - name: Tauri build (release)
-        run: bun run tauri build
+      - name: smoke — daylog --version
+        run: target/release/daylog --version
