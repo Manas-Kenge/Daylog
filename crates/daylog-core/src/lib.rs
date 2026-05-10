@@ -1,12 +1,13 @@
 //! Daylog's shared data layer.
 //!
-//! Pure Rust — no Tauri, no Wry, no WebKit. Both the Tauri desktop app
-//! (`src-tauri`) and future TUI binary (`crates/daylog-tui`) depend on
-//! this crate. Single source of truth for talking to aw-server,
-//! aggregating events, resolving categories, and modeling time ranges.
+//! Pure Rust — no Tauri, no Wry, no WebKit. The daylog TUI
+//! (`crates/daylog`) depends on this crate as the single source of truth
+//! for talking to aw-server, aggregating events, resolving categories,
+//! and modeling time ranges.
 //!
-//! Anything Tauri-coupled (lifecycle, tracking install, freedesktop
-//! icons, app handle resolution) stays in `src-tauri`.
+//! Anything machine-state-coupled (tracker install, systemd / XDG
+//! autostart, GNOME extension, freedesktop icons) stays in the daylog
+//! crate, not here.
 
 pub mod aggregate;
 pub mod aw_client;

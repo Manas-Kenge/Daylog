@@ -1,11 +1,9 @@
 //! Single source for every color and style modifier in the TUI; no widget
-//! reaches into `ratatui::style::Color::*` directly. The desktop's `:root`
-//! CSS variables (`src/index.css`) and the Activity Spectrum gradient flow
-//! through here so the two surfaces stay in lockstep.
+//! reaches into `ratatui::style::Color::*` directly. RGB values are
+//! precomputed offline from OKLCH; do not recompute at runtime. 256-color
+//! indices were picked by visual inspection.
 //!
-//! See `crates/daylog-tui/DESIGN.md` for the spec these tables are copied
-//! from. RGB values are precomputed offline from OKLCH; do not recompute
-//! at runtime. 256-color indices were picked by visual inspection.
+//! See `crates/daylog/DESIGN.md` for the spec these tables are copied from.
 
 use ratatui::style::{Color, Modifier, Style};
 

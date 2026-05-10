@@ -257,6 +257,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "daylog"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "crossterm",
+ "daylog-core",
+ "ratatui",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-stream",
+]
+
+[[package]]
 name = "daylog-core"
 version = "0.1.0"
 dependencies = [
@@ -268,20 +282,6 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.18",
  "tokio",
-]
-
-[[package]]
-name = "daylog-tui"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "crossterm",
- "daylog-core",
- "ratatui",
- "serde_json",
- "thiserror 2.0.18",
- "tokio",
- "tokio-stream",
 ]
 
 [[package]]

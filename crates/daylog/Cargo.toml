@@ -1,8 +1,8 @@
 [package]
-name = "daylog-tui"
+name = "daylog"
 version = "0.1.0"
 edition = "2021"
-description = "Daylog terminal UI — a ratatui surface that mirrors the desktop dashboard"
+description = "Terminal screen time and activity tracker for Linux"
 license = "MIT"
 
 [dependencies]

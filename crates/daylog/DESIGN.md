@@ -16,7 +16,7 @@ The TUI translates each of these to terminal capabilities. Where the desktop use
 
 ## Color tokens (D3)
 
-A new module `crates/daylog-tui/src/theme.rs` is the single source for every color, modifier, and spacing constant in the TUI. **No widget reaches into `ratatui::style::Color::*` directly** — that's the equivalent of inline styles. Every widget pulls from `theme::Theme`.
+A new module `crates/daylog/src/theme.rs` is the single source for every color, modifier, and spacing constant in the TUI. **No widget reaches into `ratatui::style::Color::*` directly** — that's the equivalent of inline styles. Every widget pulls from `theme::Theme`.
 
 `Theme::detect()` reads `$COLORTERM` and `$TERM` at startup and picks one of three palettes:
 
@@ -156,7 +156,7 @@ This refactor touches `src-tauri/src/lib.rs`, `src/lib/aw.ts`, and one or two de
 
 ## Interaction states (Pass 2 deferrals)
 
-Already implemented per `crates/daylog-tui/src/ui/overview.rs`: per-panel loading skeleton, empty state, fetch-error message on TopApps, global offline indicator after 3 failures. Two gaps deferred to TODOS:
+Already implemented per `crates/daylog/src/ui/overview.rs`: per-panel loading skeleton, empty state, fetch-error message on TopApps, global offline indicator after 3 failures. Two gaps deferred to TODOS:
 
 - TopCategories and Hourly should distinguish "fetch failed" from "no data yet" the way TopApps does.
 - Fresh-install empty state: replace `no app events yet` with `ActivityWatch is collecting data — check back in a few minutes` when total events across all panels is zero **and** uptime since first launch is < 5 minutes.
@@ -185,6 +185,6 @@ The existing `overview_renders_top_apps_categories_and_hourly` snapshot test in 
 - Desktop tokens: `src/index.css` (`:root` and `.dark`).
 - Desktop Overview hierarchy (the basis for the TUI's Today tab): `src/pages/Overview.tsx`.
 - Desktop screenshot: `public/demo.png` (also pinned in README).
-- TUI implementation: `crates/daylog-tui/src/{ui.rs, ui/overview.rs, app.rs}`.
+- TUI implementation: `crates/daylog/src/{ui.rs, ui/overview.rs, app.rs}`.
 - Shared aggregations: `crates/daylog-core/src/{aggregate.rs, kpi.rs (new)}`.
     
