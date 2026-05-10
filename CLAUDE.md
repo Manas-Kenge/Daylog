@@ -4,97 +4,86 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-Daylog is a Linux-only Tauri 2 desktop app — a single-window dashboard for [ActivityWatch](https://activitywatch.net). The window is a viewer; the tracker is a separate background daemon Daylog installs on first launch. See `PLAN.md` for the long-form engineering plan and the "Phase N" labels referenced in commit messages.
+Daylog is a Linux-only terminal screen-time tracker. Single binary, single purpose: a ratatui dashboard that shows how you spent your time on your computer, broken down by app, category, hour-of-day, and web domain. The tracker (aw-server-rust + aw-awatcher) is downloaded and supervised by daylog itself on first launch — there is no separate desktop app, no GUI, and no system packages.
+
+The previous Tauri desktop app is preserved on the `archive/desktop` branch and no longer ships from `master`. See `PLAN.md`'s 2026-05-10 addendum for the pivot rationale.
 
 ## Tooling
 
-`bun` is the package manager (lockfile is `bun.lock`, and `tauri.conf.json` shells out to `bun run …`). Don't introduce npm/pnpm/yarn.
+`cargo` is the only build tool. There is no `bun`, `node`, or `npm` here anymore. Don't reintroduce them.
 
 ## Common commands
 
 | Task | Command |
 |---|---|
-| Install JS deps | `bun install --frozen-lockfile` |
-| Fetch bundled upstream binaries (required before any `tauri dev`/`build`) | `scripts/fetch-binaries.sh` |
-| Run desktop app (frontend + Rust) | `bun run tauri dev` |
-| Frontend-only dev server (rarely useful alone — no Tauri IPC) | `bun run dev` |
-| Frontend build | `bun run build` (= `tsc && vite build`) |
-| Frontend type-check only | `bunx tsc --noEmit` |
-| Rust check | `cd src-tauri && cargo check --all-targets` |
-| Rust tests | `cd src-tauri && cargo test` |
-| Single Rust test | `cd src-tauri && cargo test <name>` |
-| Full release bundle (.AppImage, .deb, .rpm) | `bun run tauri build` |
-| Bump a pinned upstream binary | `scripts/bump-binary.sh <component> <version>` |
+| `cargo check` workspace | `cargo check --workspace` |
+| Run tests | `cargo test --workspace` |
+| Run a single test | `cargo test -p daylog-tui <name>` |
+| Build the binary | `cargo build --release -p daylog-tui` |
+| Run from source | `cargo run -p daylog-tui` |
+| Install locally for dogfood | `cargo install --path crates/daylog --locked` |
+| Dry-run a publish (data-layer crate) | `cargo publish --dry-run -p daylog-core` |
+| Dry-run a publish (TUI crate) | `cargo publish --dry-run -p daylog-tui` |
 
-There is no JS test runner and no JS linter wired in — CI runs `tsc --noEmit`, `cargo check`, `cargo test`, `vite build`, then a full `tauri build`. Match those locally before claiming a change is green.
+CI runs `cargo check --workspace`, `cargo test --workspace`, `cargo build --release -p daylog-tui`, and a `daylog --help / --version` smoke. Match those locally before claiming a change is green.
 
 ## Architecture
 
-### Three separations to internalise
+### Two crates, one binary
 
-1. **Window vs tracker.** The Tauri app is a viewer. The tracker (`daylog-aw-server.service` + `daylog-awatcher.service`, or the XDG-autostart supervisor on non-systemd distros) runs at the user-systemd level and survives window close. Code that touches services lives in `src-tauri/src/tracking/` — never reach into systemd from anywhere else.
-2. **Carrier vs runtime path.** AppImage / `.deb` / `.rpm` are carriers. Unit files always reference a stable `{BIN_DIR}` resolved at runtime: `~/.local/share/daylog/bin/` (AppImage; Daylog extracts on first launch and on version drift) or `/usr/lib/daylog/bin/` (deb/rpm; placed by the package manager). Templates in `src-tauri/services/*.tmpl` use `{BIN_DIR}` as a placeholder; substitution happens in `tracking::render_template`.
-3. **Our stack vs existing AW.** First-launch probe (`tracking_detect`) hits `:5600`. If something answers, we treat it as `Supervisor::External` and never install our services. Don't add code paths that race against an existing aw-server.
+- **`crates/daylog-core`** — pure-Rust data layer. aw-server HTTP client, query layer, aggregations, KPI math, category rules + matcher, `TimeRange` enum. No Tauri, no Wry, no frontend dependency. Published to crates.io as `daylog-core`.
+- **`crates/daylog`** — the ratatui TUI plus the first-launch tracker installer. The package name on crates.io is **`daylog-tui`** (the bare `daylog` is taken by an unrelated project), but the executable it produces is named `daylog`. Both invariants live in `crates/daylog/Cargo.toml`'s `[package] name` and `[[bin]] name`.
 
-### Frontend → Rust → aw-server
+The two crates are co-versioned and bumped together. `crates/daylog/Cargo.toml`'s path dep on `daylog-core` carries an explicit `version = "X.Y.Z"` matching `daylog-core`'s package version — without it, `cargo publish` rejects the upload.
 
-The WebView never talks to `localhost:5600` directly. All HTTP goes through Rust. The contract:
+### Tracker bootstrap
 
-- Rust commands are registered in `src-tauri/src/lib.rs` (the big `invoke_handler!` list). Names are snake_case.
-- Typed JS wrappers live in `src/lib/aw.ts` (data) and `src/lib/tracking.ts` (lifecycle + wizard). Use these — don't call `invoke()` directly from components.
-- Tauri 2 converts JS camelCase keys → Rust snake_case params automatically. Wrappers pass camelCase; Rust signatures are snake_case. Don't fight this.
-- Time ranges flow as `TimeRange` (see `src-tauri/src/time.rs` and `src/lib/aw-types.ts`); they serialize identically on both sides.
+Lives in `crates/daylog/src/tracking/`. On first launch the wizard probes `:5600`. If aw-server is up, it skips. Otherwise it downloads the pinned upstream binaries (aw-server-rust + aw-awatcher) into `~/.cache/daylog/binaries/`, sha256-verifies, extracts to `~/.local/share/daylog/bin/`, then writes either systemd-user units or an XDG-autostart supervisor depending on what `lifecycle::detect()` finds, and starts both. On GNOME-Wayland it also offers to install the upstream `focused-window-dbus` shell extension.
 
-Adding a new aw query usually means: write Rust command in `lib.rs` → register in `invoke_handler!` → add a typed wrapper in `src/lib/aw.ts` → add a `useQuery` hook in `src/hooks/useAw.ts` keyed by `rangeKey(range)`.
+Why download instead of bundle? Embedding the ~44 MB of upstream binaries via `include_bytes!` blew past crates.io's 10 MB tarball limit. The download path keeps the published crate small.
 
-### Frontend layout
+Module breakdown:
 
-- `src/main.tsx` mounts `<RangeProvider>` (active time range, palette-driven) and `<PageProvider>` (active page + filter). There is **no router** for v0.1 — `PageContext.push(pageId, filter?)` is the navigation primitive, and Escape calls `back()` to return to Overview.
-- Pages in `src/pages/`. The command palette in `src/components/palette/` is the primary navigation surface; the topbar is secondary.
-- shadcn-style components in `src/components/ui/`. `components.json` pins `style: radix-mira`, base color `neutral`, icon library `hugeicons`. The MCP server registered in `.mcp.json` is shadcn — use it when adding shadcn components.
-- TanStack Query is the data layer. Per-query refetch intervals live in `src/hooks/useAw.ts`; widgets do not poll on their own.
-- Dark theme is force-locked in `App.tsx`. Don't add a theme toggle without first checking `PLAN.md` (it's a deliberate later concern).
+- `tracking/pins.rs` — pinned URLs + sha256 sums for upstream artifacts. Hand-maintained; bump the version + sha together.
+- `tracking/download.rs` — reqwest streaming download, sha256 verify, zip extraction. Cache layout: `~/.cache/daylog/binaries/<sha-prefix>-<name>.zip`.
+- `tracking/install.rs` — `place_binaries()` (async). Idempotent — re-extracts only when the daylog version stamp changes.
+- `tracking/lifecycle.rs` — supervisor abstraction (`Systemd` | `XdgAutostart` | `External`). `install_supervisor`, `status`, `pause`, `resume`, `stop`, `uninstall`, `wait_until_live`. `pause` semantics differ per supervisor (documented in source).
+- `tracking/systemd.rs`, `tracking/xdg_autostart.rs` — concrete supervisors. `detect()` picks one based on `/run/systemd/system`.
+- `tracking/gnome.rs` — install + enable the `focused-window-dbus@flexagoon.com` extension. `applicable: false` outside GNOME-Wayland.
+- `tracking/mod.rs` — `config_dir()` (via the `dirs` crate, no Tauri), service templates embedded via `include_str!`, `render_template()` does the `{BIN_DIR}` substitution.
 
-### Rust crate layout (`src-tauri/src/`)
+Service templates live at `crates/daylog/services/*.tmpl` and are compiled into the binary via `include_str!` in `tracking/mod.rs`. They're tiny so embedding is fine.
 
-- `lib.rs` — Tauri commands + handler registration. The single source of truth for the IPC surface.
-- `aw_client.rs` — HTTP client + `queries` module (string AQL queries the frontend never sees).
-- `aggregate.rs` — server-side reducers (top apps, hourly buckets, AFK summary, categorized events).
-- `categories.rs` — user-editable category rules, persisted to `<app_config_dir>/categories.json`. `Matcher::new` validates regexes; commands that mutate config must call it before saving.
-- `time.rs` — `TimeRange` enum used across the IPC boundary.
-- `tracking/` — everything that touches the user's machine state:
-  - `install.rs` — placing binaries into `{BIN_DIR}` and version-stamping.
-  - `lifecycle.rs` — supervisor abstraction (`Systemd` | `XdgAutostart` | `External`); `install_supervisor`, `status`, `pause`, `resume`, `stop`, `uninstall`. `pause` semantics differ per supervisor (documented in the source).
-  - `systemd.rs`, `xdg_autostart.rs` — concrete supervisors. `detect()` picks one based on `/run/systemd/system`.
-  - `gnome.rs` — install + enable the `focused-window-dbus@flexagoon.com` shell extension. Only relevant on GNOME-Wayland; `applicable: false` everywhere else.
-- `main.rs` — handles CLI flags (`--help`, `--uninstall-tracking`) before delegating to `daylog_lib::run()`. The uninstall path uses `daylog_lib::uninstall_blocking` so AppImage users have an escape hatch without a running app.
+### TUI
+
+`crates/daylog/src/`:
+
+- `lib.rs` — CLI entrypoint. Parses flags (`--setup`, `--uninstall-tracking`, `--help`, `--version`); without flags, runs the wizard (if needed) then drops into the dashboard.
+- `main.rs` — 4-line bin entry calling `daylog_tui::run`.
+- `wizard.rs` — first-launch ratatui flow. One Y/N/Q prompt, then progress lines while the install runs.
+- `app.rs` — application state + main event loop (tab cycle, range chip, refetch dispatch).
+- `data.rs` — `Cached<T>` wrappers + `dispatch_refetches` for live polling.
+- `theme.rs` — single source for every color and style modifier. No widget reaches into `ratatui::style::Color::*` directly.
+- `ui.rs` + `ui/{overview, week, month, timeline, sparkline, stacked_bars, kpi_strip}.rs` — render tree. Each tab gets its own module.
 
 ### First launch
 
-Wizard completion is gated by an empty marker file at `<app_config_dir>/.wizard-complete` (`WIZARD_MARKER` in `lib.rs`). `useFirstLaunch` reads it; `Wizard.tsx` writes it via `wizard_complete_set`. Resetting first launch = delete that file.
-
-## Bundled binaries
-
-`src-tauri/binaries/aw-server-rust`, `src-tauri/binaries/aw-awatcher`, and `src-tauri/extensions/focused-window-dbus@flexagoon.com.zip` are **not committed manually** — they're produced by `scripts/fetch-binaries.sh` from the pins in `scripts/binaries.lock` (tab-separated: `component	version	target	sha256`). Both CI and local builds run this script.
-
-To upgrade an upstream component, run `scripts/bump-binary.sh <component> <version>` — it downloads, hashes, and rewrites the lockfile. Never edit `binaries.lock` by hand. Renovate manages `aw-server-rust` and `aw-awatcher`; the GNOME extension version is a `pk` download tag and must be bumped manually.
-
-`v0.1` is x86_64-only — neither upstream publishes aarch64 artifacts.
-
-`aw-server-rust` and `aw-awatcher` are MPL-2.0; full attribution lives in [`THIRD-PARTY-NOTICES.md`](./THIRD-PARTY-NOTICES.md). When bumping a pinned binary, update the pinned-version line in that file alongside `binaries.lock`.
+The wizard-complete marker is `~/.config/daylog/.wizard-complete` (constant in `wizard.rs`). The wizard writes it after the user confirms install OR explicit decline. To re-prompt: delete the marker, or run `daylog --setup`.
 
 ## CI / release
 
-- `.github/workflows/ci.yml` runs on every push/PR: cargo check + test, `tsc --noEmit`, vite build, and a full `tauri build` (slow but catches packaging regressions). All on `ubuntu-22.04` so the artifact glibc baseline stays at 2.35.
-- `.github/workflows/release.yml` triggers on `v*.*.*` tags. It builds artifacts once and smoke-tests them in containers across the deb family (Ubuntu/Debian), rpm family (Fedora/openSUSE), and AppImage across deb/rpm/Arch/openSUSE — plus informational runs on Void (non-systemd) and Alpine (musl, expected to fail). The `release` job that publishes the GitHub Release only runs on actual tag pushes.
-- The smoke matrix runs `daylog --help` and `daylog --uninstall-tracking` against the installed binary. If you add a CLI flag in `main.rs`, extend the smoke commands.
+- `.github/workflows/ci.yml` — every push/PR. cargo check + test + release build + a `daylog --help / --version` smoke. Runs in ~3 min.
+- `.github/workflows/release.yml` — `v*.*.*` tag push. Builds the Linux x86_64 tarball, then publishes `daylog-core` followed by `daylog-tui` to crates.io (gated by `CARGO_REGISTRY_TOKEN`), then cuts the GitHub Release attaching the tarball. The release job depends on the publish job, so a crates.io failure aborts the GitHub Release.
+
+If you add a CLI flag in `lib.rs`, extend the smoke step in `ci.yml`.
 
 ## License
 
-Daylog's own source is MIT-licensed (see [`LICENSE`](./LICENSE)). Bundled binaries stay under their upstream licenses; see [`THIRD-PARTY-NOTICES.md`](./THIRD-PARTY-NOTICES.md).
+Daylog's own source is MIT-licensed (see [`LICENSE`](./LICENSE)). The `aw-server-rust` and `aw-awatcher` upstream binaries that daylog downloads on first launch stay under MPL-2.0; full attribution lives in [`THIRD-PARTY-NOTICES.md`](./THIRD-PARTY-NOTICES.md).
 
-## Conventions worth knowing
+## Conventions
 
-- Comments lean toward *why*, not *what* — see existing modules (`tracking/lifecycle.rs`, `scripts/fetch-binaries.sh`) for the established voice. Short and load-bearing; no tutorial blocks.
-- Errors are typed (`thiserror`) and serialize via `impl serde::Serialize` writing `to_string()`. Frontend receives a string. Match this when adding new error enums.
-- `#[allow(dead_code)]` is used deliberately in a few spots (e.g. `Supervisor::External`) — don't strip without checking the comment above it.
+- Comments lean toward *why*, not *what*. Short and load-bearing; no tutorial blocks. See `tracking/lifecycle.rs` and `tracking/install.rs` for the established voice.
+- Errors are typed (`thiserror`). The Tauri-IPC `serde::Serialize` impls have been removed since there's no IPC layer anymore.
+- `#[allow(dead_code)]` is used deliberately in a few spots (e.g. `Supervisor::External`) — don't strip without reading the comment above it.
+- When bumping a pinned upstream binary: update `crates/daylog/src/tracking/pins.rs` (URL + sha256) and `THIRD-PARTY-NOTICES.md` (pinned version line) in the same commit.

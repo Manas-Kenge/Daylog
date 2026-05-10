@@ -985,3 +985,32 @@ The mini-window has been pulled into v0.1 (§1.0 addendum). What remains for v0.
 4. **Configurable productive allowlist UI** — currently `work_roots` is hardcoded to `["Work"]`; v0.2 exposes it in Settings → General.
 5. **Browser activity (aw-watcher-web)** integration polish — first-class Web page already exists at v0.1; v0.2 adds a "you can install the browser extension" hint flow and a richer per-domain panel.
 6. **aarch64 builds** — neither aw-server-rust nor aw-awatcher publishes aarch64 release artifacts; v0.2 builds them from source as part of the release pipeline.
+
+---
+
+## Addendum — 2026-05-10: pivot to TUI-only product
+
+The Tauri desktop app is no longer the shipped product. Daylog is now positioned as a **terminal screen-time tracker for Linux**, distributed as a single binary. The desktop work is preserved on the `archive/desktop` branch and is not maintained.
+
+What this means for the roadmap:
+
+- §1.0 mini-window, §6 tray-icon discussion, §10's Tauri layout, and §14.1's GNOME-shell extension are obsolete. They referenced surfaces that no longer exist or no longer make sense (the TUI **is** the surface).
+- §5 first-launch wizard moved into the TUI itself — `crates/daylog/src/wizard.rs` plus `tracking/`. AppImage / .deb / .rpm carriers are gone; users get the binary via `cargo install daylog-tui` or the GitHub Release tarball. The "AppImage extracts on first launch" complexity in §10 is replaced by a download-on-first-launch flow that fetches pinned aw-server-rust + aw-awatcher into `~/.cache/daylog/binaries/` and extracts to `~/.local/share/daylog/bin/`.
+- §13's release checklist is replaced by `.github/workflows/release.yml`'s tag-driven build → `cargo publish daylog-core` → `cargo publish daylog-tui` → GitHub Release flow.
+
+What survives unchanged:
+
+- §2 Architecture: data-layer separation, `daylog-core` as the single source of truth for aw-server traffic + aggregations + KPI math.
+- §4 categorization, §8 ranges + dashboards, §9 footer/UX language.
+- §11 mini-window — never built; killed entirely along with the desktop app.
+
+The new v0.2 candidate list is small and TUI-scoped:
+
+1. Asciinema cast in the README (replaces the v0.1 `demo.png` screenshot).
+2. AUR PKGBUILD (Arch is the natural fit for a CLI screen-time tracker).
+3. Per-rule `productive: boolean` flag in category settings (carried forward from §14.3).
+4. Configurable productive allowlist UI in the TUI Settings tab (§14.4 retargeted from desktop to TUI).
+5. Browser activity panel polish, including the "install the aw-watcher-web extension" hint (§14.5 unchanged).
+6. aarch64 builds (§14.6 unchanged).
+
+Cross-platform (macOS, Windows) remains deferred. The wizard's tracker installer is Linux-specific (systemd / XDG-autostart / GNOME shell), and porting it to launchd / Windows Services is a separate workstream that has no demand signal yet.

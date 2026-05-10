@@ -152,7 +152,7 @@ KPI math (`Active`, `Longest stretch`, `Pattern shift`) is promoted to `daylog-c
 - TUI's `data::DataCache` gains a `kpi: Cached<KpiSummary>` and `dispatch_refetches` includes it.
 - Sparkline uses the same `daylog-core::aggregate::trailing_days(...)` already cached for the desktop's WeekHeatmap.
 
-This refactor touches `src-tauri/src/lib.rs`, `src/lib/aw.ts`, and one or two desktop hooks. It is on the v0.2 critical path because the TUI cannot ship its KPI strip without it.
+This refactor was implemented before the TUI-only pivot. The KPI math now lives in `crates/daylog-core/src/kpi.rs` and the TUI consumes it directly via an in-process call (no IPC). Historical context only.
 
 ## Interaction states (Pass 2 deferrals)
 

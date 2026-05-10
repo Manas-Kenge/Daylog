@@ -1,6 +1,6 @@
 # Third-Party Notices
 
-Daylog bundles upstream binaries and a GNOME Shell extension. Each is used as-is, without modification, and remains under its original license. This file is the canonical attribution record; the same versions are pinned in [`scripts/binaries.lock`](./scripts/binaries.lock).
+Daylog downloads upstream binaries and a GNOME Shell extension on first launch. Each is used as-is, without modification, and remains under its original license. This file is the canonical attribution record; the same versions are pinned in [`crates/daylog/src/tracking/pins.rs`](./crates/daylog/src/tracking/pins.rs).
 
 ---
 
@@ -9,7 +9,7 @@ Daylog bundles upstream binaries and a GNOME Shell extension. Each is used as-is
 - **Project:** [ActivityWatch / aw-server-rust](https://github.com/ActivityWatch/aw-server-rust)
 - **Pinned version:** `v0.13.2`
 - **License:** MPL-2.0 — <https://mozilla.org/MPL/2.0/>
-- **Role in Daylog:** the local HTTP server on `:5600` that stores and queries activity events. Daylog reads from it via Rust's `aw_client` and never modifies it.
+- **Role in Daylog:** the local HTTP server on `:5600` that stores and queries activity events. Daylog reads from it via the `daylog-core::aw_client` module and never modifies it.
 
 ## `awatcher` (`aw-awatcher`) — Mozilla Public License 2.0
 
@@ -27,9 +27,9 @@ Daylog bundles upstream binaries and a GNOME Shell extension. Each is used as-is
 
 ---
 
-## Source code for bundled binaries
+## Source code for downloaded binaries
 
-MPL-2.0 requires that the source for any distributed binary remains accessible. Each upstream repository above is the canonical source; `scripts/binaries.lock` pins the exact version. To reproduce a bundled binary, check out the matching tag in the upstream repository and follow its build instructions. To upgrade Daylog to a newer upstream version, run `scripts/bump-binary.sh <component> <version>` — this re-pins, re-fetches, and re-checksums.
+MPL-2.0 requires that the source for any distributed binary remains accessible. Each upstream repository above is the canonical source; `crates/daylog/src/tracking/pins.rs` pins the exact version + sha256 of each archive. To reproduce a downloaded binary, check out the matching tag in the upstream repository and follow its build instructions. To upgrade Daylog to a newer upstream version, edit `pins.rs` (URL + sha256) and update the pinned-version line in this file in the same commit.
 
 ## License of Daylog itself
 
