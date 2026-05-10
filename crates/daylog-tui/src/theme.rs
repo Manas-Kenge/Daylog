@@ -32,6 +32,7 @@ pub enum LayoutMode {
 #[derive(Debug, Clone, Copy)]
 pub struct Theme {
     pub tier: Tier,
+    pub bg: Color,
     pub fg: Color,
     pub dim: Color,
     pub border_dim: Color,
@@ -77,6 +78,7 @@ impl Theme {
     fn truecolor() -> Self {
         Self {
             tier: Tier::Truecolor,
+            bg: Color::Rgb(0, 0, 0),
             fg: Color::Rgb(251, 251, 251),
             dim: Color::Rgb(176, 176, 176),
             border_dim: Color::Rgb(31, 31, 31),
@@ -94,6 +96,7 @@ impl Theme {
     fn color256() -> Self {
         Self {
             tier: Tier::Color256,
+            bg: Color::Indexed(0),
             fg: Color::Indexed(231),
             dim: Color::Indexed(244),
             border_dim: Color::Indexed(236),
@@ -114,6 +117,7 @@ impl Theme {
         // `chart_2_style()` rather than reading the tier.
         Self {
             tier: Tier::Ansi16,
+            bg: Color::Black,
             fg: Color::White,
             dim: Color::White,
             border_dim: Color::Black,

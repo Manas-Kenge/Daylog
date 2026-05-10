@@ -14,16 +14,20 @@ use ratatui::{
 };
 
 use crate::app::App;
-use crate::data::WeekDayBuckets;
+use crate::data::{WeekDayBuckets, WEEK_ROOT_ORDER};
 use crate::theme::Theme;
-use crate::ui::format_duration;
 use crate::ui::stacked_bars::StackedBars;
+use crate::ui::{
+    format_duration,
+    overview::{
+        panel_title, render_top_apps_panel, render_top_categories_panel, render_top_domains_panel,
+    },
+};
 
 /// Root displayed in the Work-callout. Matches the desktop's WORK_ROOT.
 const WORK_ROOT: &str = "Work";
 
 pub fn render(f: &mut Frame, area: Rect, app: &App) {
-    let theme = &app.theme;
     let week = app.data.week.value().map(|v| v.as_slice());
     let in_flight = app.data.week.is_in_flight();
     let last_error = app.data.week.last_error();
@@ -31,54 +35,132 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(1), // summary line
-            Constraint::Min(6),    // bordered chart panel
-            Constraint::Length(2), // callout
+            Constraint::Length(14), // chart + stats card
+            Constraint::Min(8),     // 7-day rollups
         ])
         .split(area);
 
-    render_summary(f, chunks[0], theme, week);
-    render_panel(f, chunks[1], theme, week, in_flight, last_error);
-    render_callout(f, chunks[2], theme, week);
+    render_top_row(f, chunks[0], app, week, in_flight, last_error);
+    render_rollup_row(f, chunks[1], app);
 }
 
-fn render_summary(f: &mut Frame, area: Rect, theme: &Theme, week: Option<&[WeekDayBuckets]>) {
+fn render_top_row(
+    f: &mut Frame,
+    area: Rect,
+    app: &App,
+    week: Option<&[WeekDayBuckets]>,
+    in_flight: bool,
+    last_error: Option<&str>,
+) {
+    let cols = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(70), Constraint::Percentage(30)])
+        .split(area);
+    render_activity_card(f, cols[0], &app.theme, week, in_flight, last_error);
+    render_this_week_card(f, cols[1], &app.theme, week, in_flight);
+}
+
+fn render_rollup_row(f: &mut Frame, area: Rect, app: &App) {
+    let cols = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(34),
+            Constraint::Percentage(33),
+            Constraint::Percentage(33),
+        ])
+        .split(area);
+    render_top_apps_panel(
+        f,
+        cols[0],
+        &app.theme,
+        &app.data.week_top_apps,
+        " Top apps · 7 days ",
+    );
+    render_top_categories_panel(
+        f,
+        cols[1],
+        &app.theme,
+        &app.data.week_top_categories,
+        " Top categories · 7 days ",
+    );
+    render_top_domains_panel(
+        f,
+        cols[2],
+        &app.theme,
+        &app.data.week_top_domains,
+        " Top domains · 7 days ",
+    );
+}
+
+fn render_this_week_card(
+    f: &mut Frame,
+    area: Rect,
+    theme: &Theme,
+    week: Option<&[WeekDayBuckets]>,
+    in_flight: bool,
+) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(theme.border_dim_style())
+        .title(panel_title(theme, " This week ", in_flight));
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    let Some(days) = week else {
+        let p = Paragraph::new("\u{2026}").style(theme.dim_style());
+        f.render_widget(p, inner);
+        return;
+    };
+
+    let stats = week_stats(days);
     let label = theme.kpi_label_style();
     let value = theme.kpi_value_style();
-    let sep = "  \u{00b7}  ";
 
-    let stats = week.map(week_stats).unwrap_or_default();
-    let mut spans: Vec<Span> = Vec::new();
-    spans.push(Span::styled("Total ", label));
-    spans.push(Span::styled(format_duration(stats.total_secs), value));
-    spans.push(Span::raw(sep));
-    spans.push(Span::styled("Daily avg ", label));
-    if stats.days_elapsed > 0 {
-        spans.push(Span::styled(format_duration(stats.avg_secs), value));
-    } else {
-        spans.push(Span::styled("\u{2014}", value));
-    }
-    spans.push(Span::raw(sep));
-    spans.push(Span::styled("Best ", label));
-    if let Some(best) = &stats.best {
-        spans.push(Span::styled(
-            format!("{} {}", short_weekday(best.weekday), format_duration(best.hours_secs)),
-            value,
-        ));
-    } else {
-        spans.push(Span::styled("\u{2014}", value));
-    }
-    spans.push(Span::raw(sep));
-    spans.push(Span::styled(
-        format!("{}/{} active", stats.active_days, stats.days_elapsed),
-        label,
-    ));
+    let stat_line = |label_text: &'static str, value_text: String, hint: Option<String>| {
+        let mut spans = vec![
+            Span::styled(format!(" {:<13}", label_text), label),
+            Span::styled(value_text, value),
+        ];
+        if let Some(h) = hint {
+            spans.push(Span::styled(format!("  {}", h), theme.dim_style()));
+        }
+        Line::from(spans)
+    };
 
-    let p = Paragraph::new(Line::from(spans)).alignment(Alignment::Left);
-    f.render_widget(p, area);
+    let avg = if stats.days_elapsed > 0 {
+        format_duration(stats.avg_secs)
+    } else {
+        "\u{2014}".to_string()
+    };
+    let best_value = stats
+        .best
+        .as_ref()
+        .map(|b| format_duration(b.hours_secs))
+        .unwrap_or_else(|| "\u{2014}".to_string());
+    let best_hint = stats
+        .best
+        .as_ref()
+        .map(|b| format!("{} {}", short_weekday(b.weekday), format_month_day(b.date)));
+
+    let lines = vec![
+        stat_line("Total active", format_duration(stats.total_secs), None),
+        stat_line(
+            "Daily avg",
+            avg,
+            (stats.days_elapsed > 0).then_some(format!("over {} days", stats.days_elapsed)),
+        ),
+        stat_line("Best day", best_value, best_hint),
+        stat_line(
+            "Active days",
+            format!("{}/{}", stats.active_days, stats.days_elapsed),
+            None,
+        ),
+    ];
+    let p = Paragraph::new(lines);
+    f.render_widget(p, inner);
 }
 
-fn render_panel(
+fn render_activity_card(
     f: &mut Frame,
     area: Rect,
     theme: &Theme,
@@ -86,7 +168,7 @@ fn render_panel(
     in_flight: bool,
     last_error: Option<&str>,
 ) {
-    let title = title_with_status(" This week ", in_flight);
+    let title = title_with_status(" 7-Day Activity Breakdown ", in_flight);
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(theme.border_dim_style())
@@ -102,14 +184,71 @@ fn render_panel(
         return;
     }
 
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1), // legend
+            Constraint::Min(5),    // chart
+            Constraint::Length(2), // callout
+        ])
+        .split(inner);
+
+    render_legend(f, chunks[0], theme, week);
     f.render_widget(
         StackedBars {
             theme,
             days: week,
             in_flight,
         },
-        inner,
+        chunks[1],
     );
+    render_callout(f, chunks[2], theme, week);
+}
+
+fn render_legend(f: &mut Frame, area: Rect, theme: &Theme, week: Option<&[WeekDayBuckets]>) {
+    let Some(days) = week else {
+        return;
+    };
+    let roots = present_roots(days);
+    if roots.is_empty() {
+        let p = Paragraph::new(Line::from(Span::styled(
+            "Stacked by category · hours",
+            theme.dim_style(),
+        )));
+        f.render_widget(p, area);
+        return;
+    }
+
+    let mut spans = vec![Span::styled("Stacked by category  ", theme.dim_style())];
+    for root in roots {
+        spans.push(Span::styled("\u{25a0}", category_root_style(theme, &root)));
+        spans.push(Span::styled(format!(" {}  ", root), theme.dim_style()));
+    }
+    let p = Paragraph::new(Line::from(spans)).alignment(Alignment::Left);
+    f.render_widget(p, area);
+}
+
+fn present_roots(days: &[WeekDayBuckets]) -> Vec<String> {
+    let mut present = std::collections::BTreeSet::new();
+    for day in days.iter().filter(|d| !d.is_future) {
+        for (root, secs) in &day.roots {
+            if *secs > 0.0 {
+                present.insert(root.clone());
+            }
+        }
+    }
+    let mut roots: Vec<String> = present.into_iter().collect();
+    roots.sort_by(|a, b| {
+        let ai = WEEK_ROOT_ORDER.iter().position(|r| *r == a.as_str());
+        let bi = WEEK_ROOT_ORDER.iter().position(|r| *r == b.as_str());
+        match (ai, bi) {
+            (Some(x), Some(y)) => x.cmp(&y),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => a.cmp(b),
+        }
+    });
+    roots
 }
 
 fn render_callout(f: &mut Frame, area: Rect, theme: &Theme, week: Option<&[WeekDayBuckets]>) {
@@ -291,10 +430,7 @@ mod tests {
     fn day(date: (i32, u32, u32), is_future: bool, roots: &[(&str, f64)]) -> WeekDayBuckets {
         let date = NaiveDate::from_ymd_opt(date.0, date.1, date.2).unwrap();
         let weekday = date.weekday();
-        let roots: Vec<(String, f64)> = roots
-            .iter()
-            .map(|(n, s)| ((*n).to_string(), *s))
-            .collect();
+        let roots: Vec<(String, f64)> = roots.iter().map(|(n, s)| ((*n).to_string(), *s)).collect();
         let total = roots.iter().map(|(_, s)| *s).sum();
         WeekDayBuckets {
             date,
@@ -307,7 +443,11 @@ mod tests {
 
     fn fixture_week() -> Vec<WeekDayBuckets> {
         vec![
-            day((2026, 5, 4), false, &[("Work", 3600.0 * 4.0), ("Comms", 1800.0)]),
+            day(
+                (2026, 5, 4),
+                false,
+                &[("Work", 3600.0 * 4.0), ("Comms", 1800.0)],
+            ),
             day(
                 (2026, 5, 5),
                 false,
@@ -370,10 +510,35 @@ mod tests {
 
     #[test]
     fn week_renders_full_layout() {
+        use crate::data::{TopAppRow, TopDomainRow};
+        use daylog_core::aggregate::CategorySummary;
+
         let theme = Theme::from_env_pair(Some("truecolor"), None);
         let mut app = App::with_theme(theme);
         app.tab = Tab::Week;
-        app.data.week.apply_success(fixture_week(), Instant::now());
+        let now = Instant::now();
+        app.data.week.apply_success(fixture_week(), now);
+        app.data.week_top_apps.apply_success(
+            vec![TopAppRow {
+                name: "kitty".into(),
+                duration_secs: 100_000.0,
+            }],
+            now,
+        );
+        app.data.week_top_categories.apply_success(
+            vec![CategorySummary {
+                name: vec!["Work".into(), "Programming".into()],
+                duration: 200_000.0,
+            }],
+            now,
+        );
+        app.data.week_top_domains.apply_success(
+            vec![TopDomainRow {
+                domain: "github.com".into(),
+                duration_secs: 50_000.0,
+            }],
+            now,
+        );
 
         let backend = TestBackend::new(120, 24);
         let mut terminal = Terminal::new(backend).unwrap();
@@ -383,8 +548,39 @@ mod tests {
         let buf = terminal.backend().buffer().clone();
         let rendered = buffer_to_string(&buf);
 
-        assert!(rendered.contains("This week"), "panel title missing\n{rendered}");
-        assert!(rendered.contains("Total"), "summary missing Total");
+        assert!(
+            rendered.contains("7-Day Activity Breakdown"),
+            "chart panel title missing\n{rendered}"
+        );
+        assert!(
+            rendered.contains("This week"),
+            "stats card missing\n{rendered}"
+        );
+        assert!(
+            rendered.contains("Total active"),
+            "stats missing Total active"
+        );
+        assert!(
+            rendered.contains("Stacked by category"),
+            "legend missing\n{rendered}"
+        );
+        assert!(
+            rendered.contains("Top apps") && rendered.contains("7 days"),
+            "week top apps rollup missing\n{rendered}"
+        );
+        assert!(
+            rendered.contains("Top categories") && rendered.contains("7 days"),
+            "week top categories rollup missing\n{rendered}"
+        );
+        assert!(
+            rendered.contains("Top domains") && rendered.contains("7 days"),
+            "week top domains rollup missing\n{rendered}"
+        );
+        assert!(rendered.contains("kitty"), "fixture top app missing");
+        assert!(
+            rendered.contains("github.com"),
+            "fixture top domain missing"
+        );
         assert!(
             rendered.contains("Tue") || rendered.contains("(May 5)"),
             "callout missing weekday/date hint\n{rendered}"
@@ -412,7 +608,10 @@ mod tests {
             }
         }
         assert!(saw_chart_1, "Work bars should paint chart_1");
-        assert!(saw_other, "expected Comms (chart_2) or Browsing (chart_4) bars");
+        assert!(
+            saw_other,
+            "expected Comms (chart_2) or Browsing (chart_4) bars"
+        );
     }
 
     #[test]
@@ -427,7 +626,14 @@ mod tests {
             .expect("render frame");
         let rendered = buffer_to_string(terminal.backend().buffer());
         // Title should still appear; loading callout is suppressed.
-        assert!(rendered.contains("This week"), "title still painted: {rendered}");
+        assert!(
+            rendered.contains("7-Day Activity Breakdown"),
+            "title still painted: {rendered}"
+        );
+        assert!(
+            rendered.contains("Top apps") && rendered.contains("Top categories"),
+            "rollup panel shells still painted: {rendered}"
+        );
     }
 
     #[test]

@@ -3,12 +3,11 @@
 //! Vertical bands inside the body, sized to their content (no panel
 //! stretches to fill the terminal):
 //!   1. KPI strip                            — 1 row, full-width
-//!   2. Spacer                               — 1 row, blank
-//!   3. Today's timeline (24h barcode)       — 6 rows, full-width
-//!   4. Top apps  +  Top categories          — 11 rows, split 50 / 50
-//!   5. Hourly distribution + Top domains    — 10 rows, hourly fixed 46 cols
-//!   6. 7-day sparkline                      — 1 row, Wide only
-//!   7. Flex blank                           — soaks up leftover terminal rows
+//!   2. Today's timeline (24h barcode)       — 6 rows, full-width
+//!   3. Top apps  +  Top categories          — 11 rows, split 50 / 50
+//!   4. Hourly distribution + Top domains    — 10 rows, hourly fixed 46 cols
+//!   5. 7-day sparkline                      — 1 row, Wide only
+//!   6. Flex blank                           — soaks up leftover terminal rows
 //!
 //! This mirrors `src/pages/Overview.tsx` minus the WeekHeatmap (which
 //! lives on the Week tab). Every panel has a stable shape so first-load
@@ -49,7 +48,6 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(1),                // KPI strip
-            Constraint::Length(1),                // spacer (KPI ↔ timeline)
             Constraint::Length(6),                // 24h timeline (borders + 3 stripes + axis + border)
             Constraint::Length(11),               // top apps + categories (8 rows + header + borders)
             Constraint::Length(10),               // hourly + domains
@@ -59,14 +57,13 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
         .split(area);
 
     render_kpi_strip(f, chunks[0], app, layout_mode);
-    // chunks[1] intentionally blank — gap between Active/Longest/Best and timeline.
-    render_timeline(f, chunks[2], app);
-    render_apps_categories_row(f, chunks[3], app);
-    render_hourly_domains_row(f, chunks[4], app);
+    render_timeline(f, chunks[1], app);
+    render_apps_categories_row(f, chunks[2], app);
+    render_hourly_domains_row(f, chunks[3], app);
     if sparkline_height > 0 {
-        render_sparkline(f, chunks[5], app, layout_mode);
+        render_sparkline(f, chunks[4], app, layout_mode);
     }
-    // chunks[6] is the flex blank — left empty intentionally.
+    // chunks[5] is the flex blank — left empty intentionally.
 }
 
 fn render_kpi_strip(f: &mut Frame, area: Rect, app: &App, layout_mode: LayoutMode) {
@@ -636,10 +633,10 @@ mod tests {
         );
     }
 
-    /// First-load skeleton: panel structure + KPI labels render even
-    /// before any data lands. No "loading" banners, no "kpi unavailable"
-    /// text — those were Phase 1 / Phase 2 banners that the redesign
-    /// replaced with shape-stable skeletons.
+    /// First-load skeleton: panel structure renders even before any
+    /// data lands. No "loading" banners, no "kpi unavailable" text —
+    /// those were Phase 1 / Phase 2 banners that the redesign replaced
+    /// with shape-stable skeletons.
     #[test]
     fn overview_renders_skeleton_when_caches_empty() {
         let app = App::new();
@@ -649,10 +646,6 @@ mod tests {
             .draw(|f| crate::ui::render(f, &app))
             .expect("render frame");
         let rendered = buffer_to_string(terminal.backend().buffer());
-        assert!(
-            rendered.contains("Active"),
-            "KPI skeleton should render the Active label even with no data\n{rendered}"
-        );
         assert!(
             rendered.contains("Top apps"),
             "Top apps panel chrome should render even with no data\n{rendered}"

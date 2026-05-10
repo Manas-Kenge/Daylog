@@ -6,8 +6,7 @@
 //! rules.
 //!
 //! Stage 1.A: skeleton (terminal setup, event loop, tab strip, footer,
-//! help overlay). No data widgets yet — Today is empty. Goal is to
-//! verify cold-start ≤300ms before adding render cost.
+//! help overlay). No data widgets yet — Today is empty.
 
 use std::io;
 
@@ -20,11 +19,6 @@ pub use app::Tab;
 
 /// CLI entry point invoked from `daylog tui`. Returns process exit code.
 pub fn run(_args: &[String]) -> i32 {
-    // Cold-start measurement gate per decision 1F: time-to-first-frame.
-    // We log the elapsed time from process start until the first frame
-    // is painted. Cargo-built binaries print this on stderr in dev mode.
-    let started = std::time::Instant::now();
-
     let rt = match tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -38,7 +32,7 @@ pub fn run(_args: &[String]) -> i32 {
 
     install_panic_handler();
 
-    let exit = rt.block_on(async move { run_async(started).await });
+    let exit = rt.block_on(async move { run_async().await });
 
     match exit {
         Ok(()) => 0,
@@ -50,17 +44,11 @@ pub fn run(_args: &[String]) -> i32 {
     }
 }
 
-async fn run_async(started: std::time::Instant) -> io::Result<()> {
+async fn run_async() -> io::Result<()> {
     let mut terminal = ui::setup_terminal()?;
     // First frame: render the empty skeleton with loading state.
     let mut app = app::App::new();
     terminal.draw(|f| ui::render(f, &app))?;
-
-    let elapsed = started.elapsed();
-    eprintln!(
-        "daylog tui: time-to-first-frame = {}ms (gate: \u{2264}300ms per decision 1F)",
-        elapsed.as_millis()
-    );
 
     let result = app::event_loop(&mut terminal, &mut app).await;
     ui::restore_terminal(&mut terminal)?;

@@ -14,7 +14,7 @@ use ratatui::{
     style::{Modifier, Style},
     symbols,
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, Paragraph, Tabs},
+    widgets::{Block, Borders, Clear, Paragraph},
     Frame, Terminal,
 };
 
@@ -79,9 +79,10 @@ pub fn render(f: &mut Frame, app: &App) {
         ])
         .split(inner);
 
-    render_tabs(f, chunks[0], app);
     render_body(f, chunks[1], app);
     render_footer(f, chunks[2], app);
+    // Chrome paints last so panel titles can never cover the tab strip.
+    render_tabs(f, chunks[0], app);
 
     if app.help_visible {
         render_help(f, app);
@@ -102,29 +103,27 @@ fn header_title(theme: &Theme) -> Line<'static> {
 
 fn render_tabs(f: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
-    let titles: Vec<Line> = Tab::ALL
-        .iter()
-        .map(|t| Line::from(format!(" {} ", t.label())))
-        .collect();
-    let divider = Span::styled(
-        symbols::line::VERTICAL,
-        Style::default().fg(theme.border_dim),
-    );
-    let tabs = Tabs::new(titles)
-        .select(app.tab.index())
-        // Inactive tabs: theme.fg, no DIM modifier. The eye finds the
-        // active tab by contrast change, not by un-greying every other
-        // label. This is the single fix for "tabs invisible until pressed".
-        .style(Style::default().fg(theme.fg))
-        // Active: REVERSED + BOLD with ember-fg as a back-up signal on
-        // tiers where REVERSED doesn't print background (linux fbcon).
-        .highlight_style(
-            Style::default()
-                .fg(theme.ember)
-                .add_modifier(Modifier::REVERSED | Modifier::BOLD),
-        )
-        .divider(divider);
-    f.render_widget(tabs, area);
+    let active = Style::default()
+        .fg(theme.bg)
+        .bg(theme.ember)
+        .add_modifier(Modifier::BOLD);
+    let inactive = Style::default()
+        .fg(theme.fg)
+        .bg(theme.bg)
+        .add_modifier(Modifier::BOLD);
+    let sep = Style::default().fg(theme.border_dim).bg(theme.bg);
+
+    let mut spans = vec![Span::styled(" ", Style::default().bg(theme.bg))];
+    for (i, tab) in Tab::ALL.iter().enumerate() {
+        if i > 0 {
+            spans.push(Span::styled(format!(" {} ", symbols::line::VERTICAL), sep));
+        }
+        let style = if *tab == app.tab { active } else { inactive };
+        spans.push(Span::styled(format!(" {} ", tab.label()), style));
+    }
+
+    let p = Paragraph::new(Line::from(spans)).style(Style::default().bg(theme.bg));
+    f.render_widget(p, area);
 }
 
 fn render_body(f: &mut Frame, area: Rect, app: &App) {
@@ -246,6 +245,8 @@ pub fn format_duration(secs: f64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::App;
+    use ratatui::{backend::TestBackend, Terminal};
 
     #[test]
     fn format_duration_dashboard_shapes() {
@@ -254,5 +255,49 @@ mod tests {
         assert_eq!(format_duration(60.0), "1m 00s");
         assert_eq!(format_duration(2.0 * 3600.0 + 14.0 * 60.0 + 5.0), "2h 14m");
         assert_eq!(format_duration(-100.0), "0s");
+    }
+
+    #[test]
+    fn tabs_render_above_body_and_are_visible_on_first_frame() {
+        let theme = Theme::from_env_pair(Some("truecolor"), None);
+        let app = App::with_theme(theme);
+        let backend = TestBackend::new(120, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| render(f, &app)).expect("render frame");
+        let buf = terminal.backend().buffer().clone();
+
+        let row = |y: u16| {
+            let mut out = String::new();
+            for x in 0..buf.area.width {
+                out.push_str(buf[(x, y)].symbol());
+            }
+            out
+        };
+
+        let tabs_row = row(1);
+        let body_row = row(2);
+        assert!(
+            tabs_row.contains("Today")
+                && tabs_row.contains("Week")
+                && tabs_row.contains("Month"),
+            "tab strip should be the first inner row: {tabs_row}"
+        );
+        // First body row is the KPI strip (Active / Longest / Best …).
+        // Timeline panel chrome starts a row below.
+        assert!(
+            body_row.contains("Active"),
+            "body should start with the KPI strip below the tab strip: {body_row}"
+        );
+        assert!(
+            !tabs_row.contains("Active"),
+            "KPI strip must not overwrite tabs: {tabs_row}"
+        );
+
+        let today_x = tabs_row.find("Today").expect("Today tab present") as u16;
+        assert_eq!(
+            buf[(today_x, 1)].style().bg,
+            Some(theme.ember),
+            "active tab should have an explicit visible background"
+        );
     }
 }

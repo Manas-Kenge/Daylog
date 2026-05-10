@@ -237,6 +237,13 @@ pub enum FetchResult {
     /// Calendar-week (Mon → Sun) categorized totals. Always 7 entries.
     /// Future days carry `is_future = true` and empty `roots`.
     Week(Result<Vec<WeekDayBuckets>, String>),
+    /// Top apps over the trailing 7 days for the Week tab's lower
+    /// desktop-parity rollup row. Scope-fixed; not driven by RangeChip.
+    WeekTopApps(Result<Vec<TopAppRow>, String>),
+    /// Top categories over the trailing 7 days for the Week tab.
+    WeekTopCategories(Result<Vec<CategorySummary>, String>),
+    /// Top web domains over the trailing 7 days for the Week tab.
+    WeekTopDomains(Result<Vec<TopDomainRow>, String>),
     /// Trailing 365 days of active seconds for the Month tab heatmap.
     /// Index `i` is days_ago = i + 1 (matches `TrailingActive`'s
     /// convention so today's value composes from `kpi.active_secs`).
@@ -276,6 +283,13 @@ pub struct DataCache {
     /// Week tab's stacked-bar chart. Past-days cadence; today's column
     /// catches up via the same 5min refresh.
     pub week: Cached<Vec<WeekDayBuckets>>,
+    /// Trailing-7-day Top apps for the Week tab's rollup row.
+    /// Scope-fixed; not driven by the `RangeChip`.
+    pub week_top_apps: Cached<Vec<TopAppRow>>,
+    /// Trailing-7-day Top categories for the Week tab.
+    pub week_top_categories: Cached<Vec<CategorySummary>>,
+    /// Trailing-7-day Top web domains for the Week tab.
+    pub week_top_domains: Cached<Vec<TopDomainRow>>,
     /// Trailing-365-day active-seconds-per-day window driving the Month
     /// tab's year heatmap. Heavy first paint (365 fetches) — the
     /// dispatcher gates this slot on `tab == Tab::Month` so Today's
@@ -302,6 +316,9 @@ impl DataCache {
             timeline_events: Cached::new(REFRESH_LIVE),
             top_domains: Cached::new(REFRESH_LIVE),
             week: Cached::new(REFRESH_PAST_DAYS),
+            week_top_apps: Cached::new(REFRESH_PAST_DAYS),
+            week_top_categories: Cached::new(REFRESH_PAST_DAYS),
+            week_top_domains: Cached::new(REFRESH_PAST_DAYS),
             month_trailing_year: Cached::new(REFRESH_PAST_DAYS),
             month_top_apps: Cached::new(REFRESH_PAST_DAYS),
             month_top_categories: Cached::new(REFRESH_PAST_DAYS),
@@ -342,8 +359,18 @@ impl DataCache {
             FetchResult::TopDomains(Err(e)) => self.top_domains.apply_failure(e, now),
             FetchResult::Week(Ok(v)) => self.week.apply_success(v, now),
             FetchResult::Week(Err(e)) => self.week.apply_failure(e, now),
+            FetchResult::WeekTopApps(Ok(v)) => self.week_top_apps.apply_success(v, now),
+            FetchResult::WeekTopApps(Err(e)) => self.week_top_apps.apply_failure(e, now),
+            FetchResult::WeekTopCategories(Ok(v)) => self.week_top_categories.apply_success(v, now),
+            FetchResult::WeekTopCategories(Err(e)) => {
+                self.week_top_categories.apply_failure(e, now)
+            }
+            FetchResult::WeekTopDomains(Ok(v)) => self.week_top_domains.apply_success(v, now),
+            FetchResult::WeekTopDomains(Err(e)) => self.week_top_domains.apply_failure(e, now),
             FetchResult::MonthTrailingYear(Ok(v)) => self.month_trailing_year.apply_success(v, now),
-            FetchResult::MonthTrailingYear(Err(e)) => self.month_trailing_year.apply_failure(e, now),
+            FetchResult::MonthTrailingYear(Err(e)) => {
+                self.month_trailing_year.apply_failure(e, now)
+            }
             FetchResult::MonthTopApps(Ok(v)) => self.month_top_apps.apply_success(v, now),
             FetchResult::MonthTopApps(Err(e)) => self.month_top_apps.apply_failure(e, now),
             FetchResult::MonthTopCategories(Ok(v)) => {
@@ -492,8 +519,7 @@ pub fn dispatch_refetches(
             let today = Local::now().date_naive();
             let client = daylog_core::aw_client::AwClient::new();
             let past_fut = daylog_core::queries::trailing_days_past(7);
-            let today_fut =
-                daylog_core::queries::categorized_events(&client, TimeRange::Today);
+            let today_fut = daylog_core::queries::categorized_events(&client, TimeRange::Today);
             let (past_res, today_res) = tokio::join!(past_fut, today_fut);
             let past = match past_res {
                 Ok(p) => p,
@@ -512,6 +538,51 @@ pub fn dispatch_refetches(
             let weeks = build_week_buckets(today, &today_events, &past);
             let _ = tx.send(FetchResult::Week(Ok(weeks)));
         });
+    }
+
+    // Week-tab rollups mirror the desktop page's fixed Last 7 Days
+    // panels. They do not follow the active range chip.
+    if tab == Tab::Week {
+        if cache.week_top_apps.should_refetch(now) {
+            cache.week_top_apps.mark_in_flight();
+            let tx = tx.clone();
+            tokio::spawn(async move {
+                let client = daylog_core::aw_client::AwClient::new();
+                let result =
+                    daylog_core::queries::top_apps(&client, TimeRange::LastNDays { days: 7 })
+                        .await
+                        .map(|raw| TopAppRow::parse_many(&raw))
+                        .map_err(|e| e.to_string());
+                let _ = tx.send(FetchResult::WeekTopApps(result));
+            });
+        }
+
+        if cache.week_top_categories.should_refetch(now) {
+            cache.week_top_categories.mark_in_flight();
+            let tx = tx.clone();
+            tokio::spawn(async move {
+                let client = daylog_core::aw_client::AwClient::new();
+                let result =
+                    daylog_core::queries::top_categories(&client, TimeRange::LastNDays { days: 7 })
+                        .await
+                        .map_err(|e| e.to_string());
+                let _ = tx.send(FetchResult::WeekTopCategories(result));
+            });
+        }
+
+        if cache.week_top_domains.should_refetch(now) {
+            cache.week_top_domains.mark_in_flight();
+            let tx = tx.clone();
+            tokio::spawn(async move {
+                let client = daylog_core::aw_client::AwClient::new();
+                let result =
+                    daylog_core::queries::top_domains(&client, TimeRange::LastNDays { days: 7 })
+                        .await
+                        .map(|raw| TopDomainRow::parse_many(&raw))
+                        .map_err(|e| e.to_string());
+                let _ = tx.send(FetchResult::WeekTopDomains(result));
+            });
+        }
     }
 
     // Month-tab fetches are gated on the active tab so Today's
@@ -551,11 +622,10 @@ pub fn dispatch_refetches(
         let tx = tx.clone();
         tokio::spawn(async move {
             let client = daylog_core::aw_client::AwClient::new();
-            let result =
-                daylog_core::queries::top_apps(&client, TimeRange::LastNDays { days: 30 })
-                    .await
-                    .map(|raw| TopAppRow::parse_many(&raw))
-                    .map_err(|e| e.to_string());
+            let result = daylog_core::queries::top_apps(&client, TimeRange::LastNDays { days: 30 })
+                .await
+                .map(|raw| TopAppRow::parse_many(&raw))
+                .map_err(|e| e.to_string());
             let _ = tx.send(FetchResult::MonthTopApps(result));
         });
     }
@@ -643,8 +713,7 @@ pub fn build_week_buckets(
 /// other roots alphabetically. Sort key is stable across days so segment
 /// stacks line up visually.
 fn bucketize_roots(events: &[CategorizedEvent]) -> Vec<(String, f64)> {
-    let mut totals: std::collections::BTreeMap<String, f64> =
-        std::collections::BTreeMap::new();
+    let mut totals: std::collections::BTreeMap<String, f64> = std::collections::BTreeMap::new();
     for ev in events {
         let root = ev
             .category
@@ -685,7 +754,10 @@ mod tests {
         assert!(c.value().is_none());
         assert!(!c.is_in_flight());
         assert!(!c.is_offline());
-        assert!(c.should_refetch(t0()), "fresh cache should always refetch first");
+        assert!(
+            c.should_refetch(t0()),
+            "fresh cache should always refetch first"
+        );
     }
 
     #[test]
@@ -818,7 +890,10 @@ mod tests {
         for _ in 0..OFFLINE_THRESHOLD {
             dc.kpi.apply_failure("err".into(), now);
         }
-        assert!(dc.any_offline(), "kpi failures must flip the aggregate flag");
+        assert!(
+            dc.any_offline(),
+            "kpi failures must flip the aggregate flag"
+        );
     }
 
     #[test]
@@ -883,7 +958,10 @@ mod tests {
         for _ in 0..OFFLINE_THRESHOLD {
             dc.top_apps.apply_failure("err".into(), now);
         }
-        assert!(dc.any_offline(), "one offline cache flips the aggregate flag");
+        assert!(
+            dc.any_offline(),
+            "one offline cache flips the aggregate flag"
+        );
     }
 
     #[test]
