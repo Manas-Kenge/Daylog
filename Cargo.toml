@@ -1,9 +1,10 @@
 [workspace]
-members = ["src-tauri", "crates/daylog-core", "crates/daylog-tui"]
+members = ["crates/daylog-core", "crates/daylog-tui"]
 resolver = "2"
 
-# Shared dependency versions. Members opt into features per-crate so the TUI
-# binary doesn't pull in tokio's `process` feature it'll never use.
+# Shared dependency versions. The Tauri shell crate previously lived at
+# `src-tauri/` and pulled in tokio's `process` feature; the TUI does not
+# need it, so feature opt-in stays per-crate.
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
