@@ -16,7 +16,10 @@ use ratatui::{
     Frame,
 };
 
-use crate::theme::Theme;
+use throbber_widgets_tui::ThrobberState;
+
+use crate::theme::{self, Theme};
+use crate::ui::render_skeleton_body;
 
 const SECS_PER_DAY: f64 = 24.0 * 60.0 * 60.0;
 
@@ -125,6 +128,7 @@ pub fn render(
     theme: &Theme,
     events: Option<&Vec<CategorizedEvent>>,
     in_flight: bool,
+    throbber: &ThrobberState,
 ) {
     let title_style = Style::default().fg(theme.fg).add_modifier(Modifier::BOLD);
     let title = if in_flight {
@@ -138,7 +142,9 @@ pub fn render(
 
     let block = Block::default()
         .borders(Borders::ALL)
+        .border_type(theme::PANEL_BORDER)
         .border_style(theme.border_dim_style())
+        .padding(theme::PANEL_PADDING_TIGHT)
         .title(title);
 
     let inner = block.inner(area);
@@ -161,10 +167,10 @@ pub fn render(
     };
 
     let Some(events) = events else {
-        // Skeleton — dim ellipsis on the stripes; axis still renders so
-        // the panel shape doesn't collapse before data lands.
-        let p = Paragraph::new("\u{2026}").style(Style::default().fg(theme.dim));
-        f.render_widget(p, stripes_area);
+        // Skeleton — animated throbber while a fetch is in flight, static
+        // ellipsis otherwise. Axis still renders so the panel shape
+        // doesn't collapse before data lands.
+        render_skeleton_body(f, stripes_area, theme, throbber, in_flight);
         if let Some(axis) = axis_area {
             f.render_widget(axis_paragraph(theme, stripes_area.width), axis);
         }

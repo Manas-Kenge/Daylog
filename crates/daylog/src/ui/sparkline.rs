@@ -4,9 +4,8 @@
 //! suffix; Narrow drops the suffix; Stacked never reaches this widget
 //! (the layout collapses).
 
-use chrono::{Datelike, Local, Weekday};
 use ratatui::{
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::Rect,
     style::Style,
     text::{Line, Span},
     widgets::{Paragraph, Sparkline},
@@ -48,36 +47,13 @@ pub fn render(
         return;
     }
 
-    // Wide mode reserves a slot on the LEFT for the inline label
-    // (e.g. "7-day Sat-Fri  ▁▂▄▅█▇▆"). Reading order matches the
-    // sparkline's left→right time progression.
-    let (label_area, chart_area) = match layout {
-        LayoutMode::Wide => {
-            let chunks = Layout::default()
-                .direction(Direction::Horizontal)
-                .constraints([Constraint::Length(15), Constraint::Min(7)])
-                .split(area);
-            (Some(chunks[0]), chunks[1])
-        }
-        LayoutMode::Narrow | LayoutMode::Stacked => (None, area),
-    };
-
-    if let Some(label_area) = label_area {
-        let label = weekday_range_label(Local::now().weekday());
-        let p = Paragraph::new(Line::from(Span::styled(
-            format!("7-day {}  ", label),
-            Style::default().fg(theme.dim),
-        )));
-        f.render_widget(p, label_area);
-    }
-
-    // Green (chart_3) instead of ember — reserves ember for the KPI
-    // strip's pattern-shift accent. Two ember surfaces in one row would
-    // wash out which one is the actual signal.
+    // The wrapping panel now carries the "7-day rhythm" title; we no
+    // longer reserve a left-side label slot. Bars get the full inner
+    // width so the trend reads at a glance.
     let spark = Sparkline::default()
         .data(&series)
-        .style(Style::default().fg(theme.chart_3));
-    f.render_widget(spark, chart_area);
+        .style(Style::default().fg(theme.dim));
+    f.render_widget(spark, area);
 }
 
 /// Build a 7-element series of active minutes, oldest-to-newest. Today
@@ -93,32 +69,6 @@ fn build_series(today_secs: Option<f64>, past: Option<&[f64; 7]>) -> Vec<u64> {
         .collect();
     out.push(today);
     out
-}
-
-/// Three-letter weekday range: oldest day - today's weekday. e.g. when
-/// today is Friday, the 7-day window starts the previous Saturday and
-/// the label reads `Sat-Fri`.
-fn weekday_range_label(today: Weekday) -> String {
-    let oldest = today_weekday_minus(today, 6);
-    format!("{}-{}", short_name(oldest), short_name(today))
-}
-
-fn today_weekday_minus(today: Weekday, days: i64) -> Weekday {
-    let n_today = today.num_days_from_monday() as i64;
-    let n = (n_today - days).rem_euclid(7) as u32;
-    Weekday::try_from(n as u8).unwrap_or(Weekday::Mon)
-}
-
-fn short_name(w: Weekday) -> &'static str {
-    match w {
-        Weekday::Mon => "Mon",
-        Weekday::Tue => "Tue",
-        Weekday::Wed => "Wed",
-        Weekday::Thu => "Thu",
-        Weekday::Fri => "Fri",
-        Weekday::Sat => "Sat",
-        Weekday::Sun => "Sun",
-    }
 }
 
 #[cfg(test)]
@@ -146,12 +96,5 @@ mod tests {
     fn build_series_handles_missing_inputs() {
         let series = build_series(None, None);
         assert_eq!(series, vec![0; 7]);
-    }
-
-    #[test]
-    fn weekday_range_label_is_oldest_to_today() {
-        assert_eq!(weekday_range_label(Weekday::Fri), "Sat-Fri");
-        assert_eq!(weekday_range_label(Weekday::Mon), "Tue-Mon");
-        assert_eq!(weekday_range_label(Weekday::Sun), "Mon-Sun");
     }
 }

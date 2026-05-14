@@ -21,6 +21,8 @@ path = "src/main.rs"
 daylog-core = { path = "../daylog-core", version = "0.1.3" }
 ratatui = "0.29"
 crossterm = { version = "0.28", features = ["event-stream"] }
+throbber-widgets-tui = "0.8"
+tachyonfx = "0.9"
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "signal", "time", "process"] }
 tokio-stream = "0.1"
 serde_json = { workspace = true }

@@ -1,11 +1,16 @@
 //! Application state + main event loop.
 
+use std::cell::RefCell;
 use std::io;
 use std::time::{Duration, Instant};
 
 use crossterm::event::{Event, EventStream, KeyCode, KeyEventKind, KeyModifiers};
 use daylog_core::time::TimeRange;
+use ratatui::style::Color;
 use ratatui::Terminal;
+use tachyonfx::fx::Direction;
+use tachyonfx::{fx, Effect, Interpolation, Shader};
+use throbber_widgets_tui::ThrobberState;
 use tokio::sync::mpsc;
 use tokio::time::interval;
 use tokio_stream::StreamExt;
@@ -95,7 +100,6 @@ impl RangeChip {
 pub struct App {
     pub tab: Tab,
     pub range_chip: RangeChip,
-    pub help_visible: bool,
     pub quit: bool,
     pub dirty: bool,
     pub data: DataCache,
@@ -103,6 +107,18 @@ pub struct App {
     /// colours and modifiers from here so the spec's token table is the
     /// only source of truth.
     pub theme: Theme,
+    /// Shared throbber animation state. One state for the whole app —
+    /// every panel's spinner advances on the same 250ms tick so they look
+    /// like one synchronised heartbeat instead of N drifting clocks.
+    pub throbber: ThrobberState,
+    /// Currently-running body-scoped effect, if any. RefCell because
+    /// `render(f, &App)` is immutable but `Effect::process` needs `&mut`.
+    /// On first launch we seed a fade-in; tab transitions overwrite with a
+    /// sweep. Cleared once the effect completes.
+    pub effect: RefCell<Option<Effect>>,
+    /// Elapsed since last redraw — fed to `Effect::process` so animations
+    /// advance in real time regardless of redraw cadence.
+    pub last_tick: RefCell<tachyonfx::Duration>,
 }
 
 impl App {
@@ -117,12 +133,46 @@ impl App {
         Self {
             tab: Tab::Today,
             range_chip: RangeChip::Today,
-            help_visible: false,
             quit: false,
             dirty: true,
             data: DataCache::new(),
             theme,
+            throbber: ThrobberState::default(),
+            effect: RefCell::new(None),
+            last_tick: RefCell::new(tachyonfx::Duration::from_millis(0)),
         }
+    }
+
+    /// Seed a body-scoped fade-from-background effect. Called by the
+    /// event loop just before the first draw so the cold-start paint
+    /// dissolves in. Not invoked from `with_theme` because the test
+    /// harness builds fresh `App`s and expects pixel-exact colours on the
+    /// first frame — the fade would shift those during the transition.
+    pub fn queue_fade_in(&mut self) {
+        let bg = self.theme.bg;
+        *self.effect.borrow_mut() = Some(fx::fade_from(
+            bg,
+            bg,
+            (
+                tachyonfx::Duration::from_millis(400),
+                Interpolation::Linear,
+            ),
+        ));
+    }
+
+    /// Queue a left-to-right sweep across the body. Fired on tab change.
+    pub fn queue_tab_sweep(&mut self) {
+        let bg: Color = self.theme.bg;
+        *self.effect.borrow_mut() = Some(fx::sweep_in(
+            Direction::LeftToRight,
+            10,
+            0,
+            bg,
+            (
+                tachyonfx::Duration::from_millis(220),
+                Interpolation::Linear,
+            ),
+        ));
     }
 
     pub fn range(&self) -> TimeRange {
@@ -162,6 +212,11 @@ pub async fn event_loop(terminal: &mut Terminal<Backend>, app: &mut App) -> io::
     let range = app.range();
     dispatch_refetches(&mut app.data, range, app.tab, &result_tx, Instant::now());
 
+    // Seed the cold-start fade-in so the first paint doesn't snap.
+    app.queue_fade_in();
+
+    let mut last_draw = Instant::now();
+
     loop {
         tokio::select! {
             biased;
@@ -179,15 +234,38 @@ pub async fn event_loop(terminal: &mut Terminal<Backend>, app: &mut App) -> io::
             _ = tick.tick() => {
                 let range = app.range();
                 dispatch_refetches(&mut app.data, range, app.tab, &result_tx, Instant::now());
+                // Advance the shared throbber once per tick so the
+                // skeleton spinner moves at a calm 4 fps.
+                app.throbber.calc_next();
                 // Always redraw on tick so transient indicators (offline
                 // dot, "loading" tickers) animate without input.
                 app.dirty = true;
             }
         }
 
-        if app.dirty {
+        // Keep redrawing while an animation effect is in flight so tachyonfx
+        // can advance state. Without this gate, the redraw stops as soon as
+        // `dirty` clears and the effect freezes mid-frame.
+        let has_effect = app.effect.borrow().is_some();
+        if app.dirty || has_effect {
+            let now = Instant::now();
+            let elapsed = now.duration_since(last_draw);
+            *app.last_tick.borrow_mut() = tachyonfx::Duration::from_millis(
+                elapsed.as_millis().min(u32::MAX as u128) as u32,
+            );
+            last_draw = now;
             terminal.draw(|f| crate::ui::render(f, app))?;
             app.dirty = false;
+            // Drop completed effects so the redraw loop can quiesce.
+            let done = app
+                .effect
+                .borrow()
+                .as_ref()
+                .map(|e| e.done())
+                .unwrap_or(false);
+            if done {
+                *app.effect.borrow_mut() = None;
+            }
         }
 
         if app.quit {
@@ -209,28 +287,17 @@ fn handle_event(app: &mut App, evt: Event) {
 }
 
 fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
-    if app.help_visible {
-        // Help overlay swallows everything except dismiss keys.
-        if matches!(code, KeyCode::Char('?') | KeyCode::Esc | KeyCode::Char('q')) {
-            app.help_visible = false;
-            app.dirty = true;
-        }
-        return;
-    }
-
     match code {
         KeyCode::Char('q') | KeyCode::Esc => app.quit = true,
         KeyCode::Char('c') if mods.contains(KeyModifiers::CONTROL) => app.quit = true,
-        KeyCode::Char('?') => {
-            app.help_visible = true;
-            app.dirty = true;
-        }
         KeyCode::Tab | KeyCode::Char('l') | KeyCode::Right => {
             app.tab = app.tab.next();
+            app.queue_tab_sweep();
             app.dirty = true;
         }
         KeyCode::BackTab | KeyCode::Char('h') | KeyCode::Left => {
             app.tab = app.tab.prev();
+            app.queue_tab_sweep();
             app.dirty = true;
         }
         KeyCode::Char('r') => {
@@ -247,7 +314,11 @@ fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
             // 1..4 jump to tab N (Today/Week/Month/Settings).
             let idx = (d as u8 - b'1') as usize;
             if idx < Tab::ALL.len() {
-                app.tab = Tab::ALL[idx];
+                let new = Tab::ALL[idx];
+                if new != app.tab {
+                    app.queue_tab_sweep();
+                }
+                app.tab = new;
                 app.dirty = true;
             }
         }
@@ -373,17 +444,4 @@ mod tests {
         assert_eq!(app.range_chip, RangeChip::Yesterday);
     }
 
-    #[test]
-    fn help_overlay_swallows_navigation() {
-        let mut app = App::new();
-        app.help_visible = true;
-        handle_key(&mut app, KeyCode::Char('l'), KeyModifiers::NONE);
-        // Tab cycle was suppressed.
-        assert_eq!(app.tab, Tab::Today);
-        assert!(app.help_visible, "help still showing");
-
-        // Esc closes help.
-        handle_key(&mut app, KeyCode::Esc, KeyModifiers::NONE);
-        assert!(!app.help_visible);
-    }
 }

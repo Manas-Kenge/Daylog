@@ -7,7 +7,7 @@
 use chrono::{Datelike, NaiveDate, Weekday};
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
-    style::{Modifier, Style},
+    style::Style,
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph},
     Frame,
@@ -15,13 +15,14 @@ use ratatui::{
 
 use crate::app::App;
 use crate::data::{WeekDayBuckets, WEEK_ROOT_ORDER};
-use crate::theme::Theme;
+use crate::theme::{self, Theme};
 use crate::ui::stacked_bars::StackedBars;
 use crate::ui::{
     format_duration,
     overview::{
         panel_title, render_top_apps_panel, render_top_categories_panel, render_top_domains_panel,
     },
+    render_skeleton_body,
 };
 
 /// Root displayed in the Work-callout. Matches the desktop's WORK_ROOT.
@@ -57,7 +58,7 @@ fn render_top_row(
         .constraints([Constraint::Percentage(70), Constraint::Percentage(30)])
         .split(area);
     render_activity_card(f, cols[0], &app.theme, week, in_flight, last_error);
-    render_this_week_card(f, cols[1], &app.theme, week, in_flight);
+    render_this_week_card(f, cols[1], &app.theme, week, in_flight, &app.throbber);
 }
 
 fn render_rollup_row(f: &mut Frame, area: Rect, app: &App) {
@@ -75,6 +76,7 @@ fn render_rollup_row(f: &mut Frame, area: Rect, app: &App) {
         &app.theme,
         &app.data.week_top_apps,
         " Top apps · 7 days ",
+        &app.throbber,
     );
     render_top_categories_panel(
         f,
@@ -82,6 +84,7 @@ fn render_rollup_row(f: &mut Frame, area: Rect, app: &App) {
         &app.theme,
         &app.data.week_top_categories,
         " Top categories · 7 days ",
+        &app.throbber,
     );
     render_top_domains_panel(
         f,
@@ -89,6 +92,7 @@ fn render_rollup_row(f: &mut Frame, area: Rect, app: &App) {
         &app.theme,
         &app.data.week_top_domains,
         " Top domains · 7 days ",
+        &app.throbber,
     );
 }
 
@@ -98,17 +102,19 @@ fn render_this_week_card(
     theme: &Theme,
     week: Option<&[WeekDayBuckets]>,
     in_flight: bool,
+    throbber: &throbber_widgets_tui::ThrobberState,
 ) {
     let block = Block::default()
         .borders(Borders::ALL)
+        .border_type(theme::PANEL_BORDER)
         .border_style(theme.border_dim_style())
+        .padding(theme::PANEL_PADDING)
         .title(panel_title(theme, " This week ", in_flight));
     let inner = block.inner(area);
     f.render_widget(block, area);
 
     let Some(days) = week else {
-        let p = Paragraph::new("\u{2026}").style(theme.dim_style());
-        f.render_widget(p, inner);
+        render_skeleton_body(f, inner, theme, throbber, in_flight);
         return;
     };
 
@@ -168,11 +174,12 @@ fn render_activity_card(
     in_flight: bool,
     last_error: Option<&str>,
 ) {
-    let title = title_with_status(" 7-Day Activity Breakdown ", in_flight);
     let block = Block::default()
         .borders(Borders::ALL)
+        .border_type(theme::PANEL_BORDER)
         .border_style(theme.border_dim_style())
-        .title(title);
+        .padding(theme::PANEL_PADDING_TIGHT)
+        .title(panel_title(theme, " 7-Day Activity Breakdown ", in_flight));
     let inner = block.inner(area);
     f.render_widget(block, area);
 
@@ -404,18 +411,6 @@ fn format_month_day(date: NaiveDate) -> String {
         _ => "Dec",
     };
     format!("{} {}", month, date.day())
-}
-
-fn title_with_status<'a>(base: &'a str, in_flight: bool) -> Line<'a> {
-    if in_flight {
-        Line::from(vec![
-            Span::raw(base),
-            Span::styled("\u{21bb}", Style::default().add_modifier(Modifier::DIM)),
-            Span::raw(" "),
-        ])
-    } else {
-        Line::from(base)
-    }
 }
 
 #[cfg(test)]

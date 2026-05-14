@@ -30,12 +30,13 @@ use ratatui::{
 };
 
 use crate::app::{App, RangeChip};
-use crate::theme::Theme;
+use crate::theme::{self, Theme};
 use crate::ui::{
     format_duration,
     overview::{
         panel_title, render_top_apps_panel, render_top_categories_panel, render_top_domains_panel,
     },
+    render_skeleton_body,
 };
 
 /// Width reserved on the heatmap's left for the Mon/Wed/Fri labels —
@@ -80,6 +81,7 @@ fn render_rollup_row(f: &mut Frame, area: Rect, app: &App) {
         &app.theme,
         &app.data.month_top_apps,
         " Top apps · 30d ",
+        &app.throbber,
     );
     render_top_categories_panel(
         f,
@@ -87,6 +89,7 @@ fn render_rollup_row(f: &mut Frame, area: Rect, app: &App) {
         &app.theme,
         &app.data.month_top_categories,
         " Top categories · 30d ",
+        &app.throbber,
     );
     render_top_domains_panel(
         f,
@@ -94,6 +97,7 @@ fn render_rollup_row(f: &mut Frame, area: Rect, app: &App) {
         &app.theme,
         &app.data.month_top_domains,
         " Top domains · 30d ",
+        &app.throbber,
     );
 }
 
@@ -102,14 +106,15 @@ fn render_heatmap(f: &mut Frame, area: Rect, app: &App) {
     let in_flight = app.data.month_trailing_year.is_in_flight();
     let block = Block::default()
         .borders(Borders::ALL)
+        .border_type(theme::PANEL_BORDER)
         .border_style(theme.border_dim_style())
+        .padding(theme::PANEL_PADDING_TIGHT)
         .title(panel_title(theme, " Year heatmap ", in_flight));
     let inner = block.inner(area);
     f.render_widget(block, area);
 
     let Some(trailing) = app.data.month_trailing_year.value() else {
-        let p = Paragraph::new("\u{2026}").style(Style::default().fg(theme.dim));
-        f.render_widget(p, inner);
+        render_skeleton_body(f, inner, theme, &app.throbber, in_flight);
         return;
     };
 
@@ -324,14 +329,15 @@ fn render_this_month(f: &mut Frame, area: Rect, app: &App) {
     let in_flight = app.data.month_trailing_year.is_in_flight();
     let block = Block::default()
         .borders(Borders::ALL)
+        .border_type(theme::PANEL_BORDER)
         .border_style(theme.border_dim_style())
+        .padding(theme::PANEL_PADDING)
         .title(panel_title(theme, " This month ", in_flight));
     let inner = block.inner(area);
     f.render_widget(block, area);
 
     let Some(trailing) = app.data.month_trailing_year.value() else {
-        let p = Paragraph::new("\u{2026}").style(Style::default().fg(theme.dim));
-        f.render_widget(p, inner);
+        render_skeleton_body(f, inner, theme, &app.throbber, in_flight);
         return;
     };
 

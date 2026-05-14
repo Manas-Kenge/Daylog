@@ -14,9 +14,10 @@ use ratatui::{
     style::{Modifier, Style},
     symbols,
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, Paragraph},
+    widgets::{Paragraph, Tabs},
     Frame, Terminal,
 };
+use tachyonfx::EffectRenderer;
 
 use crate::app::{App, Tab};
 use crate::theme::Theme;
@@ -57,73 +58,126 @@ pub fn restore_terminal_raw() -> io::Result<()> {
 }
 
 pub fn render(f: &mut Frame, app: &App) {
-    let theme = &app.theme;
-
-    // Outer frame. Just "daylog" (bold) in the top border; the active-tab
-    // name lives in the tab strip below. Live indicator + clock used to
-    // sit on the right of this border but were removed in the chrome
-    // cleanup pass — offline state surfaces in the footer pill instead.
-    let outer = Block::default()
-        .borders(Borders::ALL)
-        .border_style(theme.border_dim_style())
-        .title(header_title(theme));
-    let inner = outer.inner(f.area());
-    f.render_widget(outer, f.area());
-
+    // Tabs sit flush with the terminal top — no outer frame. The row
+    // between the tab strip and the first card carries the category
+    // color legend, right-aligned so the left side still reads as a
+    // margin while the dots explain what every chart's colours mean.
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(1), // tab strip
+            Constraint::Length(1), // legend row (also acts as the visual margin)
             Constraint::Min(0),    // body
             Constraint::Length(1), // footer
         ])
-        .split(inner);
+        .split(f.area());
 
-    render_body(f, chunks[1], app);
-    render_footer(f, chunks[2], app);
-    // Chrome paints last so panel titles can never cover the tab strip.
+    render_body(f, chunks[2], app);
+    render_footer(f, chunks[3], app);
     render_tabs(f, chunks[0], app);
+    render_color_legend(f, chunks[1], &app.theme);
 
-    if app.help_visible {
-        render_help(f, app);
+    // tachyonfx animations ride on top of the rendered body. Scoped to
+    // the body chunk so the tab strip and footer never flicker mid-transition.
+    if let Some(effect) = app.effect.borrow_mut().as_mut() {
+        let last_tick = *app.last_tick.borrow();
+        f.render_effect(effect, chunks[2], last_tick);
     }
 }
 
-fn header_title(theme: &Theme) -> Line<'static> {
-    Line::from(vec![
-        Span::raw(" "),
-        Span::styled(
-            "daylog",
-            Style::default().fg(theme.fg).add_modifier(Modifier::BOLD),
-        ),
-        Span::raw(" "),
-    ])
-    .left_aligned()
+/// Right-aligned colour legend for the category palette. Every chart that
+/// paints by category (Today's timeline, Week stacked bars, hourly chart's
+/// spectrum, Top apps / categories / domains bars) draws from the same six
+/// `chart_n` slots — without this row the user has no key to read them.
+///
+/// Labels drop progressively as the terminal narrows: full set ≥ 80 cols,
+/// abbreviated names < 80, dots-only < 50, hidden < 30. The 2-col right
+/// inset mirrors the tab strip so the legend ends where the tabs do.
+fn render_color_legend(f: &mut Frame, area: Rect, theme: &Theme) {
+    if area.width < 30 {
+        return;
+    }
+    let labelled = area.width >= 80;
+    let abbreviated = area.width < 80;
+    let dot = "\u{25CF}";
+    let entries: &[(&str, &str, ratatui::style::Color)] = &[
+        ("Work", "Work", theme.chart_1),
+        ("Comms", "Comms", theme.chart_2),
+        ("Media", "Media", theme.chart_3),
+        ("Browsing", "Web", theme.chart_4),
+        ("Documents", "Docs", theme.chart_5),
+        ("Other", "Other", theme.dim),
+    ];
+
+    let label_style = Style::default().fg(theme.dim);
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    for (i, (full, short, color)) in entries.iter().enumerate() {
+        if i > 0 {
+            spans.push(Span::raw("  "));
+        }
+        spans.push(Span::styled(dot.to_string(), Style::default().fg(*color)));
+        if labelled || area.width >= 50 {
+            let name = if abbreviated { *short } else { *full };
+            spans.push(Span::styled(format!(" {}", name), label_style));
+        }
+    }
+
+    let inset = Rect {
+        x: area.x,
+        y: area.y,
+        width: area.width.saturating_sub(2),
+        height: area.height,
+    };
+    let p = Paragraph::new(Line::from(spans)).alignment(Alignment::Right);
+    f.render_widget(p, inset);
 }
 
 fn render_tabs(f: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
-    let active = Style::default()
-        .fg(theme.bg)
-        .bg(theme.ember)
-        .add_modifier(Modifier::BOLD);
-    let inactive = Style::default()
-        .fg(theme.fg)
-        .bg(theme.bg)
-        .add_modifier(Modifier::BOLD);
-    let sep = Style::default().fg(theme.border_dim).bg(theme.bg);
-
-    let mut spans = vec![Span::styled(" ", Style::default().bg(theme.bg))];
-    for (i, tab) in Tab::ALL.iter().enumerate() {
-        if i > 0 {
-            spans.push(Span::styled(format!(" {} ", symbols::line::VERTICAL), sep));
-        }
-        let style = if *tab == app.tab { active } else { inactive };
-        spans.push(Span::styled(format!(" {} ", tab.label()), style));
-    }
-
-    let p = Paragraph::new(Line::from(spans)).style(Style::default().bg(theme.bg));
-    f.render_widget(p, area);
+    // 2-col left indent so the active-tab pill doesn't kiss the terminal
+    // edge. Symmetrical right inset keeps things visually balanced when
+    // wide terminals stretch the strip out.
+    let inset = Rect {
+        x: area.x.saturating_add(2),
+        y: area.y,
+        width: area.width.saturating_sub(4),
+        height: area.height,
+    };
+    // Ratatui's Tabs widget applies `.padding()` uniformly to every tab,
+    // so to give *only* the active pill more orange we wrap its label in
+    // extra spaces. The highlight_style background paints the wrapped
+    // spaces too, producing a pill that breathes; inactive tabs render
+    // bare so the divider sits close to the label as it should.
+    let titles: Vec<Line<'static>> = Tab::ALL
+        .iter()
+        .map(|t| {
+            if *t == app.tab {
+                Line::from(format!("  {}  ", t.label()))
+            } else {
+                Line::from(t.label())
+            }
+        })
+        .collect();
+    let tabs = Tabs::new(titles)
+        .select(app.tab.index())
+        .style(
+            Style::default()
+                .fg(theme.fg)
+                .bg(theme.bg)
+                .add_modifier(Modifier::BOLD),
+        )
+        .highlight_style(
+            Style::default()
+                .fg(theme.bg)
+                .bg(theme.ember)
+                .add_modifier(Modifier::BOLD),
+        )
+        .divider(Span::styled(
+            symbols::DOT,
+            Style::default().fg(theme.border_dim).bg(theme.bg),
+        ))
+        .padding("  ", "  ");
+    f.render_widget(tabs, inset);
 }
 
 fn render_body(f: &mut Frame, area: Rect, app: &App) {
@@ -136,6 +190,10 @@ fn render_body(f: &mut Frame, area: Rect, app: &App) {
 
 fn render_footer(f: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
+    let dim = Style::default().fg(theme.dim);
+    let sep = Style::default().fg(theme.border_dim);
+    let key = Style::default().fg(theme.fg).add_modifier(Modifier::BOLD);
+
     let mut spans = Vec::new();
     if app.data.any_offline() {
         spans.push(Span::styled(
@@ -143,87 +201,84 @@ fn render_footer(f: &mut Frame, area: Rect, app: &App) {
             theme.error_style(),
         ));
         if area.width >= 60 {
-            spans.push(Span::styled(
-                "  \u{00b7}  ",
-                Style::default().fg(theme.border_dim),
-            ));
+            spans.push(Span::styled("  \u{00b7}  ", sep));
         }
     }
-    // Hide key hints below 60 cols — same threshold the tab strip uses.
-    // On narrow terminals the offline pill stays visible (it's the single
-    // most actionable signal) and the hints drop out so nothing clips.
+
+    // The tip surfaces only when we have a confirmed empty Top-domains
+    // result — that's daylog_core's "no aw-watcher-web bucket" signal,
+    // i.e. the browser extension genuinely isn't installed. While the
+    // cache is still pending we don't speculate.
+    let domains_missing = app
+        .data
+        .top_domains
+        .value()
+        .map(|rows| rows.is_empty())
+        .unwrap_or(false);
+
     if area.width >= 60 {
-        let key = Style::default().fg(theme.fg).add_modifier(Modifier::BOLD);
-        let label = Style::default().fg(theme.dim);
-        let sep = Style::default().fg(theme.border_dim);
-        spans.extend(vec![
-            Span::styled("Tab", key),
-            Span::styled(" cycle  ", label),
-            Span::styled("\u{00b7}", sep),
-            Span::styled("  ?", key),
-            Span::styled(" help  ", label),
-            Span::styled("\u{00b7}", sep),
-            Span::styled("  q", key),
-            Span::styled(" quit ", label),
-        ]);
+        if domains_missing {
+            spans.push(Span::styled("tip: ", key));
+            spans.push(Span::styled(
+                "install the browser extension to populate ",
+                dim,
+            ));
+            spans.push(Span::styled("Top domains", key));
+        } else {
+            spans.extend(vec![
+                Span::styled("Tab", key),
+                Span::styled(" cycle  ", dim),
+                Span::styled("\u{00b7}", sep),
+                Span::styled("  q", key),
+                Span::styled(" quit ", dim),
+            ]);
+        }
     }
     let p = Paragraph::new(Line::from(spans)).alignment(Alignment::Right);
     f.render_widget(p, area);
 }
 
-fn render_help(f: &mut Frame, app: &App) {
-    let theme = &app.theme;
-    let area = center_rect(f.area(), 56, 18);
-    f.render_widget(Clear, area);
-
-    let key = Style::default().fg(theme.fg).add_modifier(Modifier::BOLD);
-    let body = Style::default().fg(theme.fg);
-    let dim = Style::default().fg(theme.dim);
-    let section = |s: &'static str| Line::from(Span::styled(s, key));
-
-    let lines = vec![
-        Line::from(Span::styled("Daylog TUI \u{2014} keys", key)),
-        Line::from(""),
-        section("  Tabs"),
-        Line::from(Span::styled("    1 2 3 4         Jump", body)),
-        Line::from(Span::styled("    Tab / \u{2192}         Next", body)),
-        Line::from(Span::styled("    Shift-Tab / \u{2190}   Prev", body)),
-        Line::from(Span::styled("    h / l           Vim cycle", body)),
-        Line::from(""),
-        section("  Range"),
-        Line::from(Span::styled(
-            "    r               Forward    Shift-R   Back",
-            body,
-        )),
-        Line::from(""),
-        section("  General"),
-        Line::from(Span::styled("    ?               Toggle help", body)),
-        Line::from(Span::styled(
-            "    q / Esc         Quit       Ctrl-C    Quit",
-            body,
-        )),
-        Line::from(""),
-        Line::from(Span::styled("  Press ? or Esc to dismiss", dim)),
-    ];
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(theme.border_dim_style())
-        .title(Span::styled(" help ", key));
-    let p = Paragraph::new(lines).block(block);
-    f.render_widget(p, area);
-}
-
-pub fn center_rect(area: Rect, width: u16, height: u16) -> Rect {
-    let w = width.min(area.width);
-    let h = height.min(area.height);
-    let x = area.x + (area.width.saturating_sub(w)) / 2;
-    let y = area.y + (area.height.saturating_sub(h)) / 2;
-    Rect {
-        x,
-        y,
-        width: w,
-        height: h,
+/// Render the body of a panel whose data hasn't arrived yet. Two states:
+///
+/// * `fetching == true`  → an animated throbber span (active fetch in flight).
+/// * `fetching == false` → static `…` (no fetch scheduled, e.g. between
+///   backoff windows).
+///
+/// Callers have already painted the surrounding block; we just fill the
+/// inner area. Centred so the spinner sits in the middle of the panel
+/// instead of huddling in the top-left corner.
+pub fn render_skeleton_body(
+    f: &mut Frame,
+    area: Rect,
+    theme: &Theme,
+    throbber: &throbber_widgets_tui::ThrobberState,
+    fetching: bool,
+) {
+    if area.width == 0 || area.height == 0 {
+        return;
     }
+    let line = if fetching {
+        // `to_symbol_span` is the non-mutating render path — the tick in
+        // app.rs already advanced `throbber` this frame.
+        let widget = throbber_widgets_tui::Throbber::default()
+            .style(Style::default().fg(theme.dim))
+            .throbber_set(throbber_widgets_tui::BRAILLE_SIX_DOUBLE)
+            .use_type(throbber_widgets_tui::WhichUse::Spin);
+        Line::from(widget.to_symbol_span(throbber))
+    } else {
+        Line::from(Span::styled("\u{2026}", Style::default().fg(theme.dim)))
+    };
+    // Centre vertically: place the single-line glyph on the middle row
+    // of the inner panel area instead of letting it pin to the top edge.
+    let y_offset = area.height.saturating_sub(1) / 2;
+    let row = Rect {
+        x: area.x,
+        y: area.y + y_offset,
+        width: area.width,
+        height: 1,
+    };
+    let p = Paragraph::new(line).alignment(Alignment::Center);
+    f.render_widget(p, row);
 }
 
 /// Format a duration in seconds as a short, dashboard-friendly label.
@@ -274,19 +329,20 @@ mod tests {
             out
         };
 
-        let tabs_row = row(1);
-        let body_row = row(2);
+        let tabs_row = row(0);
         assert!(
             tabs_row.contains("Today")
                 && tabs_row.contains("Week")
                 && tabs_row.contains("Month"),
-            "tab strip should be the first inner row: {tabs_row}"
+            "tab strip should be the first row: {tabs_row}"
         );
-        // First body row is the KPI strip (Active / Longest / Best …).
-        // Timeline panel chrome starts a row below.
+        // KPI strip sits inside its own bordered panel below the tab row
+        // (plus a 1-row spacer); the "Active" label lands a few rows below
+        // — search the first few body rows rather than pinning an offset.
+        let active_row_idx = (2..=7).find(|y| row(*y).contains("Active"));
         assert!(
-            body_row.contains("Active"),
-            "body should start with the KPI strip below the tab strip: {body_row}"
+            active_row_idx.is_some(),
+            "KPI strip should appear in the first few rows of the body"
         );
         assert!(
             !tabs_row.contains("Active"),
@@ -295,7 +351,7 @@ mod tests {
 
         let today_x = tabs_row.find("Today").expect("Today tab present") as u16;
         assert_eq!(
-            buf[(today_x, 1)].style().bg,
+            buf[(today_x, 0)].style().bg,
             Some(theme.ember),
             "active tab should have an explicit visible background"
         );

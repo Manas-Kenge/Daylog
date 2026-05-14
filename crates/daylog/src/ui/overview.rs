@@ -23,19 +23,22 @@ use ratatui::{
     Frame,
 };
 
+use throbber_widgets_tui::ThrobberState;
+
 use crate::app::App;
 use crate::data::{Cached, TopAppRow, TopDomainRow};
-use crate::theme::{LayoutMode, Theme};
-use crate::ui::{format_duration, kpi_strip, sparkline, timeline};
+use crate::theme::{self, LayoutMode, Theme};
+use crate::ui::{format_duration, kpi_strip, render_skeleton_body, sparkline, timeline};
 use daylog_core::aggregate::CategorySummary;
 
 pub fn render(f: &mut Frame, area: Rect, app: &App) {
     let layout_mode = Theme::layout_mode(area.width);
 
     // Sparkline only renders Wide. On Narrow / Stacked the slot collapses
-    // so the panels above absorb the room.
+    // so the panels above absorb the room. Wide now reserves 3 rows so the
+    // sparkline can sit in a bordered panel instead of as an orphan strip.
     let sparkline_height = match layout_mode {
-        LayoutMode::Wide => 1,
+        LayoutMode::Wide => 3,
         _ => 0,
     };
 
@@ -47,11 +50,11 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(1),                // KPI strip
+            Constraint::Length(3),                // KPI strip (bordered)
             Constraint::Length(6),                // 24h timeline (borders + 3 stripes + axis + border)
             Constraint::Length(11),               // top apps + categories (8 rows + header + borders)
             Constraint::Length(10),               // hourly + domains
-            Constraint::Length(sparkline_height), // 7-day sparkline (Wide only)
+            Constraint::Length(sparkline_height), // 7-day sparkline panel (Wide only)
             Constraint::Min(0),                   // flex blank
         ])
         .split(area);
@@ -68,9 +71,21 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
 
 fn render_kpi_strip(f: &mut Frame, area: Rect, app: &App, layout_mode: LayoutMode) {
     let theme: &Theme = &app.theme;
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(theme::PANEL_BORDER)
+        .border_style(theme.border_dim_style())
+        .padding(theme::PANEL_PADDING_TIGHT)
+        .title(panel_title(
+            theme,
+            " Snapshot ",
+            app.data.kpi.is_in_flight(),
+        ));
+    let inner = block.inner(area);
+    f.render_widget(block, area);
     let kpi = app.data.kpi.value();
     let kpi_err = app.data.kpi.last_error();
-    kpi_strip::render(f, area, theme, layout_mode, kpi, kpi_err);
+    kpi_strip::render(f, inner, theme, layout_mode, kpi, kpi_err);
 }
 
 fn render_timeline(f: &mut Frame, area: Rect, app: &App) {
@@ -80,15 +95,28 @@ fn render_timeline(f: &mut Frame, area: Rect, app: &App) {
         &app.theme,
         app.data.timeline_events.value(),
         app.data.timeline_events.is_in_flight(),
+        &app.throbber,
     );
 }
 
 fn render_sparkline(f: &mut Frame, area: Rect, app: &App, layout_mode: LayoutMode) {
     let theme: &Theme = &app.theme;
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(theme::PANEL_BORDER)
+        .border_style(theme.border_dim_style())
+        .padding(theme::PANEL_PADDING_TIGHT)
+        .title(panel_title(
+            theme,
+            " 7-day rhythm ",
+            app.data.trailing_active.is_in_flight(),
+        ));
+    let inner = block.inner(area);
+    f.render_widget(block, area);
     let kpi = app.data.kpi.value();
     let trailing = app.data.trailing_active.value();
     let today_active = kpi.map(|k| k.active_secs);
-    sparkline::render(f, area, theme, layout_mode, today_active, trailing);
+    sparkline::render(f, inner, theme, layout_mode, today_active, trailing);
 }
 
 fn render_apps_categories_row(f: &mut Frame, area: Rect, app: &App) {
@@ -96,13 +124,21 @@ fn render_apps_categories_row(f: &mut Frame, area: Rect, app: &App) {
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
         .split(area);
-    render_top_apps_panel(f, cols[0], &app.theme, &app.data.top_apps, " Top apps ");
+    render_top_apps_panel(
+        f,
+        cols[0],
+        &app.theme,
+        &app.data.top_apps,
+        " Top apps ",
+        &app.throbber,
+    );
     render_top_categories_panel(
         f,
         cols[1],
         &app.theme,
         &app.data.top_categories,
         " Top categories ",
+        &app.throbber,
     );
 }
 
@@ -116,7 +152,14 @@ fn render_hourly_domains_row(f: &mut Frame, area: Rect, app: &App) {
         .constraints([Constraint::Length(46), Constraint::Min(20)])
         .split(area);
     render_hourly(f, cols[0], app);
-    render_top_domains_panel(f, cols[1], &app.theme, &app.data.top_domains, " Top domains ");
+    render_top_domains_panel(
+        f,
+        cols[1],
+        &app.theme,
+        &app.data.top_domains,
+        " Top domains ",
+        &app.throbber,
+    );
 }
 
 /// Bold + theme.fg panel title. Lives in the panel's top border but
@@ -141,17 +184,19 @@ pub(super) fn render_top_apps_panel(
     theme: &Theme,
     cache: &Cached<Vec<TopAppRow>>,
     title: &'static str,
+    throbber: &ThrobberState,
 ) {
     let block = Block::default()
         .borders(Borders::ALL)
+        .border_type(theme::PANEL_BORDER)
         .border_style(theme.border_dim_style())
+        .padding(theme::PANEL_PADDING)
         .title(panel_title(theme, title, cache.is_in_flight()));
 
     let Some(rows) = cache.value() else {
-        let p = Paragraph::new("\u{2026}")
-            .block(block)
-            .style(Style::default().fg(theme.dim));
-        f.render_widget(p, area);
+        let inner = block.inner(area);
+        f.render_widget(block, area);
+        render_skeleton_body(f, inner, theme, throbber, cache.is_in_flight());
         return;
     };
 
@@ -166,7 +211,7 @@ pub(super) fn render_top_apps_panel(
     let max_secs = rows.iter().map(|r| r.duration_secs).fold(0.0_f64, f64::max);
 
     let header = Row::new(vec![
-        Cell::from(" #").style(Style::default().fg(theme.dim)),
+        Cell::from("#").style(Style::default().fg(theme.dim)),
         Cell::from("App").style(Style::default().fg(theme.dim)),
         Cell::from("Active").style(Style::default().fg(theme.dim)),
         Cell::from(""),
@@ -200,7 +245,7 @@ pub(super) fn top_app_row(
 ) -> Row<'static> {
     let bar = proportional_bar(row.duration_secs, max_secs, 8);
     Row::new(vec![
-        Cell::from(format!(" {}", rank)).style(Style::default().fg(theme.dim)),
+        Cell::from(format!("{}", rank)).style(Style::default().fg(theme.dim)),
         Cell::from(row.name.clone())
             .style(Style::default().fg(theme.fg).add_modifier(Modifier::BOLD)),
         Cell::from(format_duration(row.duration_secs)).style(Style::default().fg(theme.fg)),
@@ -214,17 +259,19 @@ pub(super) fn render_top_categories_panel(
     theme: &Theme,
     cache: &Cached<Vec<CategorySummary>>,
     title: &'static str,
+    throbber: &ThrobberState,
 ) {
     let block = Block::default()
         .borders(Borders::ALL)
+        .border_type(theme::PANEL_BORDER)
         .border_style(theme.border_dim_style())
+        .padding(theme::PANEL_PADDING)
         .title(panel_title(theme, title, cache.is_in_flight()));
 
     let Some(rows) = cache.value() else {
-        let p = Paragraph::new("\u{2026}")
-            .block(block)
-            .style(Style::default().fg(theme.dim));
-        f.render_widget(p, area);
+        let inner = block.inner(area);
+        f.render_widget(block, area);
+        render_skeleton_body(f, inner, theme, throbber, cache.is_in_flight());
         return;
     };
 
@@ -239,7 +286,7 @@ pub(super) fn render_top_categories_panel(
     let max_secs = rows.iter().map(|r| r.duration).fold(0.0_f64, f64::max);
 
     let header = Row::new(vec![
-        Cell::from(" #").style(Style::default().fg(theme.dim)),
+        Cell::from("#").style(Style::default().fg(theme.dim)),
         Cell::from("Category").style(Style::default().fg(theme.dim)),
         Cell::from("Active").style(Style::default().fg(theme.dim)),
         Cell::from(""),
@@ -277,7 +324,7 @@ pub(super) fn category_row(
     // the name column AND by the timeline above; per-row bar colouring
     // here was redundant and made the panel feel louder than its siblings.
     Row::new(vec![
-        Cell::from(format!(" {}", rank)).style(Style::default().fg(theme.dim)),
+        Cell::from(format!("{}", rank)).style(Style::default().fg(theme.dim)),
         Cell::from(name).style(Style::default().fg(theme.fg).add_modifier(Modifier::BOLD)),
         Cell::from(format_duration(row.duration)).style(Style::default().fg(theme.fg)),
         Cell::from(bar).style(Style::default().fg(theme.chart_5)),
@@ -290,17 +337,19 @@ pub(super) fn render_top_domains_panel(
     theme: &Theme,
     cache: &Cached<Vec<TopDomainRow>>,
     title: &'static str,
+    throbber: &ThrobberState,
 ) {
     let block = Block::default()
         .borders(Borders::ALL)
+        .border_type(theme::PANEL_BORDER)
         .border_style(theme.border_dim_style())
+        .padding(theme::PANEL_PADDING)
         .title(panel_title(theme, title, cache.is_in_flight()));
 
     let Some(rows) = cache.value() else {
-        let p = Paragraph::new("\u{2026}")
-            .block(block)
-            .style(Style::default().fg(theme.dim));
-        f.render_widget(p, area);
+        let inner = block.inner(area);
+        f.render_widget(block, area);
+        render_skeleton_body(f, inner, theme, throbber, cache.is_in_flight());
         return;
     };
 
@@ -332,7 +381,7 @@ pub(super) fn render_top_domains_panel(
     let max_secs = rows.iter().map(|r| r.duration_secs).fold(0.0_f64, f64::max);
 
     let header = Row::new(vec![
-        Cell::from(" #").style(Style::default().fg(theme.dim)),
+        Cell::from("#").style(Style::default().fg(theme.dim)),
         Cell::from("Domain").style(Style::default().fg(theme.dim)),
         Cell::from("Active").style(Style::default().fg(theme.dim)),
         Cell::from(""),
@@ -365,7 +414,7 @@ pub(super) fn top_domain_row(
 ) -> Row<'static> {
     let bar = proportional_bar(row.duration_secs, max_secs, 8);
     Row::new(vec![
-        Cell::from(format!(" {}", rank)).style(Style::default().fg(theme.dim)),
+        Cell::from(format!("{}", rank)).style(Style::default().fg(theme.dim)),
         Cell::from(row.domain.clone())
             .style(Style::default().fg(theme.fg).add_modifier(Modifier::BOLD)),
         Cell::from(format_duration(row.duration_secs)).style(Style::default().fg(theme.fg)),
@@ -393,7 +442,9 @@ fn render_hourly(f: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
     let block = Block::default()
         .borders(Borders::ALL)
+        .border_type(theme::PANEL_BORDER)
         .border_style(theme.border_dim_style())
+        .padding(theme::PANEL_PADDING_TIGHT)
         .title(panel_title(
             theme,
             " Hourly distribution ",
@@ -401,10 +452,9 @@ fn render_hourly(f: &mut Frame, area: Rect, app: &App) {
         ));
 
     let Some(buckets) = app.data.hourly.value() else {
-        let p = Paragraph::new("\u{2026}")
-            .block(block)
-            .style(Style::default().fg(theme.dim));
-        f.render_widget(p, area);
+        let inner = block.inner(area);
+        f.render_widget(block, area);
+        render_skeleton_body(f, inner, theme, &app.throbber, app.data.hourly.is_in_flight());
         return;
     };
 
@@ -620,10 +670,12 @@ mod tests {
             "missing Hourly title"
         );
 
-        // Footer hints
+        // Footer: fixture sets top_domains to an empty Ok-result, which
+        // the footer interprets as "extension not installed" and surfaces
+        // the install tip in place of the normal key hints.
         assert!(
-            rendered.contains("Tab cycle") && rendered.contains("q quit"),
-            "footer hints missing"
+            rendered.contains("tip:") && rendered.contains("Top domains"),
+            "domains-empty tip missing from footer\n{rendered}"
         );
 
         // Offline indicator must NOT show in fixture (everything succeeded)

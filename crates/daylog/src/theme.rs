@@ -6,6 +6,23 @@
 //! See `crates/daylog/DESIGN.md` for the spec these tables are copied from.
 
 use ratatui::style::{Color, Modifier, Style};
+use ratatui::widgets::{BorderType, Padding};
+
+/// Border style every panel renders with. Rounded reads as deliberate
+/// without changing weight; the sharp 90° corners that ratatui defaults to
+/// felt like raw ASCII art next to the curved typography in the chrome.
+pub const PANEL_BORDER: BorderType = BorderType::Rounded;
+
+/// One column of breathing room left/right inside a bordered panel. Default
+/// for tables and stat cards. Without this, the leading rank glyph in
+/// Top Apps / Categories / Domains kissed the left border.
+pub const PANEL_PADDING: Padding = Padding::horizontal(1);
+
+/// Padding for widgets whose internal coordinate system already assumes
+/// edge-to-edge use of the inner area — the hourly `Chart`, the custom
+/// `StackedBars` painter, and the year heatmap. Reserves horizontal room
+/// without clipping the bottom row.
+pub const PANEL_PADDING_TIGHT: Padding = Padding::new(1, 1, 0, 0);
 
 /// Detected terminal colour capability. Latched at startup; the result
 /// rides on `Theme` so widgets never re-probe `$COLORTERM`/`$TERM`.
@@ -34,6 +51,11 @@ pub struct Theme {
     pub fg: Color,
     pub dim: Color,
     pub border_dim: Color,
+    /// Accent border slot. Reserved for the currently focused panel; no
+    /// renderer reaches for it today (focus tracking isn't wired up), but
+    /// the slot exists so a future "active panel" patch doesn't require
+    /// re-touching the theme.
+    pub border_active: Color,
     pub ember: Color,
     pub error: Color,
     pub chart_1: Color,
@@ -79,7 +101,8 @@ impl Theme {
             bg: Color::Rgb(0, 0, 0),
             fg: Color::Rgb(251, 251, 251),
             dim: Color::Rgb(176, 176, 176),
-            border_dim: Color::Rgb(31, 31, 31),
+            border_dim: Color::Rgb(64, 64, 64),
+            border_active: Color::Rgb(229, 154, 110),
             ember: Color::Rgb(229, 154, 110),
             error: Color::Rgb(228, 113, 99),
             chart_1: Color::Rgb(238, 159, 99),
@@ -97,7 +120,8 @@ impl Theme {
             bg: Color::Indexed(0),
             fg: Color::Indexed(231),
             dim: Color::Indexed(244),
-            border_dim: Color::Indexed(236),
+            border_dim: Color::Indexed(239),
+            border_active: Color::Indexed(173),
             ember: Color::Indexed(173),
             error: Color::Indexed(167),
             chart_1: Color::Indexed(215),
@@ -119,6 +143,7 @@ impl Theme {
             fg: Color::White,
             dim: Color::White,
             border_dim: Color::Black,
+            border_active: Color::Yellow,
             ember: Color::Yellow,
             error: Color::Red,
             chart_1: Color::Yellow,
