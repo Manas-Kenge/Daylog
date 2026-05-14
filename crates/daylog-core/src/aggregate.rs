@@ -93,14 +93,14 @@ fn split_event_into_hours(start_utc: DateTime<Utc>, duration: f64, totals: &mut 
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct AfkInterval {
     pub timestamp: DateTime<Utc>,
     pub duration: f64,
     pub status: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct AfkSummary {
     pub active_seconds: f64,
     pub afk_seconds: f64,

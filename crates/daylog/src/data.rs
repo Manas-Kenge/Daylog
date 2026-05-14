@@ -16,8 +16,12 @@
 use std::time::{Duration, Instant};
 
 use chrono::{Datelike, Local, NaiveDate, Weekday};
-use daylog_core::aggregate::{CategorizedEvent, CategorySummary, HourBucket};
+use daylog_core::aggregate::{
+    fetch_afk_events, parse_categorized_events, summarize_afk, unwrap_first_array,
+    CategorizedEvent, CategorySummary, HourBucket,
+};
 use daylog_core::kpi::KpiSummary;
+use daylog_core::queries::TrailingDayPayload;
 use daylog_core::time::TimeRange;
 use serde_json::Value;
 
@@ -254,6 +258,12 @@ pub enum FetchResult {
     /// Top web domains over the trailing 30 days. Empty `Ok(vec![])`
     /// is again the "no web watcher" signal — same as `TopDomains`.
     MonthTopDomains(Result<Vec<TopDomainRow>, String>),
+    /// Shared trailing-7-day payload. Apply derives `trailing_active` and
+    /// (paired with `timeline_events`) `week` from this single fetch.
+    /// Failure propagates to the dependent slots so the UI shows
+    /// consistent error state instead of one panel updating and the
+    /// others freezing.
+    Trailing7(Result<Vec<TrailingDayPayload>, String>),
 }
 
 /// In-memory caches keyed per logical query.
@@ -296,6 +306,12 @@ pub struct DataCache {
     /// Trailing-30-day Top web domains for the Month tab. Empty-Ok
     /// means "no web watcher", same convention as `top_domains`.
     pub month_top_domains: Cached<Vec<TopDomainRow>>,
+    /// Shared source of truth for the trailing-7-day window. Before
+    /// this slot existed, `kpi`, `trailing_active`, and `week` each
+    /// dispatched their own `trailing_days_past(7)` fan-out on every
+    /// refresh — three identical 14-HTTP fan-outs through a 2-wide
+    /// semaphore. Now all three derive from this one cache.
+    pub trailing_7: Cached<Vec<TrailingDayPayload>>,
 }
 
 impl DataCache {
@@ -316,6 +332,7 @@ impl DataCache {
             month_top_apps: Cached::new(REFRESH_PAST_DAYS),
             month_top_categories: Cached::new(REFRESH_PAST_DAYS),
             month_top_domains: Cached::new(REFRESH_PAST_DAYS),
+            trailing_7: Cached::new(REFRESH_PAST_DAYS),
         }
     }
 
@@ -344,9 +361,15 @@ impl DataCache {
             FetchResult::TopCategories(Err(e)) => self.top_categories.apply_failure(e, now),
             FetchResult::Kpi(Ok(v)) => self.kpi.apply_success(v, now),
             FetchResult::Kpi(Err(e)) => self.kpi.apply_failure(e, now),
+            // TrailingActive is no longer dispatched directly — it's
+            // derived from `Trailing7` below. The variant remains as
+            // a defensive apply path (also exercised by existing tests).
             FetchResult::TrailingActive(Ok(v)) => self.trailing_active.apply_success(v, now),
             FetchResult::TrailingActive(Err(e)) => self.trailing_active.apply_failure(e, now),
-            FetchResult::TimelineEvents(Ok(v)) => self.timeline_events.apply_success(v, now),
+            FetchResult::TimelineEvents(Ok(v)) => {
+                self.timeline_events.apply_success(v, now);
+                self.try_rebuild_week(now);
+            }
             FetchResult::TimelineEvents(Err(e)) => self.timeline_events.apply_failure(e, now),
             FetchResult::TopDomains(Ok(v)) => self.top_domains.apply_success(v, now),
             FetchResult::TopDomains(Err(e)) => self.top_domains.apply_failure(e, now),
@@ -374,7 +397,45 @@ impl DataCache {
             }
             FetchResult::MonthTopDomains(Ok(v)) => self.month_top_domains.apply_success(v, now),
             FetchResult::MonthTopDomains(Err(e)) => self.month_top_domains.apply_failure(e, now),
+            FetchResult::Trailing7(Ok(v)) => {
+                // Derive trailing_active from the same payload — no
+                // separate fetch needed. Index i is days_ago = i + 1
+                // (matches the established convention).
+                let mut active = [0.0_f64; 7];
+                for d in &v {
+                    let idx = d.days_ago.saturating_sub(1) as usize;
+                    if idx < 7 {
+                        active[idx] = d.afk.active_seconds;
+                    }
+                }
+                self.trailing_active.apply_success(active, now);
+                self.trailing_7.apply_success(v, now);
+                self.try_rebuild_week(now);
+            }
+            FetchResult::Trailing7(Err(e)) => {
+                // Propagate the failure to every dependent slot so the
+                // UI shows consistent error state. `Cached::apply_failure`
+                // preserves the previous value (the sparkline / week
+                // chart freeze at last good values, not blank).
+                self.trailing_7.apply_failure(e.clone(), now);
+                self.trailing_active.apply_failure(e.clone(), now);
+                self.week.apply_failure(e, now);
+            }
         }
+    }
+
+    /// Rebuild the calendar-week chart when both inputs are available.
+    /// Early-return if either is missing; the next `apply` for the
+    /// missing piece will retry.
+    fn try_rebuild_week(&mut self, now: Instant) {
+        let (Some(past), Some(today_events)) =
+            (self.trailing_7.value(), self.timeline_events.value())
+        else {
+            return;
+        };
+        let today = Local::now().date_naive();
+        let weeks = build_week_buckets(today, today_events, past);
+        self.week.apply_success(weeks, now);
     }
 }
 
@@ -433,41 +494,71 @@ pub fn dispatch_refetches(
         });
     }
 
-    if cache.kpi.should_refetch(now) {
-        cache.kpi.mark_in_flight();
+    // Shared trailing-7-day fetch. Drives the sparkline (via
+    // `trailing_active`), the kpi baselines (cloned into the kpi task
+    // below), and the week chart (paired with `timeline_events` in
+    // `try_rebuild_week`). Previously each consumer fanned out its own
+    // copy, paying the 14-HTTP cost three times on cold start.
+    if cache.trailing_7.should_refetch(now) {
+        cache.trailing_7.mark_in_flight();
         let tx = tx.clone();
-        let range = range.clone();
         tokio::spawn(async move {
-            let client = daylog_core::aw_client::AwClient::new();
-            let result = daylog_core::queries::kpi(&client, range)
+            let result = daylog_core::queries::trailing_days_past(7)
                 .await
                 .map_err(|e| e.to_string());
-            let _ = tx.send(FetchResult::Kpi(result));
+            let _ = tx.send(FetchResult::Trailing7(result));
         });
     }
 
-    if cache.trailing_active.should_refetch(now) {
-        cache.trailing_active.mark_in_flight();
-        let tx = tx.clone();
-        tokio::spawn(async move {
-            // trailing_days_past returns days 1..=7. Project to active
-            // seconds and drop the events array — the sparkline only
-            // needs daily totals.
-            let result = daylog_core::queries::trailing_days_past(7)
-                .await
-                .map(|days| {
-                    let mut out = [0.0_f64; 7];
-                    for d in days {
-                        let idx = d.days_ago.saturating_sub(1) as usize;
-                        if idx < 7 {
-                            out[idx] = d.afk.active_seconds;
-                        }
+    // kpi waits on the shared trailing_7 cache to be primed. Until then,
+    // baselines and pattern-shift can't be computed. Once primed, each
+    // kpi tick fetches only today's slice (events + AFK) and synthesizes
+    // locally via kpi_from_parts — no trailing re-fetch on the 5s cadence.
+    if cache.kpi.should_refetch(now) {
+        if let Some(trailing) = cache.trailing_7.value() {
+            cache.kpi.mark_in_flight();
+            let tx = tx.clone();
+            let range = range.clone();
+            let trailing = trailing.clone();
+            tokio::spawn(async move {
+                let client = daylog_core::aw_client::AwClient::new();
+                let cfg = match daylog_core::categories::load(&client).await {
+                    Ok(c) => c,
+                    Err(e) => {
+                        let _ = tx.send(FetchResult::Kpi(Err(e.to_string())));
+                        return;
                     }
-                    out
-                })
-                .map_err(|e| e.to_string());
-            let _ = tx.send(FetchResult::TrailingActive(result));
-        });
+                };
+                let classes_json = daylog_core::categories::classes_to_aql(&cfg);
+                let timeperiods = [range.as_aw_timeperiod()];
+                let aql = daylog_core::aw_client::queries::categorized_events(&classes_json);
+                let (today_events_res, today_afk_events_res) = tokio::join!(
+                    client.query(&aql, &timeperiods),
+                    fetch_afk_events(&client, &range),
+                );
+                let today_events = match today_events_res {
+                    Ok(r) => parse_categorized_events(&unwrap_first_array(r)),
+                    Err(e) => {
+                        let _ = tx.send(FetchResult::Kpi(Err(e.to_string())));
+                        return;
+                    }
+                };
+                let today_afk_events = match today_afk_events_res {
+                    Ok(r) => r,
+                    Err(e) => {
+                        let _ = tx.send(FetchResult::Kpi(Err(e.to_string())));
+                        return;
+                    }
+                };
+                let today_afk = summarize_afk(&today_afk_events, false);
+                let summary = daylog_core::queries::kpi_from_parts(
+                    &today_events,
+                    &today_afk,
+                    &trailing,
+                );
+                let _ = tx.send(FetchResult::Kpi(Ok(summary)));
+            });
+        }
     }
 
     if cache.timeline_events.should_refetch(now) {
@@ -497,38 +588,11 @@ pub fn dispatch_refetches(
         });
     }
 
-    if cache.week.should_refetch(now) {
-        cache.week.mark_in_flight();
-        let tx = tx.clone();
-        tokio::spawn(async move {
-            // Calendar-week semantics — pair the trailing past-week bundle
-            // with a live today-slice so the rightmost column is current.
-            let today = Local::now().date_naive();
-            let client = daylog_core::aw_client::AwClient::new();
-            let past_fut = daylog_core::queries::trailing_days_past(7);
-            let today_fut = daylog_core::queries::categorized_events(&client, TimeRange::Today);
-            let (past_res, today_res) = tokio::join!(past_fut, today_fut);
-            let past = match past_res {
-                Ok(p) => p,
-                Err(e) => {
-                    let _ = tx.send(FetchResult::Week(Err(e.to_string())));
-                    return;
-                }
-            };
-            let today_events = match today_res {
-                Ok(e) => e,
-                Err(e) => {
-                    let _ = tx.send(FetchResult::Week(Err(e.to_string())));
-                    return;
-                }
-            };
-            let weeks = build_week_buckets(today, &today_events, &past);
-            let _ = tx.send(FetchResult::Week(Ok(weeks)));
-        });
-    }
-
-    // Week-tab rollups mirror the desktop page's fixed Last 7 Days
-    // panels. They do not follow the active range chip.
+    // Week rollups mirror the desktop page's fixed Last 7 Days panels.
+    // They do not follow the active range chip. The main `week` slot
+    // (calendar-week stacked bars) is no longer dispatched here — it's
+    // derived in `DataCache::apply` from the shared `trailing_7` cache
+    // paired with today's `timeline_events`, which fire on every tab.
     if tab == Tab::Week {
         if cache.week_top_apps.should_refetch(now) {
             cache.week_top_apps.mark_in_flight();
@@ -725,9 +789,82 @@ fn bucketize_roots(events: &[CategorizedEvent]) -> Vec<(String, f64)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::Tab;
+    use tokio::sync::mpsc;
 
     fn t0() -> Instant {
         Instant::now()
+    }
+
+    /// `should_refetch` returns true for an untouched slot. After
+    /// `dispatch_refetches` it's false either because the task is in
+    /// flight or has already resolved — both mean "dispatched". So we
+    /// use `!should_refetch(now)` as a synchronous "was dispatched" probe.
+    fn was_dispatched<T>(c: &Cached<T>, now: Instant) -> bool {
+        !c.should_refetch(now)
+    }
+
+    #[tokio::test]
+    async fn dispatch_refetches_today_fires_shared_slots_not_week_rollups() {
+        let mut cache = DataCache::new();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let now = Instant::now();
+        dispatch_refetches(&mut cache, TimeRange::Today, Tab::Today, &tx, now);
+
+        // Live Today slots fire.
+        assert!(was_dispatched(&cache.top_apps, now));
+        assert!(was_dispatched(&cache.timeline_events, now));
+
+        // The shared trailing-7 slot fires on Today too — the sparkline
+        // and kpi baselines both need it. This is the *deduplication*
+        // win: one fetch instead of three.
+        assert!(
+            was_dispatched(&cache.trailing_7, now),
+            "trailing_7 is now the single source of truth for kpi/sparkline/week and must fire on Today"
+        );
+
+        // The week chart itself (`cache.week`) is no longer dispatched —
+        // it's derived in apply() from trailing_7 + timeline_events.
+        // The Week-tab rollup tables stay tab-gated.
+        assert!(!was_dispatched(&cache.week_top_apps, now));
+        assert!(!was_dispatched(&cache.week_top_categories, now));
+        assert!(!was_dispatched(&cache.week_top_domains, now));
+
+        // Month already gated; pin it for symmetry.
+        assert!(!was_dispatched(&cache.month_trailing_year, now));
+        assert!(!was_dispatched(&cache.month_top_apps, now));
+    }
+
+    #[tokio::test]
+    async fn dispatch_refetches_week_fires_week_rollups() {
+        let mut cache = DataCache::new();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let now = Instant::now();
+        dispatch_refetches(&mut cache, TimeRange::Today, Tab::Week, &tx, now);
+
+        // Week rollups fire only on Week.
+        assert!(was_dispatched(&cache.week_top_apps, now));
+        assert!(was_dispatched(&cache.week_top_categories, now));
+        assert!(was_dispatched(&cache.week_top_domains, now));
+
+        // Shared trailing_7 fires here too — same single-source path.
+        assert!(was_dispatched(&cache.trailing_7, now));
+
+        // Month still gated even from Week.
+        assert!(!was_dispatched(&cache.month_trailing_year, now));
+    }
+
+    #[tokio::test]
+    async fn dispatch_refetches_month_fires_month_slots() {
+        let mut cache = DataCache::new();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let now = Instant::now();
+        dispatch_refetches(&mut cache, TimeRange::Today, Tab::Month, &tx, now);
+
+        assert!(was_dispatched(&cache.month_trailing_year, now));
+        assert!(was_dispatched(&cache.month_top_apps, now));
+        assert!(was_dispatched(&cache.month_top_categories, now));
+        assert!(was_dispatched(&cache.month_top_domains, now));
     }
 
     fn after(start: Instant, secs: u64) -> Instant {
@@ -877,6 +1014,118 @@ mod tests {
         assert!(
             dc.any_offline(),
             "kpi failures must flip the aggregate flag"
+        );
+    }
+
+    fn fake_trailing(days: u32) -> Vec<TrailingDayPayload> {
+        (1..=days)
+            .map(|n| TrailingDayPayload {
+                days_ago: n,
+                events: Vec::new(),
+                afk: daylog_core::aggregate::AfkSummary {
+                    active_seconds: 100.0 * n as f64,
+                    afk_seconds: 0.0,
+                    active_ratio: 1.0,
+                    intervals: Vec::new(),
+                },
+            })
+            .collect()
+    }
+
+    #[test]
+    fn trailing_7_success_derives_trailing_active() {
+        // T3 — apply(Trailing7) must populate trailing_active in the
+        // same call. Without this, the sparkline would lag the
+        // shared cache by one tick.
+        let mut dc = DataCache::new();
+        let now = Instant::now();
+        let payload = fake_trailing(7);
+        dc.apply(FetchResult::Trailing7(Ok(payload)), now);
+
+        let active = dc.trailing_active.value().expect("derived array");
+        assert_eq!(active[0], 100.0); // days_ago=1
+        assert_eq!(active[6], 700.0); // days_ago=7
+        assert!(dc.trailing_7.value().is_some());
+    }
+
+    #[test]
+    fn trailing_7_failure_propagates_to_dependents() {
+        // T4 — Trailing7 failure surfaces on every consumer. Stale
+        // values stay visible per Cached's contract; only last_error
+        // flips.
+        let mut dc = DataCache::new();
+        let now = Instant::now();
+        // Seed prior successful values.
+        dc.trailing_active.apply_success([1.0; 7], now);
+        dc.trailing_7
+            .apply_success(fake_trailing(7), now);
+        dc.week.apply_success(Vec::new(), now);
+
+        dc.apply(FetchResult::Trailing7(Err("aw down".into())), now);
+
+        // Values stay (stale-during-blip contract); errors flip on.
+        assert!(dc.trailing_active.value().is_some());
+        assert_eq!(dc.trailing_active.last_error(), Some("aw down"));
+        assert!(dc.trailing_7.value().is_some());
+        assert_eq!(dc.trailing_7.last_error(), Some("aw down"));
+        assert_eq!(dc.week.last_error(), Some("aw down"));
+    }
+
+    #[test]
+    fn try_rebuild_week_needs_both_inputs() {
+        // T5 — week derivation only fires once trailing_7 AND
+        // timeline_events have both landed. Either alone leaves week
+        // unset.
+        let mut dc = DataCache::new();
+        let now = Instant::now();
+
+        // Only trailing_7: week stays unset.
+        dc.apply(FetchResult::Trailing7(Ok(fake_trailing(7))), now);
+        assert!(
+            dc.week.value().is_none(),
+            "week must wait for timeline_events; trailing_7 alone is insufficient"
+        );
+
+        // Adding timeline_events triggers the rebuild.
+        let today_events = vec![ev(&["Work"], 1800.0)];
+        dc.apply(FetchResult::TimelineEvents(Ok(today_events)), now);
+        let week = dc.week.value().expect("week derived once both inputs present");
+        assert_eq!(week.len(), 7);
+    }
+
+    #[tokio::test]
+    async fn dispatch_refetches_does_not_redispatch_trailing_7_when_fresh() {
+        // T7 — Cached's interval gate must keep trailing_7 from
+        // re-firing on every tick. Without this the 5min cadence
+        // collapses to per-tick.
+        let mut cache = DataCache::new();
+        let now = Instant::now();
+        cache
+            .trailing_7
+            .apply_success(fake_trailing(7), now);
+
+        let (tx, _rx) = mpsc::unbounded_channel();
+        dispatch_refetches(&mut cache, TimeRange::Today, Tab::Today, &tx, now);
+
+        // trailing_7's fetched_at == now; interval is 5min; should_refetch == false.
+        assert!(
+            !cache.trailing_7.should_refetch(now),
+            "fresh trailing_7 must not redispatch within its interval"
+        );
+    }
+
+    #[test]
+    fn trailing_7_offline_does_not_flip_aggregate_flag() {
+        // T8 — Same precedent as trailing_active and week: 5min cadence
+        // slots blipping shouldn't flicker the footer indicator.
+        let mut dc = DataCache::new();
+        let now = Instant::now();
+        for _ in 0..(OFFLINE_THRESHOLD + 2) {
+            dc.trailing_7.apply_failure("err".into(), now);
+        }
+        assert!(
+            !dc.any_offline(),
+            "trailing_7 failures alone must not flag the tracker offline"
         );
     }
 

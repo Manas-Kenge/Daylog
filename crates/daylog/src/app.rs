@@ -15,7 +15,7 @@ use tokio::sync::mpsc;
 use tokio::time::interval;
 use tokio_stream::StreamExt;
 
-use crate::data::{dispatch_refetches, DataCache, FetchResult};
+use crate::data::{dispatch_refetches, Cached, DataCache, FetchResult, REFRESH_LIVE};
 use crate::theme::Theme;
 use crate::ui::Backend;
 
@@ -166,15 +166,23 @@ impl App {
         self.range_chip.to_range()
     }
 
-    /// Cycle the active range, resetting the data cache so the next
-    /// dispatch fires fresh fetches for the new range.
+    /// Cycle the active range, resetting only the slots whose payload
+    /// depends on the range chip. Scope-fixed slots (`trailing_active`,
+    /// `week*`, `month_*`) carry their own fixed windows and must survive
+    /// the chip flip — wiping them here forces a needless cold reload of
+    /// the Week/Month tabs every time the user cycles the chip on Today.
     pub fn cycle_range(&mut self, forward: bool) {
         self.range_chip = if forward {
             self.range_chip.next()
         } else {
             self.range_chip.prev()
         };
-        self.data = DataCache::new();
+        self.data.top_apps = Cached::new(REFRESH_LIVE);
+        self.data.hourly = Cached::new(REFRESH_LIVE);
+        self.data.top_categories = Cached::new(REFRESH_LIVE);
+        self.data.kpi = Cached::new(REFRESH_LIVE);
+        self.data.timeline_events = Cached::new(REFRESH_LIVE);
+        self.data.top_domains = Cached::new(REFRESH_LIVE);
         self.dirty = true;
     }
 }
@@ -396,12 +404,10 @@ mod tests {
     }
 
     #[test]
-    fn cycle_range_resets_data_cache() {
+    fn cycle_range_resets_range_scoped_slots() {
         let mut app = App::new();
         let now = Instant::now();
-        app.data
-            .top_apps
-            .apply_success(vec![], now);
+        app.data.top_apps.apply_success(vec![], now);
         assert!(app.data.top_apps.value().is_some());
 
         app.cycle_range(true);
@@ -412,6 +418,44 @@ mod tests {
             "cycling range must drop the cached value so the next dispatch refetches"
         );
         assert!(app.dirty);
+    }
+
+    #[test]
+    fn cycle_range_preserves_scope_fixed_slots() {
+        // trailing_active, week*, month_* carry fixed windows that don't
+        // depend on the range chip. Wiping them here used to cause Week
+        // and Month to cold-reload on every chip flip from Today.
+        let mut app = App::new();
+        let now = Instant::now();
+        app.data.trailing_active.apply_success([1.0; 7], now);
+        app.data
+            .week
+            .apply_success(Vec::new(), now);
+        app.data.week_top_apps.apply_success(Vec::new(), now);
+        app.data
+            .month_trailing_year
+            .apply_success(Vec::new(), now);
+        app.data.month_top_apps.apply_success(Vec::new(), now);
+
+        app.cycle_range(true);
+
+        assert!(
+            app.data.trailing_active.value().is_some(),
+            "trailing_active is scope-fixed (Last 7); range cycle must not wipe it"
+        );
+        assert!(app.data.week.value().is_some(), "week is scope-fixed");
+        assert!(
+            app.data.week_top_apps.value().is_some(),
+            "week_top_apps is scope-fixed (Last 7)"
+        );
+        assert!(
+            app.data.month_trailing_year.value().is_some(),
+            "month_trailing_year is scope-fixed (Last 365)"
+        );
+        assert!(
+            app.data.month_top_apps.value().is_some(),
+            "month_top_apps is scope-fixed (Last 30)"
+        );
     }
 
     #[test]
