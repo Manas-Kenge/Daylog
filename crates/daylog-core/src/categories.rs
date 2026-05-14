@@ -14,14 +14,10 @@ use crate::aw_client::{AwClient, AwError};
 
 const SETTINGS_KEY: &str = "classes";
 
-/// Process-level cache. Categories rarely change inside a session, but
-/// `aw_top_categories` and `aw_categorized_events` both call `load()`
-/// per IPC call, so a cold Overview mount used to issue ~14 redundant
-/// HTTP roundtrips to aw-server's settings bucket. The cache is filled
-/// lazily on first read and invalidated by `save()` when this app is
-/// the mutator. External edits (AW WebUI writing the same key) are not
-/// observed; that's an accepted miss until categories grow live-edit
-/// surface area.
+/// Process-level cache. `load()` is invoked by every top_categories /
+/// categorized_events query; without this the dashboard issued ~14
+/// redundant settings GETs per refresh. Invalidated only by local
+/// `save()`; external mutations (WebUI writing the same key) aren't observed.
 fn cache() -> &'static RwLock<Option<CategoryConfig>> {
     static CACHE: OnceLock<RwLock<Option<CategoryConfig>>> = OnceLock::new();
     CACHE.get_or_init(|| RwLock::new(None))
@@ -58,10 +54,7 @@ pub enum Rule {
     None,
 }
 
-/// Optional decoration that lives alongside a category rule. Daylog doesn't
-/// render these yet, but we round-trip them so a future companion (the v0.2
-/// GNOME shell extension, or the AW WebUI editing the same settings bucket)
-/// can carry color + score without our schema fighting theirs.
+/// Optional decoration round-tripped to stay schema-compatible with the AW WebUI.
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 pub struct CategoryData {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -135,8 +128,7 @@ impl CategoryConfig {
     }
 }
 
-/// Validate every regex compiles. Surfaces the offending category so the
-/// frontend can highlight the broken row instead of "something somewhere".
+/// Validate every regex compiles; surfaces which category failed.
 pub fn validate(cfg: &CategoryConfig) -> Result<(), CategoryError> {
     for cat in &cfg.categories {
         if let Rule::Regex { regex, ignore_case } = &cat.rule {

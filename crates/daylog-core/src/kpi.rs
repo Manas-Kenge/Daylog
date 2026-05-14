@@ -1,11 +1,4 @@
-//! KPI strip math, ported from `src/lib/{kpi,best-window,baselines}.ts`.
-//!
-//! Discovery-shaped, not score-shaped (see PLAN.md §1.0). The desktop's
-//! KpiStrip composes these helpers; future surfaces (TUI, CLI) call
-//! `summarize` to get one struct with everything pre-computed.
-//!
-//! Time bucketing uses local time to match the TS source (`Date#getHours()`)
-//! and the existing `aggregate::bucketize_hourly` convention.
+//! KPI strip math. Discovery-shaped (PLAN.md §1.0). All bucketing uses local time.
 
 use chrono::{DateTime, Local, Timelike, Utc};
 use serde::{Deserialize, Serialize};
@@ -22,8 +15,7 @@ pub const QUIET_DAY_FLOOR_SECS: f64 = 30.0 * 60.0;
 /// Suppress "vs typical" deltas tinier than this. "+47 seconds" is noise.
 pub const PATTERN_SHIFT_NOISE_FLOOR_SECS: f64 = 15.0 * 60.0;
 
-/// 3 hours: long enough to feel like a focus block, short enough to
-/// resolve to a specific time-of-day. See best-window.ts.
+/// 3-hour focus window.
 pub const WINDOW_HOURS: usize = 3;
 
 /// Fallback root when an event's category path is empty.
@@ -66,13 +58,10 @@ pub struct KpiSummary {
     pub active_ratio: f64,
     pub longest_stretch: Option<LongestStretch>,
     pub best_window: Option<BestWindow>,
-    /// Dominant-changed category-root delta vs the trailing-7 median of
-    /// the same root. The TUI's compact strip surfaces this; the desktop
-    /// ignores it (the per-card baselines below back its three sub-lines).
+    /// Dominant-root delta vs the trailing-7 median for that root.
     pub pattern_shift: Option<PatternShift>,
     pub focus_by_hour: [f64; 24],
-    /// Trailing-7 baseline of total active seconds. Backs the desktop's
-    /// "Active / AFK" card "vs typical" sub-line.
+    /// Trailing-7 baseline of total active seconds.
     pub active_baseline: BaselineStats,
     /// Trailing-7 baseline of `longest_stretch.seconds` per past day.
     pub longest_baseline: BaselineStats,
@@ -80,9 +69,7 @@ pub struct KpiSummary {
     pub best_window_baseline: BaselineStats,
 }
 
-/// First segment of the nested category path, falling back to
-/// `"Uncategorized"` when the path is empty. Mirrors the locked
-/// pattern-shift selection rule.
+/// First segment of the category path; "Uncategorized" when empty.
 pub fn category_root(path: &[String]) -> &str {
     path.first().map(String::as_str).unwrap_or(UNCATEGORIZED_ROOT)
 }
@@ -277,9 +264,7 @@ pub fn pattern_shift(
     past_days: &[Vec<CategorizedEvent>],
     today_weekday_label: &str,
 ) -> Option<PatternShift> {
-    // No baseline → no signal. Matches the desktop's vsTypical, which
-    // returns null when effectiveDays == 0 instead of comparing against
-    // an implicit zero.
+    // No baseline → no signal (don't compare against implicit zero).
     if past_days.is_empty() {
         return None;
     }
@@ -319,19 +304,17 @@ pub fn pattern_shift(
     })
 }
 
-/// Convenience weekday label for a UTC instant in local time. Three-letter
-/// English (`Mon`, `Tue`, …) to match the desktop strip.
+/// "Mon"/"Tue"/… for a UTC instant, evaluated in local time.
 pub fn weekday_label(at: DateTime<Utc>) -> String {
     at.with_timezone(&Local)
         .format("%a")
         .to_string()
 }
 
-/// Compose the whole strip in one call. `active_secs`, `afk_secs`, and
-/// the past-day active totals come from `summarize_afk`; we don't
-/// recompute them here so callers keep one source of truth for AFK
-/// accounting. `past_active_secs` is parallel to `past_days`: index `i`
-/// is the active seconds for day `past_days[i]`.
+/// Compose the whole strip in one call. `active_secs` / `afk_secs` /
+/// `past_active_secs` come from `summarize_afk` so AFK accounting has
+/// one source of truth. `past_active_secs` is parallel to `past_days`:
+/// index `i` is the active seconds for day `past_days[i]`.
 pub fn summarize(
     today: &[CategorizedEvent],
     past_days: &[Vec<CategorizedEvent>],

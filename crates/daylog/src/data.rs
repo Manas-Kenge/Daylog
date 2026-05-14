@@ -23,12 +23,10 @@ use serde_json::Value;
 
 use crate::app::Tab;
 
-/// Live cadence for today's slot — matches `useAw.ts` REFRESH_MS = 5_000.
+/// Live cadence: 5s.
 pub const REFRESH_LIVE: Duration = Duration::from_secs(5);
 
-/// Cadence for past-day data. Matches desktop's `PAST_DAY_STALE_MS`.
-/// Past days don't change until midnight; a 5min staleness check is
-/// effectively cached-for-the-day after the first paint.
+/// Past-day cadence: 5min (past days don't change until midnight).
 pub const REFRESH_PAST_DAYS: Duration = Duration::from_secs(5 * 60);
 
 /// After this many consecutive failures, the cache surfaces as offline.
@@ -202,9 +200,7 @@ pub struct WeekDayBuckets {
     pub total_active_secs: f64,
 }
 
-/// Stable display order for category roots in the legend / stack. Matches
-/// the desktop's `WeekPage.tsx` ROOT_ORDER. Roots not in this list sort
-/// after these, alphabetically.
+/// Stable display order for category roots. Unlisted roots sort after, alphabetically.
 pub const WEEK_ROOT_ORDER: &[&str] = &[
     "Work",
     "Comms",
@@ -260,16 +256,13 @@ pub enum FetchResult {
     MonthTopDomains(Result<Vec<TopDomainRow>, String>),
 }
 
-/// Bundle of every cache entry the Today tab reads. Future tabs add
-/// their own fields to this struct.
+/// In-memory caches keyed per logical query.
 #[derive(Debug)]
 pub struct DataCache {
     pub top_apps: Cached<Vec<TopAppRow>>,
     pub hourly: Cached<Vec<HourBucket>>,
     pub top_categories: Cached<Vec<CategorySummary>>,
-    /// Live KPI summary backing the compact strip (Active · Longest ·
-    /// pattern shift). One IPC roundtrip pulls today + trailing-7
-    /// baselines so the strip never needs to recompose.
+    /// Live KPI summary. One roundtrip bundles today + trailing-7 baselines.
     pub kpi: Cached<KpiSummary>,
     /// Past-7-day active seconds for the sparkline. 5min cadence —
     /// past days don't change within a day.
@@ -391,14 +384,8 @@ impl Default for DataCache {
     }
 }
 
-/// Spawn fetches for any cache entry that's stale and not in-flight.
-/// Each fetch resolves into a FetchResult sent back over `tx`.
-///
-/// The Tauri app's TanStack Query layer does the same thing; this is the
-/// hand-written equivalent for the TUI process. Spawning per-fetch (vs a
-/// fetcher pool) keeps the dispatch logic readable and lets tokio's
-/// scheduler handle concurrency. With ~3 entries refetching every 5s,
-/// task creation overhead is irrelevant.
+/// Spawn fetches for any stale, not-in-flight cache. Each fetch resolves
+/// into a FetchResult sent back over `tx`.
 pub fn dispatch_refetches(
     cache: &mut DataCache,
     range: TimeRange,
@@ -658,8 +645,7 @@ pub fn dispatch_refetches(
     }
 }
 
-/// ISO Monday of the calendar week containing `today`. Mirrors the desktop
-/// `isoMonday` in `WeekPage.tsx`.
+/// ISO Monday of the calendar week containing `today`.
 pub fn iso_monday(today: NaiveDate) -> NaiveDate {
     let days_from_monday = today.weekday().num_days_from_monday() as i64;
     today - chrono::Duration::days(days_from_monday)

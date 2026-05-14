@@ -1,10 +1,6 @@
-//! Daylog — terminal screen time and activity tracker for Linux.
-//!
-//! Pure-Rust ratatui surface backed by `daylog-core`. On first launch,
-//! the tracker (aw-server-rust + aw-awatcher, embedded at compile time)
-//! is extracted to `~/.local/share/daylog/bin/` and supervised via
-//! systemd-user units or XDG-autostart, depending on the host distro.
-//! See `tracking/` for the bootstrap flow.
+//! Daylog — terminal screen time tracker for Linux. Ratatui surface
+//! backed by `daylog-core`; first launch downloads the upstream tracker
+//! (see `tracking/`).
 
 use std::io;
 

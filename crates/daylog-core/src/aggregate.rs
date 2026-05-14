@@ -162,10 +162,9 @@ pub struct CategorySummary {
     pub duration: f64,
 }
 
-/// Pull the `$category` array off each event as flat `category: [..]`.
-/// aw-server's `categorize()` writes either the matching rule's name path
-/// or `["Uncategorized"]` to `data.$category`, so this should never miss.
-/// Events lacking a parseable timestamp are dropped (same as before).
+/// Pull `data.$category` off each event. Server always writes
+/// `["Uncategorized"]` for unmatched events. Events lacking a parseable
+/// timestamp are dropped.
 pub fn parse_categorized_events(events: &[Value]) -> Vec<CategorizedEvent> {
     events
         .iter()

@@ -7,11 +7,8 @@ use serde::{Deserialize, Serialize};
 
 const DEFAULT_BASE_URL: &str = "http://127.0.0.1:5600";
 
-/// One process-wide HTTP client. Each Tauri command used to call
-/// `reqwest::Client::builder().build()`; on a cold Overview mount that
-/// is ~20+ TLS/connection setups happening in parallel against
-/// 127.0.0.1:5600 for no good reason. A single pooled client keeps
-/// keep-alive connections hot across IPC calls.
+/// One pooled, process-wide HTTP client. Keep-alive amortizes TLS setup
+/// across the burst of fetches the dashboard issues per refresh tick.
 fn shared_http() -> &'static reqwest::Client {
     static HTTP: OnceLock<reqwest::Client> = OnceLock::new();
     HTTP.get_or_init(|| {

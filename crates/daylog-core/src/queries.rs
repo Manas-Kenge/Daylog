@@ -1,8 +1,5 @@
-//! High-level read API consumed by both the Tauri IPC handlers and the
-//! TUI. Each function takes a borrowed `AwClient`, runs the AQL query +
-//! parses the response, and returns a plain Rust type. The Tauri handlers
-//! become one-line `#[tauri::command]` delegates to these functions; the
-//! TUI calls them directly without the IPC layer.
+//! High-level read API. Each fn takes a borrowed `AwClient`, runs the
+//! AQL query, parses the response, and returns a plain Rust type.
 
 use serde::Serialize;
 use serde_json::Value;
@@ -17,9 +14,7 @@ use crate::categories::{self, CategoryError};
 use crate::kpi::{self, KpiSummary};
 use crate::time::TimeRange;
 
-/// Errors surfaced by the high-level query API. Both Tauri IPC and the TUI
-/// serialize these to strings; `serde::Serialize` is implemented manually
-/// to avoid leaking enum-variant structure to consumers.
+/// Manually serializes to a string so the enum shape isn't part of the wire format.
 #[derive(Debug, thiserror::Error)]
 pub enum QueryError {
     #[error("{0}")]
@@ -36,12 +31,8 @@ impl serde::Serialize for QueryError {
     }
 }
 
-/// Bundled categorized-events + AFK summary for a contiguous past-day
-/// window (days 1..=N, where 1 = yesterday). One IPC roundtrip from JS,
-/// per-day queries dispatched concurrently inside Rust so HTTP keep-alive
-/// against aw-server actually pays off. Today's slot is intentionally
-/// not bundled here: the dashboard refreshes today every 5s while past
-/// days only need a 5min staleness check.
+/// One day's categorized events + AFK summary. `days_ago = 1` is
+/// yesterday. Today isn't bundled here — it refreshes on a different cadence.
 #[derive(Debug, Serialize)]
 pub struct TrailingDayPayload {
     pub days_ago: u32,
@@ -204,11 +195,7 @@ async fn fetch_trailing_day(n: u32) -> Result<TrailingDayPayload, QueryError> {
     })
 }
 
-/// One-shot KPI strip payload: today's active/AFK + categorized events,
-/// plus trailing-7 past days for baselines and pattern-shift detection.
-/// Past days are fetched concurrently. The desktop's KpiStrip becomes a
-/// thin wrapper over this command; the TUI consumes the same payload via
-/// `daylog_core::queries::kpi` directly without IPC.
+/// One-shot KPI payload: today + trailing-7. Past days are fetched concurrently.
 pub async fn kpi(client: &AwClient, range: TimeRange) -> Result<KpiSummary, QueryError> {
     let cfg = categories::load(client).await?;
     let classes_json = categories::classes_to_aql(&cfg);
