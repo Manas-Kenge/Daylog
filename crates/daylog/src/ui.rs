@@ -35,8 +35,7 @@ pub type Backend = ratatui::backend::CrosstermBackend<Stdout>;
 pub fn setup_terminal() -> io::Result<Terminal<Backend>> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    // Mouse capture intentionally NOT enabled per design decision: keyboard-only
-    // navigation, preserving native terminal scroll/select.
+    // Mouse capture intentionally NOT enabled: preserves native terminal scroll/select.
     execute!(stdout, EnterAlternateScreen)?;
     let backend = ratatui::backend::CrosstermBackend::new(stdout);
     Terminal::new(backend)
@@ -58,10 +57,6 @@ pub fn restore_terminal_raw() -> io::Result<()> {
 }
 
 pub fn render(f: &mut Frame, app: &App) {
-    // Tabs sit flush with the terminal top — no outer frame. The row
-    // between the tab strip and the first card carries the category
-    // color legend, right-aligned so the left side still reads as a
-    // margin while the dots explain what every chart's colours mean.
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -77,22 +72,14 @@ pub fn render(f: &mut Frame, app: &App) {
     render_tabs(f, chunks[0], app);
     render_color_legend(f, chunks[1], &app.theme);
 
-    // tachyonfx animations ride on top of the rendered body. Scoped to
-    // the body chunk so the tab strip and footer never flicker mid-transition.
+    // Scope effects to body so tabs/footer don't flicker mid-transition.
     if let Some(effect) = app.effect.borrow_mut().as_mut() {
         let last_tick = *app.last_tick.borrow();
         f.render_effect(effect, chunks[2], last_tick);
     }
 }
 
-/// Right-aligned colour legend for the category palette. Every chart that
-/// paints by category (Today's timeline, Week stacked bars, hourly chart's
-/// spectrum, Top apps / categories / domains bars) draws from the same six
-/// `chart_n` slots — without this row the user has no key to read them.
-///
-/// Labels drop progressively as the terminal narrows: full set ≥ 80 cols,
-/// abbreviated names < 80, dots-only < 50, hidden < 30. The 2-col right
-/// inset mirrors the tab strip so the legend ends where the tabs do.
+/// Right-aligned category legend. Drops labels at 80/50/30-col breakpoints.
 fn render_color_legend(f: &mut Frame, area: Rect, theme: &Theme) {
     if area.width < 30 {
         return;
@@ -134,20 +121,13 @@ fn render_color_legend(f: &mut Frame, area: Rect, theme: &Theme) {
 
 fn render_tabs(f: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
-    // 2-col left indent so the active-tab pill doesn't kiss the terminal
-    // edge. Symmetrical right inset keeps things visually balanced when
-    // wide terminals stretch the strip out.
     let inset = Rect {
         x: area.x.saturating_add(2),
         y: area.y,
         width: area.width.saturating_sub(4),
         height: area.height,
     };
-    // Ratatui's Tabs widget applies `.padding()` uniformly to every tab,
-    // so to give *only* the active pill more orange we wrap its label in
-    // extra spaces. The highlight_style background paints the wrapped
-    // spaces too, producing a pill that breathes; inactive tabs render
-    // bare so the divider sits close to the label as it should.
+    // Tabs::padding() is uniform; wrap the active label in spaces so only it gets the wider pill background.
     let titles: Vec<Line<'static>> = Tab::ALL
         .iter()
         .map(|t| {
@@ -205,10 +185,7 @@ fn render_footer(f: &mut Frame, area: Rect, app: &App) {
         }
     }
 
-    // The tip surfaces only when we have a confirmed empty Top-domains
-    // result — that's daylog_core's "no aw-watcher-web bucket" signal,
-    // i.e. the browser extension genuinely isn't installed. While the
-    // cache is still pending we don't speculate.
+    // Empty-Ok top_domains = "no aw-watcher-web bucket" signal. Pending = don't speculate.
     let domains_missing = app
         .data
         .top_domains
@@ -238,15 +215,8 @@ fn render_footer(f: &mut Frame, area: Rect, app: &App) {
     f.render_widget(p, area);
 }
 
-/// Render the body of a panel whose data hasn't arrived yet. Two states:
-///
-/// * `fetching == true`  → an animated throbber span (active fetch in flight).
-/// * `fetching == false` → static `…` (no fetch scheduled, e.g. between
-///   backoff windows).
-///
-/// Callers have already painted the surrounding block; we just fill the
-/// inner area. Centred so the spinner sits in the middle of the panel
-/// instead of huddling in the top-left corner.
+/// Skeleton body: animated throbber if `fetching`, static `…` otherwise.
+/// Centred vertically in the panel inner area.
 pub fn render_skeleton_body(
     f: &mut Frame,
     area: Rect,
@@ -258,8 +228,7 @@ pub fn render_skeleton_body(
         return;
     }
     let line = if fetching {
-        // `to_symbol_span` is the non-mutating render path — the tick in
-        // app.rs already advanced `throbber` this frame.
+        // Non-mutating render path; app.rs already advanced `throbber` this frame.
         let widget = throbber_widgets_tui::Throbber::default()
             .style(Style::default().fg(theme.dim))
             .throbber_set(throbber_widgets_tui::BRAILLE_SIX_DOUBLE)
@@ -268,8 +237,6 @@ pub fn render_skeleton_body(
     } else {
         Line::from(Span::styled("\u{2026}", Style::default().fg(theme.dim)))
     };
-    // Centre vertically: place the single-line glyph on the middle row
-    // of the inner panel area instead of letting it pin to the top edge.
     let y_offset = area.height.saturating_sub(1) / 2;
     let row = Rect {
         x: area.x,
@@ -281,8 +248,7 @@ pub fn render_skeleton_body(
     f.render_widget(p, row);
 }
 
-/// Format a duration in seconds as a short, dashboard-friendly label.
-/// Matches the desktop's convention: "2h 14m" / "47m 12s" / "3s".
+/// "2h 14m" / "47m 12s" / "3s".
 pub fn format_duration(secs: f64) -> String {
     let total = secs.max(0.0) as u64;
     let h = total / 3600;
@@ -336,9 +302,6 @@ mod tests {
                 && tabs_row.contains("Month"),
             "tab strip should be the first row: {tabs_row}"
         );
-        // KPI strip sits inside its own bordered panel below the tab row
-        // (plus a 1-row spacer); the "Active" label lands a few rows below
-        // — search the first few body rows rather than pinning an offset.
         let active_row_idx = (2..=7).find(|y| row(*y).contains("Active"));
         assert!(
             active_row_idx.is_some(),

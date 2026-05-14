@@ -1,18 +1,4 @@
-//! Today tab — desktop-parity layout.
-//!
-//! Vertical bands inside the body, sized to their content (no panel
-//! stretches to fill the terminal):
-//!   1. KPI strip                            — 1 row, full-width
-//!   2. Today's timeline (24h barcode)       — 6 rows, full-width
-//!   3. Top apps  +  Top categories          — 11 rows, split 50 / 50
-//!   4. Hourly distribution + Top domains    — 10 rows, hourly fixed 46 cols
-//!   5. 7-day sparkline                      — 1 row, Wide only
-//!   6. Flex blank                           — soaks up leftover terminal rows
-//!
-//! This mirrors `src/pages/Overview.tsx` minus the WeekHeatmap (which
-//! lives on the Week tab). Every panel has a stable shape so first-load
-//! skeletons don't reflow when data lands. Errors surface in the footer
-//! pill, not as inline banners.
+//! Today tab. Each panel has a stable shape so first-load skeletons don't reflow when data lands.
 
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
@@ -34,19 +20,13 @@ use daylog_core::aggregate::CategorySummary;
 pub fn render(f: &mut Frame, area: Rect, app: &App) {
     let layout_mode = Theme::layout_mode(area.width);
 
-    // Sparkline only renders Wide. On Narrow / Stacked the slot collapses
-    // so the panels above absorb the room. Wide now reserves 3 rows so the
-    // sparkline can sit in a bordered panel instead of as an orphan strip.
+    // Sparkline is Wide-only; on Narrow/Stacked the slot collapses.
     let sparkline_height = match layout_mode {
         LayoutMode::Wide => 3,
         _ => 0,
     };
 
-    // Each panel gets exactly the rows it needs; the trailing Min(0)
-    // soaks up leftover terminal height so panels don't stretch. On
-    // terminals shorter than the body's natural height (~30 inner rows
-    // for the Today tab) the bottom panels clip — accepted trade-off
-    // for the bare-minimum density the user asked for.
+    // Bottom panels clip on short terminals; accepted trade-off for density.
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -143,10 +123,7 @@ fn render_apps_categories_row(f: &mut Frame, area: Rect, app: &App) {
 }
 
 fn render_hourly_domains_row(f: &mut Frame, area: Rect, app: &App) {
-    // Fixed-width hourly column keeps its 24 bars dense regardless of
-    // terminal width. With ~46 cols (− 2 borders − ~5 Y-axis-label cols)
-    // each hour gets ~1.6 columns — bars sit close instead of sparse.
-    // Top domains absorbs the rest.
+    // Fixed 46-col hourly column keeps 24 bars dense; domains takes the rest.
     let cols = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Length(46), Constraint::Min(20)])
@@ -162,9 +139,7 @@ fn render_hourly_domains_row(f: &mut Frame, area: Rect, app: &App) {
     );
 }
 
-/// Bold + theme.fg panel title. Lives in the panel's top border but
-/// styled with stronger contrast than the surrounding dim border so the
-/// section header reads as a header, not part of the frame chrome.
+/// Panel title: bold theme.fg, with optional in-flight throbber suffix.
 pub(super) fn panel_title(theme: &Theme, base: &'static str, in_flight: bool) -> Line<'static> {
     let title_style = Style::default().fg(theme.fg).add_modifier(Modifier::BOLD);
     if in_flight {
@@ -319,10 +294,6 @@ pub(super) fn category_row(
 ) -> Row<'static> {
     let name = row.name.join(" / ");
     let bar = proportional_bar(row.duration, max_secs, 8);
-    // Single flat bar colour across all rows — matches Top apps (chart_3)
-    // and Top domains (chart_4). The category root is already carried by
-    // the name column AND by the timeline above; per-row bar colouring
-    // here was redundant and made the panel feel louder than its siblings.
     Row::new(vec![
         Cell::from(format!("{}", rank)).style(Style::default().fg(theme.dim)),
         Cell::from(name).style(Style::default().fg(theme.fg).add_modifier(Modifier::BOLD)),
@@ -354,10 +325,7 @@ pub(super) fn render_top_domains_panel(
     };
 
     if rows.is_empty() {
-        // Per `daylog_core::queries::top_domains`: an empty Ok-result is
-        // the "no aw-watcher-web bucket" signal. Mirror the desktop's
-        // WebPanel install hint instead of "no data" — it's an actionable
-        // message, not a transient empty state.
+        // Empty Ok = "no aw-watcher-web bucket"; show the install hint.
         let lines = vec![
             Line::from(Span::styled(
                 "no web watcher detected",
@@ -422,8 +390,7 @@ pub(super) fn top_domain_row(
     ])
 }
 
-/// Proportional fill bar — full block + light shade for the unfilled
-/// remainder. Width is fixed so rows stay column-aligned.
+/// Fixed-width █/░ fill bar.
 pub(super) fn proportional_bar(value: f64, max: f64, width: usize) -> String {
     let filled = if max > 0.0 {
         ((value / max) * width as f64).round() as usize
@@ -611,10 +578,7 @@ mod tests {
         app
     }
 
-    /// Snapshot test: render the Today tab to a TestBackend and assert
-    /// presence of the key visual elements. Asserts by content rather
-    /// than byte-exact match so trivial layout tweaks don't cascade
-    /// into a thousand expected-string updates.
+    /// Asserts by content, not byte-exact match, so layout tweaks don't cascade.
     #[test]
     fn overview_renders_full_layout() {
         let app = app_with_fixture();
@@ -626,19 +590,16 @@ mod tests {
         let buf = terminal.backend().buffer().clone();
         let rendered = buffer_to_string(&buf);
 
-        // Tab strip
         assert!(
             rendered.contains("Today"),
             "tab strip missing Today\n{rendered}"
         );
 
-        // Timeline panel
         assert!(
             rendered.contains("Today's timeline"),
             "missing Today's timeline title\n{rendered}"
         );
 
-        // Top apps panel: title + at least one app name + a duration label
         assert!(rendered.contains("Top apps"), "missing Top apps title");
         assert!(rendered.contains("kitty"), "missing kitty in top apps");
         assert!(rendered.contains("brave"), "missing brave in top apps");
@@ -647,7 +608,6 @@ mod tests {
             "expected duration label for kitty (~14487s = 4h 01m)\n{rendered}"
         );
 
-        // Top categories panel
         assert!(
             rendered.contains("Top categories"),
             "missing Top categories title"
@@ -657,38 +617,30 @@ mod tests {
             "missing nested category label"
         );
 
-        // Top domains panel — title shows even with no web watcher
         assert!(rendered.contains("Top domains"), "missing Top domains title");
         assert!(
             rendered.contains("no web watcher"),
             "no-web-watcher hint missing in domains panel\n{rendered}"
         );
 
-        // Hourly chart
         assert!(
             rendered.contains("Hourly distribution"),
             "missing Hourly title"
         );
 
-        // Footer: fixture sets top_domains to an empty Ok-result, which
-        // the footer interprets as "extension not installed" and surfaces
-        // the install tip in place of the normal key hints.
+        // Empty Ok top_domains → footer shows install tip.
         assert!(
             rendered.contains("tip:") && rendered.contains("Top domains"),
             "domains-empty tip missing from footer\n{rendered}"
         );
 
-        // Offline indicator must NOT show in fixture (everything succeeded)
         assert!(
             !rendered.contains("tracker offline"),
             "fixture cache is healthy; offline indicator should be hidden"
         );
     }
 
-    /// First-load skeleton: panel structure renders even before any
-    /// data lands. No "loading" banners, no "kpi unavailable" text —
-    /// those were Phase 1 / Phase 2 banners that the redesign replaced
-    /// with shape-stable skeletons.
+    /// First-load skeleton: panel chrome renders before any data lands.
     #[test]
     fn overview_renders_skeleton_when_caches_empty() {
         let app = App::new();
@@ -712,7 +664,7 @@ mod tests {
         );
         assert!(
             !rendered.contains("kpi unavailable"),
-            "Phase 2 removes the red 'kpi unavailable' banner\n{rendered}"
+            "first-load skeleton must not surface a 'kpi unavailable' banner\n{rendered}"
         );
     }
 
@@ -720,7 +672,7 @@ mod tests {
     fn overview_shows_offline_indicator_when_caches_offline() {
         let mut app = App::new();
         let now = Instant::now();
-        // 3 failures crosses OFFLINE_THRESHOLD per decision 1C.
+        // 3 = OFFLINE_THRESHOLD.
         for _ in 0..3 {
             app.data.top_apps.apply_failure("conn refused".into(), now);
         }
@@ -747,9 +699,7 @@ mod tests {
         out
     }
 
-    /// Per DESIGN.md D6: hourly chart paints multiple spectrum bands.
-    /// Phase 2 switched BarChart → Chart with per-band Datasets; this
-    /// test guards the per-band colouring.
+    /// Guards per-band colouring in the hourly chart.
     #[test]
     fn hourly_chart_paints_multiple_spectrum_bands() {
         use crate::theme::Theme;

@@ -1,8 +1,5 @@
-//! 24h timeline barcode — N width-adaptive cells, dominant category per
-//! slot. Each cell renders `▌` (LEFT HALF BLOCK) so the right half stays
-//! at panel background, producing visible gaps between adjacent stripes.
-//! N is set to the inner panel width at render time, so the bar always
-//! fills its rect at the densest resolution the terminal supports.
+//! 24h timeline barcode. N = inner panel width; each cell is `▌` so
+//! right halves render as gaps.
 
 use std::collections::HashMap;
 
@@ -32,12 +29,8 @@ pub struct TimelineSlot {
     pub duration_secs: f64,
 }
 
-/// Place each event into the `n` time slots it touches; the dominant
-/// category per slot wins. Generalizes the desktop's `bucketize96` to an
-/// arbitrary slot count so the TUI can scale resolution to terminal width.
-///
-/// Local time-of-day is computed via `chrono::Local`, matching the JS
-/// `setHours(0,0,0,0)` floor that the desktop uses to compute slot index.
+/// Place each event into the `n` slots it touches; dominant root wins
+/// per slot. Slot index uses local time-of-day.
 pub fn bucketize_n(events: &[CategorizedEvent], n: usize) -> Vec<TimelineSlot> {
     if n == 0 {
         return Vec::new();
@@ -66,10 +59,7 @@ pub fn bucketize_n(events: &[CategorizedEvent], n: usize) -> Vec<TimelineSlot> {
 
         let mut remaining = ev.duration;
         let mut cursor = from_day_start;
-        // Safety cap mirrors the desktop's `safety < 200` — events
-        // longer than ~50h shouldn't appear, but the cap keeps a
-        // malformed event from looping forever. Scaled with n so very
-        // dense bars still terminate quickly.
+        // Safety cap: malformed event mustn't loop forever.
         let cap = (n * 2).max(200);
         for _ in 0..cap {
             if remaining <= 0.0 {
@@ -116,12 +106,7 @@ fn category_root(name: &[String]) -> String {
         .unwrap_or_else(|| "Uncategorized".to_string())
 }
 
-/// Render the 24h timeline panel as a barcode with an axis row. Six
-/// rows: top border, 3 stripe rows, axis (`00 06 12 18 23`), bottom
-/// border. Each stripe row repeats the same line of `▌` half-blocks
-/// colored by category — adjacent cells alternate color/background,
-/// creating the gap effect without burning extra cells. The axis is
-/// scaled to the dynamic stripe count so labels stay aligned to hours.
+/// Barcode: 3 stripe rows + axis. Axis labels are width-scaled.
 pub fn render(
     f: &mut Frame,
     area: Rect,
@@ -154,8 +139,6 @@ pub fn render(
         return;
     }
 
-    // Reserve the bottom row for the axis when there's room for both
-    // stripes and a label row. On a single inner row, just paint stripes.
     let (stripes_area, axis_area) = if inner.height >= 2 {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
@@ -167,9 +150,7 @@ pub fn render(
     };
 
     let Some(events) = events else {
-        // Skeleton — animated throbber while a fetch is in flight, static
-        // ellipsis otherwise. Axis still renders so the panel shape
-        // doesn't collapse before data lands.
+        // Render axis even in skeleton — panel shape stays stable.
         render_skeleton_body(f, stripes_area, theme, throbber, in_flight);
         if let Some(axis) = axis_area {
             f.render_widget(axis_paragraph(theme, stripes_area.width), axis);
@@ -204,9 +185,7 @@ pub fn render(
     }
 }
 
-/// Hour-tick row: `00 / 06 / 12 / 18 / 23` positioned by hour-fraction
-/// of the stripe width. Generalizes the old fixed `h * 4` anchor (which
-/// only worked at width=96) to any dynamic stripe count.
+/// Hour-tick row positioned by hour-fraction of stripe width.
 fn axis_paragraph(theme: &Theme, width: u16) -> Paragraph<'static> {
     let width = (width as usize).max(1);
     let labels = [(0_usize, "00"), (6, "06"), (12, "12"), (18, "18"), (23, "23")];
@@ -265,9 +244,7 @@ mod tests {
 
     #[test]
     fn bucketize_n_dominant_category_wins_per_slot() {
-        // Two events targeting the same slot; the longer-duration one
-        // takes the slot. Use the local-time hour computed from a UTC
-        // event timestamp so the test is timezone-invariant.
+        // Longer-duration event wins. UTC ts → local hour keeps it tz-invariant.
         let events = vec![
             ev(12, 5, 600.0, &["Browsing"]), // 10 min Browsing
             ev(12, 5, 60.0, &["Programming"]), // 1 min Programming

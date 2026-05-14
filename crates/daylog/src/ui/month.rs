@@ -1,24 +1,4 @@
-//! Month tab — desktop-parity port of `src/pages/MonthPage.tsx`.
-//!
-//! Two vertical bands inside the body:
-//!   1. Year heatmap (~53 weeks × 7 weekdays) + "This month" stat card
-//!      — Length(11), 70 / 30 horizontal split.
-//!   2. Top apps · 30d + Top categories · 30d + Top domains · 30d
-//!      — Min(8), 34 / 33 / 33 horizontal split.
-//!
-//! The heatmap is GitHub-style: weekday rows (Sun..Sat) × ~53 weekly
-//! columns covering the trailing 365 days. Density is binned into four
-//! ember-styled Unicode block characters so the gradient survives both
-//! truecolor and 256-colour terminals; today's cell is REVERSED+BOLD so
-//! it survives even when its underlying intensity is empty.
-//!
-//! Range chips don't drive this tab — `ui.rs::render_range_chips` dims
-//! the row and appends a "trailing 30d · year overview" hint when the
-//! Month tab is active. The four backing cache slots
-//! (`month_trailing_year`, `month_top_apps`, `month_top_categories`,
-//! `month_top_domains`) live on `DataCache` and are dispatched only
-//! when `app.tab == Tab::Month` so Today's TTFF isn't taxed by the
-//! 365-day fan-out fetch.
+//! Month tab — GitHub-style 53-week heatmap + 30d rollups.
 
 use chrono::{Datelike, Duration as ChronoDuration, Local, NaiveDate};
 use ratatui::{
@@ -39,9 +19,8 @@ use crate::ui::{
     render_skeleton_body,
 };
 
-/// Width reserved on the heatmap's left for the Mon/Wed/Fri labels —
-/// "M  ", "W  ", "F  ", or "   " — so cells line up below the month
-/// abbreviations on the top row.
+/// Heatmap left gutter: "M  ", "W  ", "F  ", or "   ". Three cols so
+/// cells line up below the month abbreviations.
 const HEATMAP_LABEL_GUTTER: usize = 3;
 
 pub fn render(f: &mut Frame, area: Rect, app: &App) {
@@ -132,10 +111,8 @@ fn render_heatmap(f: &mut Frame, area: Rect, app: &App) {
     f.render_widget(p, inner);
 }
 
-/// Today's value comes from the live KPI slot when the user has the
-/// Today chip selected (the common case). Otherwise the heatmap
-/// renders today at zero — better to under-report by half a day than
-/// to splice in an unrelated chip's KPI value.
+/// Use today's live KPI only when chip == Today; otherwise 0 (don't
+/// splice another chip's value).
 fn today_active_secs(app: &App) -> f64 {
     if app.range_chip == RangeChip::Today {
         app.data.kpi.value().map(|k| k.active_secs).unwrap_or(0.0)
@@ -152,11 +129,9 @@ struct HeatmapCell {
 
 #[derive(Debug, Clone)]
 struct HeatmapColumn {
-    /// Month abbreviation if this column starts a new month vs. the
-    /// previous labeled column. Drives the top label row.
     month_label: Option<&'static str>,
     /// Index 0 = Sunday … 6 = Saturday. `None` is a cell outside the
-    /// 365-day window (future, or before the window's start).
+    /// 365-day window.
     cells: [Option<HeatmapCell>; 7],
 }
 
@@ -246,10 +221,8 @@ fn render_heatmap_lines(
 ) -> Vec<Line<'static>> {
     let mut lines: Vec<Line<'static>> = Vec::with_capacity(8);
 
-    // Month label row spans `width` chars; cells live in column index
-    // `gutter + col_index` so labels align with the column's leftmost
-    // cell. Wider terminals pad with trailing spaces; narrower ones
-    // clip — the heatmap below clips the same way.
+    // Month labels at column index `gutter + col_index` so they sit
+    // above the leftmost cell.
     let mut label_chars = vec![' '; width.max(HEATMAP_LABEL_GUTTER)];
     for (c, col) in columns.iter().enumerate() {
         if let Some(label) = col.month_label {
@@ -267,9 +240,7 @@ fn render_heatmap_lines(
         Style::default().fg(theme.dim),
     )));
 
-    // Seven weekday rows, gutter-prefixed. M / W / F labels only — the
-    // canonical GitHub heatmap convention. Tue / Thu / Sat / Sun read
-    // by position so labelling all seven would be redundant noise.
+    // M/W/F-only labels (GitHub-heatmap convention).
     for weekday in 0..7 {
         let mut spans: Vec<Span<'static>> = Vec::with_capacity(columns.len() + 1);
         let gutter = match weekday {
@@ -293,12 +264,8 @@ fn render_heatmap_lines(
     lines
 }
 
-/// Map a cell's active-seconds intensity to one of four Unicode block
-/// densities painted in `theme.ember`. Empty-but-tracked days render
-/// `·` in `border_dim` so they read as "tracked, no activity" — visually
-/// distinct from out-of-window blanks. Today gets REVERSED+BOLD on top
-/// of whatever density it landed on so it remains findable on a
-/// zero-activity morning.
+/// 4-tier ember density. Empty-but-tracked day = `·` (border_dim);
+/// today = REVERSED+BOLD overlay.
 fn density_span(theme: &Theme, secs: f64, max_secs: f64, is_today: bool) -> Span<'static> {
     let mut style = Style::default();
     let ch: char = if secs <= 0.0 || max_secs <= 0.0 {
@@ -430,9 +397,7 @@ fn month_stats(today_active: f64, trailing: &[f64]) -> MonthStats {
             active_secs: *secs,
         });
 
-    // Streak counts consecutive non-zero days walking back from today.
-    // Mirrors the desktop's strict rule: a fresh-launched morning with
-    // no events yet starts the streak at 0.
+    // Strict: a zero-event morning starts the streak at 0.
     let mut streak = 0_u32;
     for v in &days {
         if *v > 0.0 {
@@ -577,11 +542,7 @@ mod tests {
         assert_eq!(span.content.as_ref(), "\u{2588}");
     }
 
-    /// Snapshot smoke test: render the Month tab end-to-end at full
-    /// width and assert each of the five visual surfaces (heatmap, this-
-    /// month card, three rollup panels) lands its title or a fixture
-    /// data point. Buys cheap regression coverage against rename / mod-
-    /// dispatch typos without locking in byte-exact layout.
+    /// Smoke test — title/fixture-point assertions, not byte-exact.
     #[test]
     fn month_renders_full_layout() {
         use crate::app::{App, Tab};
@@ -639,14 +600,11 @@ mod tests {
             out
         };
 
-        // Tab strip is showing Month
         assert!(rendered.contains("Month"), "Month not in tab strip");
-        // Heatmap title
         assert!(
             rendered.contains("Year heatmap"),
             "missing 'Year heatmap' title\n{rendered}"
         );
-        // This-month card
         assert!(
             rendered.contains("This month"),
             "missing 'This month' title"
@@ -655,7 +613,6 @@ mod tests {
             rendered.contains("Active days") && rendered.contains("Best day"),
             "expanded month stats missing"
         );
-        // Rollup row titles
         assert!(
             rendered.contains("Top apps"),
             "missing 'Top apps' rollup title"
@@ -668,13 +625,11 @@ mod tests {
             rendered.contains("Top domains"),
             "missing 'Top domains' rollup title"
         );
-        // Fixture data points landed
         assert!(rendered.contains("kitty"), "fixture top app missing");
         assert!(
             rendered.contains("github.com"),
             "fixture top domain missing"
         );
-        // Heatmap painted at least one full-block char somewhere.
         assert!(
             rendered.contains('\u{2588}'),
             "heatmap painted no full-block cells"

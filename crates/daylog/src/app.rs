@@ -27,10 +27,6 @@ pub enum Tab {
 }
 
 impl Tab {
-    // Settings was a stub ("content lands in a later phase") and has
-    // been dropped until it has real content (read-only diagnostic
-    // panel — server info, watcher list, cache health). Listing a tab
-    // the user cycles into a placeholder reads as broken.
     pub const ALL: &'static [Tab] = &[Tab::Today, Tab::Week, Tab::Month];
 
     pub fn label(self) -> &'static str {
@@ -56,9 +52,7 @@ impl Tab {
     }
 }
 
-/// Time-range chips in the order shown under the tab strip. `r` cycles
-/// forward, `Shift-R` reverses. We keep the set tight (4 chips) so the
-/// chip row fits under any reasonable terminal width.
+/// Time-range chips. `r` cycles forward, `Shift-R` reverses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RangeChip {
     Today,
@@ -103,9 +97,7 @@ pub struct App {
     pub quit: bool,
     pub dirty: bool,
     pub data: DataCache,
-    /// Latched at startup from `$COLORTERM`/`$TERM`. Every widget pulls
-    /// colours and modifiers from here so the spec's token table is the
-    /// only source of truth.
+    /// Latched at startup; sole source of truth for colours/modifiers.
     pub theme: Theme,
     /// Shared throbber animation state. One state for the whole app —
     /// every panel's spinner advances on the same 250ms tick so they look
@@ -126,9 +118,7 @@ impl App {
         Self::with_theme(Theme::detect())
     }
 
-    /// Construct with an explicit theme. Tests pin a deterministic tier
-    /// via `Theme::from_env_pair(Some("truecolor"), None)` so snapshot
-    /// colour expectations don't drift with `$COLORTERM` on the host.
+    /// Tests pin a deterministic theme so snapshot colours don't drift with $COLORTERM.
     pub fn with_theme(theme: Theme) -> Self {
         Self {
             tab: Tab::Today,
@@ -143,11 +133,8 @@ impl App {
         }
     }
 
-    /// Seed a body-scoped fade-from-background effect. Called by the
-    /// event loop just before the first draw so the cold-start paint
-    /// dissolves in. Not invoked from `with_theme` because the test
-    /// harness builds fresh `App`s and expects pixel-exact colours on the
-    /// first frame — the fade would shift those during the transition.
+    /// Seed the cold-start fade. Not invoked from `with_theme` — test
+    /// fixtures expect pixel-exact first-frame colours.
     pub fn queue_fade_in(&mut self) {
         let bg = self.theme.bg;
         *self.effect.borrow_mut() = Some(fx::fade_from(
@@ -212,7 +199,6 @@ pub async fn event_loop(terminal: &mut Terminal<Backend>, app: &mut App) -> io::
     let range = app.range();
     dispatch_refetches(&mut app.data, range, app.tab, &result_tx, Instant::now());
 
-    // Seed the cold-start fade-in so the first paint doesn't snap.
     app.queue_fade_in();
 
     let mut last_draw = Instant::now();
@@ -311,7 +297,7 @@ fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
             app.cycle_range(false);
         }
         KeyCode::Char(d) if d.is_ascii_digit() && d != '0' => {
-            // 1..4 jump to tab N (Today/Week/Month/Settings).
+            // 1..N jump to tab N.
             let idx = (d as u8 - b'1') as usize;
             if idx < Tab::ALL.len() {
                 let new = Tab::ALL[idx];
@@ -373,8 +359,6 @@ mod tests {
 
     #[test]
     fn handle_key_arrow_keys_alias_tab_cycle() {
-        // Most users try arrow keys before vim keys. Right/Left should
-        // behave identically to l/h.
         let mut app = App::new();
         handle_key(&mut app, KeyCode::Right, KeyModifiers::NONE);
         assert_eq!(app.tab, Tab::Week);
@@ -415,7 +399,6 @@ mod tests {
     fn cycle_range_resets_data_cache() {
         let mut app = App::new();
         let now = Instant::now();
-        // Pretend a fetch already populated top_apps for Today.
         app.data
             .top_apps
             .apply_success(vec![], now);

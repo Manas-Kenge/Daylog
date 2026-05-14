@@ -856,8 +856,6 @@ mod tests {
         assert_eq!(c.last_error(), Some("blip"));
     }
 
-    // --- DataCache + fetch dispatch tests live below the Cached<T> tests ---
-
     #[test]
     fn data_cache_starts_with_no_values() {
         let dc = DataCache::new();
@@ -1031,17 +1029,13 @@ mod tests {
         let today_events = vec![ev(&["Comms"], 1800.0)];
         let week = build_week_buckets(today, &today_events, &past);
         assert_eq!(week.len(), 7);
-        // Mon (May 4) — past, has Browsing 1h.
         assert_eq!(week[0].date, NaiveDate::from_ymd_opt(2026, 5, 4).unwrap());
         assert!(!week[0].is_future);
         assert_eq!(week[0].roots, vec![("Browsing".to_string(), 3600.0)]);
-        // Tue (May 5) — past, has Work 2h.
         assert!(!week[1].is_future);
         assert_eq!(week[1].roots, vec![("Work".to_string(), 7200.0)]);
-        // Wed (May 6) — today, has Comms 30m.
         assert!(!week[2].is_future);
         assert_eq!(week[2].roots, vec![("Comms".to_string(), 1800.0)]);
-        // Thu through Sun must be flagged future with no roots.
         for i in 3..7 {
             assert!(week[i].is_future, "day index {i} must be future");
             assert!(week[i].roots.is_empty());
@@ -1052,7 +1046,7 @@ mod tests {
     #[test]
     fn build_week_orders_roots_by_week_root_order() {
         let today = NaiveDate::from_ymd_opt(2026, 5, 8).unwrap();
-        // Today has Browsing, Work, ZZUnknown — output must be Work, Browsing, ZZUnknown.
+        // Today has Browsing, Work, ZZUnknown — expect ROOT_ORDER then alpha.
         let today_events = vec![
             ev(&["Browsing"], 1000.0),
             ev(&["Work", "Programming"], 2000.0),
@@ -1064,7 +1058,6 @@ mod tests {
         let today_row = &week[last_past];
         assert!(today_row.date == today);
         let names: Vec<&str> = today_row.roots.iter().map(|(n, _)| n.as_str()).collect();
-        // Work first (ROOT_ORDER index 0), then Browsing (index 3), then ZZUnknown.
         assert_eq!(names, vec!["Work", "Browsing", "ZZUnknown"]);
         let _ = today_idx;
     }

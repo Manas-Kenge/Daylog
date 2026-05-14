@@ -1,8 +1,4 @@
-//! Week tab — calendar-week (Mon → Sun) stacked-bar chart with a
-//! "highest Work day" callout. TUI port of `src/pages/WeekPage.tsx`. Like
-//! the desktop page, future days inside the current week render as empty
-//! columns (axis label only). Daylog is observational, so the callout
-//! describes facts ("highest"), not motivation ("strongest").
+//! Week tab — Mon→Sun stacked bars with a "highest Work day" callout.
 
 use chrono::{Datelike, NaiveDate, Weekday};
 use ratatui::{
@@ -25,7 +21,6 @@ use crate::ui::{
     render_skeleton_body,
 };
 
-/// Root displayed in the Work-callout. Matches the desktop's WORK_ROOT.
 const WORK_ROOT: &str = "Work";
 
 pub fn render(f: &mut Frame, area: Rect, app: &App) {
@@ -295,10 +290,8 @@ fn render_callout(f: &mut Frame, area: Rect, theme: &Theme, week: Option<&[WeekD
     f.render_widget(p, area);
 }
 
-/// Map a category root to the spectrum colour that paints its bar segment.
-/// Mirrors the desktop's `categoryColor` from `src/lib/category-colors.ts`.
-/// `Comms` deliberately routes through `theme.chart_2_style()` so the
-/// ANSI-16 BOLD-collision lift comes along for free (per `theme.rs:200-205`).
+/// Spectrum colour for a category root. `Comms` routes through
+/// `chart_2_style()` for the ANSI-16 BOLD lift.
 pub fn category_root_style(theme: &Theme, root: &str) -> Style {
     match root {
         "Work" | "Programming" => Style::default().fg(theme.chart_1),
@@ -585,7 +578,6 @@ mod tests {
             "callout text missing\n{rendered}"
         );
 
-        // Stacked bars should paint at least two distinct chart bands.
         let mut saw_chart_1 = false;
         let mut saw_other = false;
         for y in 0..buf.area.height {
@@ -620,7 +612,6 @@ mod tests {
             .draw(|f| crate::ui::render(f, &app))
             .expect("render frame");
         let rendered = buffer_to_string(terminal.backend().buffer());
-        // Title should still appear; loading callout is suppressed.
         assert!(
             rendered.contains("7-Day Activity Breakdown"),
             "title still painted: {rendered}"

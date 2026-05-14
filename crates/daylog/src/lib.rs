@@ -13,7 +13,6 @@ pub mod wizard;
 
 pub use app::Tab;
 
-/// What the user asked for on the command line.
 enum Command {
     Dashboard,
     /// Force the wizard regardless of marker (`--setup`).
@@ -149,7 +148,6 @@ async fn run_async(force_wizard: bool) -> io::Result<()> {
         }
     }
 
-    // First dashboard frame.
     terminal.draw(|f| ui::render(f, &app))?;
 
     let result = app::event_loop(&mut terminal, &mut app).await;

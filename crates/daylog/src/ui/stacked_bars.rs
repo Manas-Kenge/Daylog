@@ -74,10 +74,8 @@ pub fn render(
     let column_max_secs = ceil_hour(max_secs).max(1.0);
     paint_y_axis(y_axis, buf, theme, column_max_secs);
 
-    // x-axis labels: M T W T F S S, centered under each column.
     paint_x_axis(x_axis, buf, theme);
 
-    // Per-column geometry — width-divide remaining space across 7.
     let col_w = chart.width / 7;
     if col_w == 0 {
         return;
@@ -144,7 +142,6 @@ fn paint_column(
     if area.width == 0 || area.height == 0 {
         return;
     }
-    // Center the bar inside the column.
     let pad_left = area.width.saturating_sub(bar_inner_w) / 2;
     let bar_x = area.x + pad_left;
 
