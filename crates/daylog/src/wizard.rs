@@ -20,6 +20,7 @@ use ratatui::{
 use tokio_stream::StreamExt;
 
 use daylog_core::aw_client::AwClient;
+use daylog_core::datastore;
 
 use crate::theme::Theme;
 use crate::tracking::{self, InstallError, LifecycleError};
@@ -58,13 +59,25 @@ pub async fn run_if_needed(
     terminal: &mut Terminal<Backend>,
     theme: &Theme,
 ) -> Result<WizardOutcome, WizardError> {
-    if marker_exists() {
-        return Ok(WizardOutcome::Skipped);
+    let server_up = probe_aw_server().await;
+    let db_present = datastore::db_path().map(|p| p.exists()).unwrap_or(false);
+
+    // Surface the "non-aw-server-rust process is bound to :5600" case
+    // before dropping into the dashboard. Most likely culprit is the
+    // older aw-server (Python) from a pre-Rust ActivityWatch install.
+    // Daylog no longer reads peewee SQLite, so the TUI would show
+    // "tracker offline" without explanation. The screen waits for any
+    // key, then falls through — the user still sees the dashboard,
+    // they just know what's happening.
+    if server_up && !db_present {
+        render_wrong_server(terminal, theme)?;
+        wait_for_any_key().await?;
     }
-    if probe_aw_server().await {
-        // aw-server is up but we've never been through the wizard. Don't
-        // write the marker — the user might still want to install daylog's
-        // own tracker later via `--setup`.
+
+    if marker_exists() || server_up {
+        // marker = user already chose; server_up without marker = some
+        // other aw-server is already running. Either way, don't reprompt.
+        // (The wrong-server warning above already covered the latter.)
         return Ok(WizardOutcome::Skipped);
     }
 
@@ -136,6 +149,18 @@ async fn install_tracker(
 
 async fn probe_aw_server() -> bool {
     AwClient::new().info().await.is_ok()
+}
+
+async fn wait_for_any_key() -> Result<(), WizardError> {
+    let mut events = EventStream::new();
+    while let Some(event) = events.next().await {
+        if let Event::Key(k) = event? {
+            if k.kind == KeyEventKind::Press {
+                return Ok(());
+            }
+        }
+    }
+    Ok(())
 }
 
 async fn wait_for_choice() -> Result<Choice, WizardError> {
@@ -214,6 +239,75 @@ fn render_prompt(
         f.render_widget(Paragraph::new(body_lines), chunks[1]);
 
         render_keys(f, chunks[3], theme);
+    })?;
+    Ok(())
+}
+
+fn render_wrong_server(
+    terminal: &mut Terminal<Backend>,
+    theme: &Theme,
+) -> io::Result<()> {
+    terminal.draw(|f| {
+        let area = f.area();
+        let card = center_rect(area, 70, 13);
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(theme.border_dim_style())
+            .title(Span::styled(
+                " daylog · wrong tracker on :5600 ",
+                Style::default().fg(theme.fg).add_modifier(Modifier::BOLD),
+            ));
+        f.render_widget(Clear, card);
+        let inner = block.inner(card);
+        f.render_widget(block, card);
+
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(2), // headline
+                Constraint::Length(6), // body
+                Constraint::Length(1), // spacer
+                Constraint::Length(1), // keys
+            ])
+            .split(inner);
+
+        let headline = Paragraph::new(Line::from(Span::styled(
+            "  Detected an aw-server on :5600, but not aw-server-rust.",
+            Style::default().fg(theme.fg).add_modifier(Modifier::BOLD),
+        )));
+        f.render_widget(headline, chunks[0]);
+
+        let body_lines = vec![
+            Line::from(Span::styled(
+                "  Daylog reads aw-server-rust's SQLite file directly. The",
+                Style::default().fg(theme.fg),
+            )),
+            Line::from(Span::styled(
+                "  older aw-server (Python) uses a different schema and",
+                Style::default().fg(theme.fg),
+            )),
+            Line::from(Span::styled(
+                "  isn't supported. Stop the other server, then run:",
+                Style::default().fg(theme.fg),
+            )),
+            Line::from(Span::raw("")),
+            Line::from(Span::styled(
+                "    daylog --setup",
+                Style::default().fg(theme.fg).add_modifier(Modifier::BOLD),
+            )),
+            Line::from(Span::styled(
+                "  to install aw-server-rust. Your existing data is preserved.",
+                Style::default().fg(theme.dim),
+            )),
+        ];
+        f.render_widget(Paragraph::new(body_lines), chunks[1]);
+
+        let keys = Paragraph::new(Line::from(vec![
+            Span::raw("  "),
+            Span::styled("Any key", Style::default().fg(theme.fg).add_modifier(Modifier::BOLD)),
+            Span::styled(" to continue (dashboard will show offline)", Style::default().fg(theme.dim)),
+        ]));
+        f.render_widget(keys, chunks[3]);
     })?;
     Ok(())
 }
