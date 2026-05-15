@@ -29,6 +29,6 @@ run_loop() {
 }
 
 log "supervisor starting (BIN_DIR=$BIN_DIR)"
-run_loop "aw-server-rust" "'$BIN_DIR/aw-server-rust' --port 5600 --testing false" &
+run_loop "aw-server-rust" "'$BIN_DIR/aw-server-rust' --port 5600" &
 run_loop "aw-awatcher"    "'$BIN_DIR/aw-awatcher'" &
 wait
