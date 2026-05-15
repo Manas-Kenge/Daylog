@@ -66,6 +66,8 @@ Service templates live at `crates/daylog/services/*.tmpl` and are compiled into 
 - `theme.rs` — single source for every color and style modifier. No widget reaches into `ratatui::style::Color::*` directly.
 - `ui.rs` + `ui/{overview, week, month, timeline, sparkline, stacked_bars, kpi_strip}.rs` — render tree. Each tab gets its own module.
 
+Before changing anything visual in the TUI (layout, color, typography, borders, spacing, glyphs), read [`crates/daylog/DESIGN.md`](./crates/daylog/DESIGN.md). It is the source of truth for the design system — the 4-band rhythm shared across tabs, the borderless data-region rule, the eighth-block bar ladder, color token scoping, and the keyboard-driven tab/chip vocabulary. Don't deviate without updating DESIGN.md in the same change.
+
 ### First launch
 
 The wizard-complete marker is `~/.config/daylog/.wizard-complete` (constant in `wizard.rs`). The wizard writes it after the user confirms install OR explicit decline. To re-prompt: delete the marker, or run `daylog --setup`.

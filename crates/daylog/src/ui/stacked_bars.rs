@@ -201,8 +201,7 @@ pub(crate) fn allocate_segments(
     if bar_h == 0 || total <= 0.0 || roots.is_empty() {
         return roots.iter().map(|(n, _)| (n.clone(), 0)).collect();
     }
-    // Floor each share, track remainders. Distribute leftover rows by
-    // largest remainder until they sum to bar_h.
+    // Largest-remainder rounding so segments sum exactly to bar_h.
     let bar_h_f = bar_h as f64;
     let mut shares: Vec<(String, u16, f64)> = roots
         .iter()
@@ -215,8 +214,7 @@ pub(crate) fn allocate_segments(
     let allocated: u16 = shares.iter().map(|(_, h, _)| *h).sum();
     let mut leftover = bar_h.saturating_sub(allocated);
     if leftover > 0 {
-        // Sort indices by remainder desc (stable to keep deterministic
-        // tie-break to original order).
+        // Stable sort by remainder desc — preserves original order on ties.
         let mut indices: Vec<usize> = (0..shares.len()).collect();
         indices.sort_by(|a, b| {
             shares[*b]

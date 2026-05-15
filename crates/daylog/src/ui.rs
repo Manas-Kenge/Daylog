@@ -12,9 +12,8 @@ use crossterm::{
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
-    symbols,
     text::{Line, Span},
-    widgets::{Paragraph, Tabs},
+    widgets::Paragraph,
     Frame, Terminal,
 };
 use tachyonfx::EffectRenderer;
@@ -34,7 +33,6 @@ pub type Backend = ratatui::backend::CrosstermBackend<Stdout>;
 pub fn setup_terminal() -> io::Result<Terminal<Backend>> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    // Mouse capture intentionally NOT enabled: preserves native terminal scroll/select.
     execute!(stdout, EnterAlternateScreen)?;
     let backend = ratatui::backend::CrosstermBackend::new(stdout);
     Terminal::new(backend)
@@ -60,64 +58,46 @@ pub fn render(f: &mut Frame, app: &App) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(1), // tab strip
-            Constraint::Length(1), // legend row (also acts as the visual margin)
-            Constraint::Min(0),    // body
-            Constraint::Length(1), // footer
+            Constraint::Length(1), // top divider rule (also the visual margin)
+            Constraint::Min(0),    // body — claims everything else
         ])
         .split(f.area());
 
-    render_body(f, chunks[2], app);
-    render_footer(f, chunks[3], app);
     render_tabs(f, chunks[0], app);
-    render_color_legend(f, chunks[1], &app.theme);
+    render_divider(f, chunks[1], &app.theme);
+    render_body(f, chunks[2], app);
+    render_offline_indicator(f, chunks[0], app);
 
-    // Scope effects to body so tabs/footer don't flicker mid-transition.
+    // Scope effects to body so the tab strip doesn't flicker mid-transition.
     if let Some(effect) = app.effect.borrow_mut().as_mut() {
         let last_tick = *app.last_tick.borrow();
         f.render_effect(effect, chunks[2], last_tick);
     }
 }
 
-/// Right-aligned category legend. Drops labels at 80/50/30-col breakpoints.
-fn render_color_legend(f: &mut Frame, area: Rect, theme: &Theme) {
-    if area.width < 30 {
+/// Overlay on the right of the tab strip after 3+ consecutive fetch failures.
+fn render_offline_indicator(f: &mut Frame, area: Rect, app: &App) {
+    if !app.data.any_offline() {
         return;
     }
-    let labelled = area.width >= 80;
-    let abbreviated = area.width < 80;
-    let dot = "\u{25CF}";
-    let entries: &[(&str, &str, ratatui::style::Color)] = &[
-        ("Work", "Work", theme.chart_1),
-        ("Comms", "Comms", theme.chart_2),
-        ("Media", "Media", theme.chart_3),
-        ("Browsing", "Web", theme.chart_4),
-        ("Documents", "Docs", theme.chart_5),
-        ("Other", "Other", theme.dim),
-    ];
-
-    let label_style = Style::default().fg(theme.dim);
-    let mut spans: Vec<Span<'static>> = Vec::new();
-    for (i, (full, short, color)) in entries.iter().enumerate() {
-        if i > 0 {
-            spans.push(Span::raw("  "));
-        }
-        spans.push(Span::styled(dot.to_string(), Style::default().fg(*color)));
-        if labelled || area.width >= 50 {
-            let name = if abbreviated { *short } else { *full };
-            spans.push(Span::styled(format!(" {}", name), label_style));
-        }
+    if area.width < 20 {
+        return;
     }
-
+    let line = Line::from(Span::styled(
+        "\u{25cb} tracker offline ",
+        app.theme.error_style(),
+    ));
+    let p = Paragraph::new(line).alignment(Alignment::Right);
     let inset = Rect {
         x: area.x,
         y: area.y,
         width: area.width.saturating_sub(2),
-        height: area.height,
+        height: 1,
     };
-    let p = Paragraph::new(Line::from(spans)).alignment(Alignment::Right);
     f.render_widget(p, inset);
 }
 
+/// Tab strip. Active tab gets the ember pill; inactive tabs are dim.
 fn render_tabs(f: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
     let inset = Rect {
@@ -126,37 +106,21 @@ fn render_tabs(f: &mut Frame, area: Rect, app: &App) {
         width: area.width.saturating_sub(4),
         height: area.height,
     };
-    // Tabs::padding() is uniform; wrap the active label in spaces so only it gets the wider pill background.
-    let titles: Vec<Line<'static>> = Tab::ALL
-        .iter()
-        .map(|t| {
-            if *t == app.tab {
-                Line::from(format!("  {}  ", t.label()))
-            } else {
-                Line::from(t.label())
-            }
-        })
-        .collect();
-    let tabs = Tabs::new(titles)
-        .select(app.tab.index())
-        .style(
-            Style::default()
-                .fg(theme.fg)
-                .bg(theme.bg)
-                .add_modifier(Modifier::BOLD),
-        )
-        .highlight_style(
-            Style::default()
-                .fg(theme.bg)
-                .bg(theme.ember)
-                .add_modifier(Modifier::BOLD),
-        )
-        .divider(Span::styled(
-            symbols::DOT,
-            Style::default().fg(theme.border_dim).bg(theme.bg),
-        ))
-        .padding("  ", "  ");
-    f.render_widget(tabs, inset);
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    for (i, t) in Tab::ALL.iter().enumerate() {
+        if i > 0 {
+            spans.push(Span::raw("  "));
+        }
+        if *t == app.tab {
+            spans.push(Span::styled(
+                format!("  {}  ", t.label()),
+                theme.active_tab_style(),
+            ));
+        } else {
+            spans.push(Span::styled(t.label().to_string(), theme.inactive_tab_style()));
+        }
+    }
+    f.render_widget(Paragraph::new(Line::from(spans)), inset);
 }
 
 fn render_body(f: &mut Frame, area: Rect, app: &App) {
@@ -167,52 +131,6 @@ fn render_body(f: &mut Frame, area: Rect, app: &App) {
     }
 }
 
-fn render_footer(f: &mut Frame, area: Rect, app: &App) {
-    let theme = &app.theme;
-    let dim = Style::default().fg(theme.dim);
-    let sep = Style::default().fg(theme.border_dim);
-    let key = Style::default().fg(theme.fg).add_modifier(Modifier::BOLD);
-
-    let mut spans = Vec::new();
-    if app.data.any_offline() {
-        spans.push(Span::styled(
-            "\u{25cb} tracker offline",
-            theme.error_style(),
-        ));
-        if area.width >= 60 {
-            spans.push(Span::styled("  \u{00b7}  ", sep));
-        }
-    }
-
-    // Empty-Ok top_domains = "no aw-watcher-web bucket" signal. Pending = don't speculate.
-    let domains_missing = app
-        .data
-        .top_domains
-        .value()
-        .map(|rows| rows.is_empty())
-        .unwrap_or(false);
-
-    if area.width >= 60 {
-        if domains_missing {
-            spans.push(Span::styled("tip: ", key));
-            spans.push(Span::styled(
-                "install the browser extension to populate ",
-                dim,
-            ));
-            spans.push(Span::styled("Top domains", key));
-        } else {
-            spans.extend(vec![
-                Span::styled("Tab", key),
-                Span::styled(" cycle  ", dim),
-                Span::styled("\u{00b7}", sep),
-                Span::styled("  q", key),
-                Span::styled(" quit ", dim),
-            ]);
-        }
-    }
-    let p = Paragraph::new(Line::from(spans)).alignment(Alignment::Right);
-    f.render_widget(p, area);
-}
 
 /// Skeleton body: animated throbber if `fetching`, static `…` otherwise.
 /// Centred vertically in the panel inner area.
@@ -227,7 +145,6 @@ pub fn render_skeleton_body(
         return;
     }
     let line = if fetching {
-        // Non-mutating render path; app.rs already advanced `throbber` this frame.
         let widget = throbber_widgets_tui::Throbber::default()
             .style(Style::default().fg(theme.dim))
             .throbber_set(throbber_widgets_tui::BRAILLE_SIX_DOUBLE)
@@ -245,6 +162,53 @@ pub fn render_skeleton_body(
     };
     let p = Paragraph::new(line).alignment(Alignment::Center);
     f.render_widget(p, row);
+}
+
+/// BOLD UPPERCASE section header. `↻` suffix when the data feeding this section
+/// is in-flight. Caller controls placement; renders on a single row at the top
+/// of `area`.
+pub fn render_section_header(
+    f: &mut Frame,
+    area: Rect,
+    theme: &Theme,
+    label: &str,
+    in_flight: bool,
+) {
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+    let title_style = Style::default().fg(theme.fg).add_modifier(Modifier::BOLD);
+    let mut spans: Vec<Span<'static>> = vec![Span::styled(label.to_uppercase(), title_style)];
+    if in_flight {
+        spans.push(Span::raw(" "));
+        spans.push(Span::styled("\u{21bb}", Style::default().fg(theme.dim)));
+    }
+    let row = Rect {
+        x: area.x,
+        y: area.y,
+        width: area.width,
+        height: 1,
+    };
+    f.render_widget(Paragraph::new(Line::from(spans)), row);
+}
+
+/// Dim horizontal rule across the row. Replaces panel borders as the section
+/// separator. Drawn at `area`'s top row.
+pub fn render_divider(f: &mut Frame, area: Rect, theme: &Theme) {
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+    let rule: String = "\u{2500}".repeat(area.width as usize);
+    let row = Rect {
+        x: area.x,
+        y: area.y,
+        width: area.width,
+        height: 1,
+    };
+    f.render_widget(
+        Paragraph::new(Line::from(Span::styled(rule, theme.border_dim_style()))),
+        row,
+    );
 }
 
 /// "2h 14m" / "47m 12s" / "3s".
@@ -299,23 +263,24 @@ mod tests {
             tabs_row.contains("Today")
                 && tabs_row.contains("Week")
                 && tabs_row.contains("Month"),
-            "tab strip should be the first row: {tabs_row}"
+            "tab strip should carry the three tab labels: {tabs_row}"
         );
-        let active_row_idx = (2..=7).find(|y| row(*y).contains("Active"));
+        let active_row_idx = (2..=10).find(|y| row(*y).contains("Active"));
         assert!(
             active_row_idx.is_some(),
-            "KPI strip should appear in the first few rows of the body"
+            "snapshot row should appear in the first several rows of the body"
         );
         assert!(
             !tabs_row.contains("Active"),
-            "KPI strip must not overwrite tabs: {tabs_row}"
+            "snapshot must not overwrite tabs: {tabs_row}"
         );
 
+        // Active tab now wears the brand ember pill instead of REVERSED.
         let today_x = tabs_row.find("Today").expect("Today tab present") as u16;
         assert_eq!(
             buf[(today_x, 0)].style().bg,
             Some(theme.ember),
-            "active tab should have an explicit visible background"
+            "active tab background must be the ember accent"
         );
     }
 }

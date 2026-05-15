@@ -1,5 +1,7 @@
 //! 24h timeline barcode. N = inner panel width; each cell is `▌` so
-//! right halves render as gaps.
+//! right halves render as gaps. Borderless — the section header lives in
+//! the parent (overview::render_timeline_section). This module just paints
+//! the barcode stripe + hour-axis row into the area it's given.
 
 use std::collections::HashMap;
 
@@ -7,15 +9,15 @@ use chrono::{Local, Timelike};
 use daylog_core::aggregate::CategorizedEvent;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Modifier, Style},
+    style::Style,
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph},
+    widgets::Paragraph,
     Frame,
 };
 
 use throbber_widgets_tui::ThrobberState;
 
-use crate::theme::{self, Theme};
+use crate::theme::Theme;
 use crate::ui::render_skeleton_body;
 
 const SECS_PER_DAY: f64 = 24.0 * 60.0 * 60.0;
@@ -106,7 +108,7 @@ fn category_root(name: &[String]) -> String {
         .unwrap_or_else(|| "Uncategorized".to_string())
 }
 
-/// Barcode: 3 stripe rows + axis. Axis labels are width-scaled.
+/// Barcode + hour-axis row. Caller renders the section header above this area.
 pub fn render(
     f: &mut Frame,
     area: Rect,
@@ -115,29 +117,10 @@ pub fn render(
     in_flight: bool,
     throbber: &ThrobberState,
 ) {
-    let title_style = Style::default().fg(theme.fg).add_modifier(Modifier::BOLD);
-    let title = if in_flight {
-        Line::from(vec![
-            Span::styled(" Today's timeline ", title_style),
-            Span::styled("\u{21bb} ", Style::default().fg(theme.dim)),
-        ])
-    } else {
-        Line::from(Span::styled(" Today's timeline ", title_style))
-    };
-
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(theme::PANEL_BORDER)
-        .border_style(theme.border_dim_style())
-        .padding(theme::PANEL_PADDING_TIGHT)
-        .title(title);
-
-    let inner = block.inner(area);
-    f.render_widget(block, area);
-
-    if inner.width == 0 || inner.height == 0 {
+    if area.width == 0 || area.height == 0 {
         return;
     }
+    let inner = area;
 
     let (stripes_area, axis_area) = if inner.height >= 2 {
         let chunks = Layout::default()
@@ -193,8 +176,7 @@ fn axis_paragraph(theme: &Theme, width: u16) -> Paragraph<'static> {
     for (h, label) in labels {
         let col = ((h as f64 / 24.0) * width as f64).round() as usize;
         for (i, ch) in label.chars().enumerate() {
-            // Right-anchor the trailing "23" so it doesn't push past the
-            // end of the row at small widths.
+            // Right-anchor "23" so it doesn't push past the row end on small widths.
             let target = if h == 23 {
                 width.saturating_sub(label.len()) + i
             } else {

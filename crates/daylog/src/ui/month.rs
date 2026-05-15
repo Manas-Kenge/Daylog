@@ -5,18 +5,19 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph},
+    widgets::Paragraph,
     Frame,
 };
 
 use crate::app::{App, RangeChip};
-use crate::theme::{self, Theme};
+use crate::theme::Theme;
 use crate::ui::{
     format_duration,
     overview::{
-        panel_title, render_top_apps_panel, render_top_categories_panel, render_top_domains_panel,
+        panel_block, render_top_apps_panel, render_top_categories_panel,
+        render_top_domains_panel,
     },
-    render_skeleton_body,
+    render_divider, render_skeleton_body,
 };
 
 /// Heatmap left gutter: "M  ", "W  ", "F  ", or "   ". Three cols so
@@ -27,13 +28,15 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(11), // year heatmap (1 month-label + 7 weekdays + 2 borders + slack)
+            Constraint::Length(11), // year heatmap + this-month card (now borderless)
+            Constraint::Length(1),  // divider
             Constraint::Min(8),     // 30-day rollup row
         ])
         .split(area);
 
     render_top_row(f, chunks[0], app);
-    render_rollup_row(f, chunks[1], app);
+    render_divider(f, chunks[1], &app.theme);
+    render_rollup_row(f, chunks[2], app);
 }
 
 fn render_top_row(f: &mut Frame, area: Rect, app: &App) {
@@ -81,14 +84,12 @@ fn render_rollup_row(f: &mut Frame, area: Rect, app: &App) {
 }
 
 fn render_heatmap(f: &mut Frame, area: Rect, app: &App) {
+    if area.height == 0 {
+        return;
+    }
     let theme = &app.theme;
     let in_flight = app.data.month_trailing_year.is_in_flight();
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(theme::PANEL_BORDER)
-        .border_style(theme.border_dim_style())
-        .padding(theme::PANEL_PADDING_TIGHT)
-        .title(panel_title(theme, " Year heatmap ", in_flight));
+    let block = panel_block(theme, "Year heatmap", in_flight);
     let inner = block.inner(area);
     f.render_widget(block, area);
 
@@ -221,17 +222,23 @@ fn render_heatmap_lines(
 ) -> Vec<Line<'static>> {
     let mut lines: Vec<Line<'static>> = Vec::with_capacity(8);
 
-    // Month labels at column index `gutter + col_index` so they sit
-    // above the leftmost cell.
+    // Push labels right when the natural slot would collide with the previous label; keeps every month visible.
     let mut label_chars = vec![' '; width.max(HEATMAP_LABEL_GUTTER)];
+    let mut last_end = 0usize;
     for (c, col) in columns.iter().enumerate() {
         if let Some(label) = col.month_label {
-            let start = HEATMAP_LABEL_GUTTER + c;
+            let natural_start = HEATMAP_LABEL_GUTTER + c;
+            let start = natural_start.max(last_end + 1);
+            let label_len = label.chars().count();
+            if start + label_len > label_chars.len() {
+                break;
+            }
             for (i, ch) in label.chars().enumerate() {
                 if let Some(cell) = label_chars.get_mut(start + i) {
                     *cell = ch;
                 }
             }
+            last_end = start + label_len;
         }
     }
     let label_str: String = label_chars.into_iter().collect();
@@ -292,14 +299,12 @@ fn density_span(theme: &Theme, secs: f64, max_secs: f64, is_today: bool) -> Span
 }
 
 fn render_this_month(f: &mut Frame, area: Rect, app: &App) {
+    if area.height == 0 {
+        return;
+    }
     let theme = &app.theme;
     let in_flight = app.data.month_trailing_year.is_in_flight();
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(theme::PANEL_BORDER)
-        .border_style(theme.border_dim_style())
-        .padding(theme::PANEL_PADDING)
-        .title(panel_title(theme, " This month ", in_flight));
+    let block = panel_block(theme, "This month", in_flight);
     let inner = block.inner(area);
     f.render_widget(block, area);
 
@@ -338,18 +343,15 @@ fn render_this_month(f: &mut Frame, area: Rect, app: &App) {
         .best
         .as_ref()
         .map(|b| format_day_hint(today - ChronoDuration::days(b.days_ago as i64)));
-    let streak_value = if stats.streak > 0 {
-        format!("{} days", stats.streak)
-    } else {
-        "\u{2014}".to_string()
-    };
 
+    // Blank lines between stats match Week's `This week` card so the two
+    // side-cards have identical vertical rhythm across tabs.
     let lines = vec![
         row("Total active", format_duration(stats.total_secs), None),
+        Line::from(""),
         row("Daily avg", format_duration(stats.avg_secs), avg_hint),
+        Line::from(""),
         row("Best day", best_value, best_hint),
-        row("Current streak", streak_value, None),
-        row("Active days", format!("{}/30", stats.active_days), None),
     ];
     let p = Paragraph::new(lines);
     f.render_widget(p, inner);
@@ -602,28 +604,28 @@ mod tests {
 
         assert!(rendered.contains("Month"), "Month not in tab strip");
         assert!(
-            rendered.contains("Year heatmap"),
-            "missing 'Year heatmap' title\n{rendered}"
+            rendered.contains("YEAR HEATMAP"),
+            "missing YEAR HEATMAP section header\n{rendered}"
         );
         assert!(
-            rendered.contains("This month"),
-            "missing 'This month' title"
+            rendered.contains("THIS MONTH"),
+            "missing THIS MONTH section header"
         );
         assert!(
-            rendered.contains("Active days") && rendered.contains("Best day"),
-            "expanded month stats missing"
+            rendered.contains("Best day") && rendered.contains("Daily avg"),
+            "this-month stats missing\n{rendered}"
         );
         assert!(
-            rendered.contains("Top apps"),
-            "missing 'Top apps' rollup title"
+            rendered.contains("TOP APPS"),
+            "missing TOP APPS section header"
         );
         assert!(
-            rendered.contains("Top categories"),
-            "missing 'Top categories' rollup title"
+            rendered.contains("TOP CATEGORIES"),
+            "missing TOP CATEGORIES section header"
         );
         assert!(
-            rendered.contains("Top domains"),
-            "missing 'Top domains' rollup title"
+            rendered.contains("TOP DOMAINS"),
+            "missing TOP DOMAINS section header"
         );
         assert!(rendered.contains("kitty"), "fixture top app missing");
         assert!(

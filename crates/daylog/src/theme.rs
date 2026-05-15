@@ -192,11 +192,14 @@ impl Theme {
             .add_modifier(Modifier::DIM)
     }
 
-    /// Active tab is REVERSED and explicitly NOT dim — the reverse video
-    /// is the focus signal on every tier, including ANSI-16 where colours
-    /// alone wouldn't separate it from the inactive tabs.
+    /// Active tab is the brand ember + bold, painted as a coloured pill.
+    /// ANSI-16 falls through to `Color::Yellow` for the bg, which still
+    /// reads clearly against `Color::Black` on every supported terminal.
     pub fn active_tab_style(&self) -> Style {
-        Style::default().add_modifier(Modifier::REVERSED)
+        Style::default()
+            .fg(self.bg)
+            .bg(self.ember)
+            .add_modifier(Modifier::BOLD)
     }
 
     pub fn inactive_tab_style(&self) -> Style {
@@ -212,9 +215,7 @@ impl Theme {
     }
 
     pub fn kpi_label_style(&self) -> Style {
-        // Real grey colour only — no DIM modifier on top. DIM modifier
-        // composed with an already-dim colour ("double dim") drops to
-        // invisible on linux console + several 256-colour terminals.
+        // fg only — DIM on top of a dim colour drops to invisible on some terminals.
         Style::default().fg(self.dim)
     }
 
@@ -318,7 +319,10 @@ mod tests {
         assert!(!t.kpi_label_style().add_modifier.contains(Modifier::DIM));
         assert_eq!(t.kpi_label_style().fg, Some(t.dim));
         let active = t.active_tab_style();
-        assert!(active.add_modifier.contains(Modifier::REVERSED));
+        // Active tab is a coloured pill: ember bg, bg-coloured fg, bold.
+        assert_eq!(active.bg, Some(t.ember));
+        assert_eq!(active.fg, Some(t.bg));
+        assert!(active.add_modifier.contains(Modifier::BOLD));
         assert!(!active.add_modifier.contains(Modifier::DIM));
     }
 }

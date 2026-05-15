@@ -5,20 +5,21 @@ use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::Style,
     text::{Line, Span},
-    widgets::{Block, Borders, Padding, Paragraph},
+    widgets::Paragraph,
     Frame,
 };
 
 use crate::app::App;
 use crate::data::{WeekDayBuckets, WEEK_ROOT_ORDER};
-use crate::theme::{self, Theme};
+use crate::theme::Theme;
 use crate::ui::stacked_bars::StackedBars;
 use crate::ui::{
     format_duration,
     overview::{
-        panel_title, render_top_apps_panel, render_top_categories_panel, render_top_domains_panel,
+        panel_block, render_top_apps_panel, render_top_categories_panel,
+        render_top_domains_panel,
     },
-    render_skeleton_body,
+    render_divider, render_skeleton_body,
 };
 
 const WORK_ROOT: &str = "Work";
@@ -32,12 +33,14 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(14), // chart + stats card
+            Constraint::Length(1),  // divider
             Constraint::Min(8),     // 7-day rollups
         ])
         .split(area);
 
     render_top_row(f, chunks[0], app, week, in_flight, last_error);
-    render_rollup_row(f, chunks[1], app);
+    render_divider(f, chunks[1], &app.theme);
+    render_rollup_row(f, chunks[2], app);
 }
 
 fn render_top_row(
@@ -99,14 +102,10 @@ fn render_this_week_card(
     in_flight: bool,
     throbber: &throbber_widgets_tui::ThrobberState,
 ) {
-    // Wider padding + an extra row of top inset gives the four stats
-    // room to breathe against the activity chart neighbour.
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(theme::PANEL_BORDER)
-        .border_style(theme.border_dim_style())
-        .padding(Padding::new(2, 2, 1, 0))
-        .title(panel_title(theme, " This week ", in_flight));
+    if area.height == 0 {
+        return;
+    }
+    let block = panel_block(theme, "This week", in_flight);
     let inner = block.inner(area);
     f.render_widget(block, area);
 
@@ -145,8 +144,6 @@ fn render_this_week_card(
         .as_ref()
         .map(|b| format!("{} {}", short_weekday(b.weekday), format_month_day(b.date)));
 
-    // Blank lines between stats double the vertical rhythm — the card's
-    // 14-row container has the budget for it.
     let lines = vec![
         stat_line("Total active", format_duration(stats.total_secs), None),
         Line::from(""),
@@ -157,12 +154,6 @@ fn render_this_week_card(
         ),
         Line::from(""),
         stat_line("Best day", best_value, best_hint),
-        Line::from(""),
-        stat_line(
-            "Active days",
-            format!("{}/{}", stats.active_days, stats.days_elapsed),
-            None,
-        ),
     ];
     let p = Paragraph::new(lines);
     f.render_widget(p, inner);
@@ -176,12 +167,10 @@ fn render_activity_card(
     in_flight: bool,
     last_error: Option<&str>,
 ) {
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(theme::PANEL_BORDER)
-        .border_style(theme.border_dim_style())
-        .padding(theme::PANEL_PADDING_TIGHT)
-        .title(panel_title(theme, " 7-Day Activity Breakdown ", in_flight));
+    if area.height == 0 {
+        return;
+    }
+    let block = panel_block(theme, "7-day activity breakdown", in_flight);
     let inner = block.inner(area);
     f.render_widget(block, area);
 
@@ -196,7 +185,7 @@ fn render_activity_card(
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(1), // legend
+            Constraint::Length(1), // inline category legend
             Constraint::Min(5),    // chart
             Constraint::Length(2), // callout
         ])
@@ -315,7 +304,6 @@ pub(crate) struct WeekStats {
     pub total_secs: f64,
     pub avg_secs: f64,
     pub days_elapsed: usize,
-    pub active_days: usize,
     pub best: Option<DayHours>,
 }
 
@@ -335,7 +323,6 @@ pub(crate) fn week_stats(week: &[WeekDayBuckets]) -> WeekStats {
     } else {
         0.0
     };
-    let active_days = elapsed.iter().filter(|d| d.total_active_secs > 0.0).count();
     let best = elapsed
         .iter()
         .filter(|d| d.total_active_secs > 0.0)
@@ -353,7 +340,6 @@ pub(crate) fn week_stats(week: &[WeekDayBuckets]) -> WeekStats {
         total_secs,
         avg_secs,
         days_elapsed,
-        active_days,
         best,
     }
 }
@@ -484,7 +470,6 @@ mod tests {
         let stats = week_stats(&week);
         // Elapsed = 4 (Mon, Tue, Wed, Thu); active = 3 (Mon-Wed).
         assert_eq!(stats.days_elapsed, 4);
-        assert_eq!(stats.active_days, 3);
         let total = 4.5 * 3600.0 + 7.0 * 3600.0 + 5.0 * 3600.0;
         assert!((stats.total_secs - total).abs() < 1e-6);
         assert!((stats.avg_secs - total / 4.0).abs() < 1e-6);
@@ -544,12 +529,12 @@ mod tests {
         let rendered = buffer_to_string(&buf);
 
         assert!(
-            rendered.contains("7-Day Activity Breakdown"),
-            "chart panel title missing\n{rendered}"
+            rendered.to_uppercase().contains("7-DAY ACTIVITY BREAKDOWN"),
+            "chart section header missing\n{rendered}"
         );
         assert!(
-            rendered.contains("This week"),
-            "stats card missing\n{rendered}"
+            rendered.contains("THIS WEEK"),
+            "this-week section header missing\n{rendered}"
         );
         assert!(
             rendered.contains("Total active"),
@@ -560,15 +545,15 @@ mod tests {
             "legend missing\n{rendered}"
         );
         assert!(
-            rendered.contains("Top apps") && rendered.contains("7 days"),
+            rendered.contains("TOP APPS") && rendered.contains("7 DAYS"),
             "week top apps rollup missing\n{rendered}"
         );
         assert!(
-            rendered.contains("Top categories") && rendered.contains("7 days"),
+            rendered.contains("TOP CATEGORIES") && rendered.contains("7 DAYS"),
             "week top categories rollup missing\n{rendered}"
         );
         assert!(
-            rendered.contains("Top domains") && rendered.contains("7 days"),
+            rendered.contains("TOP DOMAINS") && rendered.contains("7 DAYS"),
             "week top domains rollup missing\n{rendered}"
         );
         assert!(rendered.contains("kitty"), "fixture top app missing");
@@ -620,12 +605,12 @@ mod tests {
             .expect("render frame");
         let rendered = buffer_to_string(terminal.backend().buffer());
         assert!(
-            rendered.contains("7-Day Activity Breakdown"),
-            "title still painted: {rendered}"
+            rendered.to_uppercase().contains("7-DAY ACTIVITY BREAKDOWN"),
+            "section header still painted: {rendered}"
         );
         assert!(
-            rendered.contains("Top apps") && rendered.contains("Top categories"),
-            "rollup panel shells still painted: {rendered}"
+            rendered.contains("TOP APPS") && rendered.contains("TOP CATEGORIES"),
+            "rollup section headers still painted: {rendered}"
         );
     }
 

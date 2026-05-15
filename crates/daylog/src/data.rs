@@ -1,17 +1,8 @@
-//! `Cached<T>` — load-bearing data-layer primitive.
-//!
-//! Each Cached entry is one logical query (e.g. "top apps for today"). It
-//! tracks staleness, dedupes concurrent refetches, and implements
-//! exponential backoff with an "offline" surfacing flag per decision 1C
-//! from the eng review:
-//!
-//! * 5s → 10s → 20s → 40s → 60s capped on consecutive failures.
-//! * Resets to base interval on first success.
-//! * `is_offline()` flips true after `OFFLINE_THRESHOLD` consecutive
-//!   failures so the footer can render "○ tracker offline".
-//!
-//! All time inputs are parameterized via `Instant` so tests can inject
-//! deterministic clocks instead of sleeping.
+//! `Cached<T>` — data-layer primitive. Each entry tracks staleness, dedupes
+//! concurrent refetches, and backs off exponentially (5s → 10s → 20s → 40s →
+//! 60s cap; resets on success). After `OFFLINE_THRESHOLD` consecutive failures
+//! `is_offline()` flips true so the UI can surface the tracker as offline.
+//! Time is injected via `Instant` so tests don't sleep.
 
 use std::time::{Duration, Instant};
 
@@ -473,11 +464,7 @@ pub fn dispatch_refetches(
         });
     }
 
-    // Shared trailing-7-day cache. Drives the kpi baselines and the
-    // week chart (paired with `timeline_events` in `try_rebuild_week`).
-    // SQLite reads are now sub-second, so the dedup is no longer
-    // load-bearing — but the 5-minute cadence still saves us from
-    // re-aggregating ~70k events on every tick.
+    // Shared trailing-7 cache; 5-min cadence avoids re-aggregating ~70k events every tick.
     if cache.trailing_7.should_refetch(now) {
         cache.trailing_7.mark_in_flight();
         let tx = tx.clone();
@@ -609,11 +596,7 @@ pub fn dispatch_refetches(
         }
     }
 
-    // Month-tab fetches are gated on the active tab so Today's
-    // cold-start budget isn't taxed by the 365-day fan-out. Bouncing
-    // back to Today doesn't invalidate already-fetched month caches —
-    // the gate only suppresses *new* dispatches, not in-flight or
-    // cached values.
+    // Gate Month fetches to its active tab so the 365-day fan-out doesn't tax cold start; cached values survive tab bounces.
     if tab != Tab::Month {
         return;
     }

@@ -1,7 +1,7 @@
-//! Today tab. Each panel has a stable shape so first-load skeletons don't reflow when data lands.
+//! Stable panel shapes so first-load skeletons don't reflow when data lands.
 
 use ratatui::{
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     symbols::Marker,
     text::{Line, Span},
@@ -14,112 +14,195 @@ use throbber_widgets_tui::ThrobberState;
 use crate::app::App;
 use crate::data::{Cached, TopAppRow, TopDomainRow};
 use crate::theme::{self, LayoutMode, Theme};
-use crate::ui::{format_duration, kpi_strip, render_skeleton_body, timeline};
+use crate::ui::{
+    format_duration, kpi_strip, render_divider, render_section_header, render_skeleton_body,
+    timeline,
+};
 use daylog_core::aggregate::CategorySummary;
+
+/// BOLD UPPERCASE title inside the panel border, with optional in-flight `↻`.
+/// Leading/trailing spaces keep the title from touching border characters.
+pub(super) fn panel_title(theme: &Theme, base: &str, in_flight: bool) -> Line<'static> {
+    let title_style = Style::default().fg(theme.fg).add_modifier(Modifier::BOLD);
+    let body = format!(" {} ", base.trim().to_uppercase());
+    if in_flight {
+        Line::from(vec![
+            Span::styled(body, title_style),
+            Span::styled("\u{21bb} ", Style::default().fg(theme.dim)),
+        ])
+    } else {
+        Line::from(Span::styled(body, title_style))
+    }
+}
+
+/// Bordered panel: dim rounded border, 1-col h-padding, 1-row top inset, BOLD title.
+pub(super) fn panel_block(theme: &Theme, title: &str, in_flight: bool) -> Block<'static> {
+    Block::default()
+        .borders(Borders::ALL)
+        .border_type(theme::PANEL_BORDER)
+        .border_style(theme.border_dim_style())
+        .padding(ratatui::widgets::Padding::new(1, 1, 1, 0))
+        .title(panel_title(theme, title, in_flight))
+}
 
 pub fn render(f: &mut Frame, area: Rect, app: &App) {
     let layout_mode = Theme::layout_mode(area.width);
 
-    // Bottom panels clip on short terminals; accepted trade-off for density.
+    // Borderless 4-band rhythm per DESIGN.md: snapshot → hero → rollups → hourly.
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),  // KPI strip (bordered)
-            Constraint::Length(6),  // 24h timeline (borders + 3 stripes + axis + border)
-            Constraint::Length(11), // top apps + categories (8 rows + header + borders)
-            Constraint::Length(10), // hourly + domains
+            Constraint::Length(2),  // snapshot strip
+            Constraint::Length(1),  // gap before hero
+            Constraint::Length(5),  // today timeline: title row + gap + barcode + ruler
+            Constraint::Length(1),  // divider
+            Constraint::Length(9),  // bordered rollups: 5 rows + header + borders
+            Constraint::Length(1),  // divider
+            Constraint::Length(6),  // hourly: header + margin + chart + axis
             Constraint::Min(0),     // flex blank
         ])
         .split(area);
 
-    render_kpi_strip(f, chunks[0], app, layout_mode);
-    render_timeline(f, chunks[1], app);
-    render_apps_categories_row(f, chunks[2], app);
-    render_hourly_domains_row(f, chunks[3], app);
+    render_snapshot(f, chunks[0], app, layout_mode);
+    render_timeline_section(f, chunks[2], app);
+    render_divider(f, chunks[3], &app.theme);
+    render_rollups(f, chunks[4], app);
+    render_divider(f, chunks[5], &app.theme);
+    render_hourly_section(f, chunks[6], app);
 }
 
-fn render_kpi_strip(f: &mut Frame, area: Rect, app: &App, layout_mode: LayoutMode) {
+fn render_snapshot(f: &mut Frame, area: Rect, app: &App, layout_mode: LayoutMode) {
     let theme: &Theme = &app.theme;
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(theme::PANEL_BORDER)
-        .border_style(theme.border_dim_style())
-        .padding(theme::PANEL_PADDING_TIGHT)
-        .title(panel_title(
-            theme,
-            " Snapshot ",
-            app.data.kpi.is_in_flight(),
-        ));
-    let inner = block.inner(area);
-    f.render_widget(block, area);
     let kpi = app.data.kpi.value();
     let kpi_err = app.data.kpi.last_error();
-    kpi_strip::render(f, inner, theme, layout_mode, kpi, kpi_err);
+    let row = Rect {
+        x: area.x.saturating_add(1),
+        y: area.y,
+        width: area.width.saturating_sub(2),
+        height: 1,
+    };
+    kpi_strip::render(f, row, theme, layout_mode, kpi, kpi_err);
 }
 
-fn render_timeline(f: &mut Frame, area: Rect, app: &App) {
+fn render_timeline_section(f: &mut Frame, area: Rect, app: &App) {
+    if area.height == 0 {
+        return;
+    }
+    let theme = &app.theme;
+    let in_flight = app.data.timeline_events.is_in_flight();
+    let inner = Rect {
+        x: area.x.saturating_add(1),
+        y: area.y,
+        width: area.width.saturating_sub(2),
+        height: area.height,
+    };
+    render_section_header(f, inner, theme, "Today \u{00b7} so far", in_flight);
+    render_category_legend(
+        f,
+        Rect {
+            x: inner.x,
+            y: inner.y,
+            width: inner.width,
+            height: 1,
+        },
+        theme,
+    );
+
+    let drop = 2u16.min(inner.height);
+    let body = Rect {
+        x: inner.x,
+        y: inner.y.saturating_add(drop),
+        width: inner.width,
+        height: inner.height.saturating_sub(drop),
+    };
     timeline::render(
         f,
-        area,
-        &app.theme,
+        body,
+        theme,
         app.data.timeline_events.value(),
-        app.data.timeline_events.is_in_flight(),
+        in_flight,
         &app.throbber,
     );
 }
 
-fn render_apps_categories_row(f: &mut Frame, area: Rect, app: &App) {
-    let cols = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-        .split(area);
+/// Inline category legend used on Today's title row (right-aligned) and
+/// Week's activity card. Static set: shows every canonical root so the
+/// visual signature stays stable across days regardless of which categories
+/// happen to be present today.
+fn render_category_legend(f: &mut Frame, area: Rect, theme: &Theme) {
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+    let dim = theme.dim_style();
+    let entries: &[(&str, ratatui::style::Color)] = &[
+        ("Work", theme.chart_1),
+        ("Comms", theme.chart_2),
+        ("Media", theme.chart_3),
+        ("Browsing", theme.chart_4),
+        ("Documents", theme.chart_5),
+    ];
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    for (i, (name, color)) in entries.iter().enumerate() {
+        if i > 0 {
+            spans.push(Span::raw("  "));
+        }
+        spans.push(Span::styled("\u{25a0}", Style::default().fg(*color)));
+        spans.push(Span::styled(format!(" {}", name), dim));
+    }
+    f.render_widget(
+        Paragraph::new(Line::from(spans)).alignment(Alignment::Right),
+        area,
+    );
+}
+
+fn render_rollups(f: &mut Frame, area: Rect, app: &App) {
+    let layout_mode = Theme::layout_mode(area.width);
+    let cols = match layout_mode {
+        LayoutMode::Wide => Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Ratio(1, 3),
+                Constraint::Ratio(1, 3),
+                Constraint::Ratio(1, 3),
+            ])
+            .split(area),
+        LayoutMode::Narrow => Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+            .split(area),
+        LayoutMode::Stacked => Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(100)])
+            .split(area),
+    };
+
     render_top_apps_panel(
         f,
         cols[0],
         &app.theme,
         &app.data.top_apps,
-        " Top apps ",
+        "Top apps",
         &app.throbber,
     );
-    render_top_categories_panel(
-        f,
-        cols[1],
-        &app.theme,
-        &app.data.top_categories,
-        " Top categories ",
-        &app.throbber,
-    );
-}
-
-fn render_hourly_domains_row(f: &mut Frame, area: Rect, app: &App) {
-    // Fixed 54-col hourly column gives the 24 bars more breathing room;
-    // domains takes the rest.
-    let cols = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Length(54), Constraint::Min(20)])
-        .split(area);
-    render_hourly(f, cols[0], app);
-    render_top_domains_panel(
-        f,
-        cols[1],
-        &app.theme,
-        &app.data.top_domains,
-        " Top domains ",
-        &app.throbber,
-    );
-}
-
-/// Panel title: bold theme.fg, with optional in-flight throbber suffix.
-pub(super) fn panel_title(theme: &Theme, base: &'static str, in_flight: bool) -> Line<'static> {
-    let title_style = Style::default().fg(theme.fg).add_modifier(Modifier::BOLD);
-    if in_flight {
-        Line::from(vec![
-            Span::styled(base, title_style),
-            Span::styled("\u{21bb}", Style::default().fg(theme.dim)),
-            Span::raw(" "),
-        ])
-    } else {
-        Line::from(Span::styled(base, title_style))
+    if cols.len() >= 2 {
+        render_top_categories_panel(
+            f,
+            cols[1],
+            &app.theme,
+            &app.data.top_categories,
+            "Top categories",
+            &app.throbber,
+        );
+    }
+    if cols.len() >= 3 {
+        render_top_domains_panel(
+            f,
+            cols[2],
+            &app.theme,
+            &app.data.top_domains,
+            "Top domains",
+            &app.throbber,
+        );
     }
 }
 
@@ -128,28 +211,25 @@ pub(super) fn render_top_apps_panel(
     area: Rect,
     theme: &Theme,
     cache: &Cached<Vec<TopAppRow>>,
-    title: &'static str,
+    title: &str,
     throbber: &ThrobberState,
 ) {
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(theme::PANEL_BORDER)
-        .border_style(theme.border_dim_style())
-        .padding(theme::PANEL_PADDING)
-        .title(panel_title(theme, title, cache.is_in_flight()));
+    if area.height == 0 {
+        return;
+    }
+    let in_flight = cache.is_in_flight();
+    let block = panel_block(theme, title, in_flight);
+    let inner = block.inner(area);
+    f.render_widget(block, area);
 
     let Some(rows) = cache.value() else {
-        let inner = block.inner(area);
-        f.render_widget(block, area);
-        render_skeleton_body(f, inner, theme, throbber, cache.is_in_flight());
+        render_skeleton_body(f, inner, theme, throbber, in_flight);
         return;
     };
 
     if rows.is_empty() {
-        let p = Paragraph::new("no app events yet")
-            .block(block)
-            .style(Style::default().fg(theme.dim));
-        f.render_widget(p, area);
+        let p = Paragraph::new("no app events yet").style(Style::default().fg(theme.dim));
+        f.render_widget(p, inner);
         return;
     }
 
@@ -163,8 +243,7 @@ pub(super) fn render_top_apps_panel(
     ])
     .height(1);
 
-    // -2 borders, -1 header line.
-    let max_rows = area.height.saturating_sub(3) as usize;
+    let max_rows = inner.height.saturating_sub(1) as usize;
     let body_rows: Vec<Row> = rows
         .iter()
         .take(max_rows)
@@ -178,8 +257,8 @@ pub(super) fn render_top_apps_panel(
         Constraint::Length(8), // active duration
         Constraint::Length(8), // proportional bar (matches categories + domains)
     ];
-    let table = Table::new(body_rows, widths).header(header).block(block);
-    f.render_widget(table, area);
+    let table = Table::new(body_rows, widths).header(header);
+    f.render_widget(table, inner);
 }
 
 pub(super) fn top_app_row(
@@ -203,28 +282,26 @@ pub(super) fn render_top_categories_panel(
     area: Rect,
     theme: &Theme,
     cache: &Cached<Vec<CategorySummary>>,
-    title: &'static str,
+    title: &str,
     throbber: &ThrobberState,
 ) {
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(theme::PANEL_BORDER)
-        .border_style(theme.border_dim_style())
-        .padding(theme::PANEL_PADDING)
-        .title(panel_title(theme, title, cache.is_in_flight()));
+    if area.height == 0 {
+        return;
+    }
+    let in_flight = cache.is_in_flight();
+    let block = panel_block(theme, title, in_flight);
+    let inner = block.inner(area);
+    f.render_widget(block, area);
 
     let Some(rows) = cache.value() else {
-        let inner = block.inner(area);
-        f.render_widget(block, area);
-        render_skeleton_body(f, inner, theme, throbber, cache.is_in_flight());
+        render_skeleton_body(f, inner, theme, throbber, in_flight);
         return;
     };
 
     if rows.is_empty() {
         let p = Paragraph::new("no categorized events yet")
-            .block(block)
             .style(Style::default().fg(theme.dim));
-        f.render_widget(p, area);
+        f.render_widget(p, inner);
         return;
     }
 
@@ -238,7 +315,7 @@ pub(super) fn render_top_categories_panel(
     ])
     .height(1);
 
-    let max_rows = area.height.saturating_sub(3) as usize;
+    let max_rows = inner.height.saturating_sub(1) as usize;
     let body_rows: Vec<Row> = rows
         .iter()
         .take(max_rows)
@@ -252,10 +329,11 @@ pub(super) fn render_top_categories_panel(
         Constraint::Length(8),  // active duration
         Constraint::Length(8),  // proportional bar (matches apps + domains)
     ];
-    let table = Table::new(body_rows, widths).header(header).block(block);
-    f.render_widget(table, area);
+    let table = Table::new(body_rows, widths).header(header);
+    f.render_widget(table, inner);
 }
 
+/// Colour each bar by its category root so the column doubles as the legend.
 pub(super) fn category_row(
     rank: usize,
     row: &CategorySummary,
@@ -263,12 +341,14 @@ pub(super) fn category_row(
     theme: &Theme,
 ) -> Row<'static> {
     let name = row.name.join(" / ");
+    let root = row.name.first().map(String::as_str).unwrap_or("");
     let bar = proportional_bar(row.duration, max_secs, 8);
+    let bar_color = theme.category_color(root);
     Row::new(vec![
         Cell::from(format!("{}", rank)).style(Style::default().fg(theme.dim)),
         Cell::from(name).style(Style::default().fg(theme.fg).add_modifier(Modifier::BOLD)),
         Cell::from(format_duration(row.duration)).style(Style::default().fg(theme.fg)),
-        Cell::from(bar).style(Style::default().fg(theme.chart_5)),
+        Cell::from(bar).style(Style::default().fg(bar_color)),
     ])
 }
 
@@ -277,20 +357,19 @@ pub(super) fn render_top_domains_panel(
     area: Rect,
     theme: &Theme,
     cache: &Cached<Vec<TopDomainRow>>,
-    title: &'static str,
+    title: &str,
     throbber: &ThrobberState,
 ) {
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(theme::PANEL_BORDER)
-        .border_style(theme.border_dim_style())
-        .padding(theme::PANEL_PADDING)
-        .title(panel_title(theme, title, cache.is_in_flight()));
+    if area.height == 0 {
+        return;
+    }
+    let in_flight = cache.is_in_flight();
+    let block = panel_block(theme, title, in_flight);
+    let inner = block.inner(area);
+    f.render_widget(block, area);
 
     let Some(rows) = cache.value() else {
-        let inner = block.inner(area);
-        f.render_widget(block, area);
-        render_skeleton_body(f, inner, theme, throbber, cache.is_in_flight());
+        render_skeleton_body(f, inner, theme, throbber, in_flight);
         return;
     };
 
@@ -311,8 +390,8 @@ pub(super) fn render_top_domains_panel(
                 Style::default().fg(theme.dim),
             )),
         ];
-        let p = Paragraph::new(lines).block(block);
-        f.render_widget(p, area);
+        let p = Paragraph::new(lines);
+        f.render_widget(p, inner);
         return;
     }
 
@@ -326,7 +405,7 @@ pub(super) fn render_top_domains_panel(
     ])
     .height(1);
 
-    let max_rows = area.height.saturating_sub(3) as usize;
+    let max_rows = inner.height.saturating_sub(1) as usize;
     let body_rows: Vec<Row> = rows
         .iter()
         .take(max_rows)
@@ -340,8 +419,8 @@ pub(super) fn render_top_domains_panel(
         Constraint::Length(8),  // active
         Constraint::Length(8),  // bar (matches apps + categories)
     ];
-    let table = Table::new(body_rows, widths).header(header).block(block);
-    f.render_widget(table, area);
+    let table = Table::new(body_rows, widths).header(header);
+    f.render_widget(table, inner);
 }
 
 pub(super) fn top_domain_row(
@@ -360,57 +439,95 @@ pub(super) fn top_domain_row(
     ])
 }
 
-/// Fixed-width █/░ fill bar.
+/// Eighth-block proportional bar; zero rows get `·`, trailing cells get `░` so the track stays visible.
 pub(super) fn proportional_bar(value: f64, max: f64, width: usize) -> String {
-    let filled = if max > 0.0 {
-        ((value / max) * width as f64).round() as usize
-    } else {
-        0
-    };
-    let filled = filled.min(width);
-    format!(
-        "{}{}",
-        "\u{2588}".repeat(filled),
-        "\u{2591}".repeat(width.saturating_sub(filled))
-    )
+    if width == 0 {
+        return String::new();
+    }
+    if max <= 0.0 || value <= 0.0 {
+        let mut s = String::with_capacity(width);
+        s.push('\u{00b7}'); // ·
+        for _ in 1..width {
+            s.push(' ');
+        }
+        return s;
+    }
+
+    const PARTIALS: [&str; 8] = [
+        "",         // 0 folds into FULL track
+        "\u{258f}", // ▏ 1/8
+        "\u{258e}", // ▎ 2/8
+        "\u{258d}", // ▍ 3/8
+        "\u{258c}", // ▌ 4/8
+        "\u{258b}", // ▋ 5/8
+        "\u{258a}", // ▊ 6/8
+        "\u{2589}", // ▉ 7/8
+    ];
+    const FULL: &str = "\u{2588}"; // █
+    const EMPTY: &str = "\u{2591}"; // ░
+
+    let frac = (value / max).clamp(0.0, 1.0);
+    let mut total_eighths = (frac * (width as f64 * 8.0)).round() as usize;
+    // Sub-eighth values still earn one visible 1/8 sliver — otherwise tiny
+    // non-zero rows look identical to zero rows.
+    if total_eighths == 0 {
+        total_eighths = 1;
+    }
+    let total_eighths = total_eighths.min(width * 8);
+
+    let full_cells = total_eighths / 8;
+    let remainder_idx = total_eighths % 8;
+
+    let mut out = String::with_capacity(width * 3);
+    for _ in 0..full_cells {
+        out.push_str(FULL);
+    }
+    let mut cells_drawn = full_cells;
+    if remainder_idx > 0 && cells_drawn < width {
+        out.push_str(PARTIALS[remainder_idx]);
+        cells_drawn += 1;
+    }
+    for _ in cells_drawn..width {
+        out.push_str(EMPTY);
+    }
+    out
 }
 
-fn render_hourly(f: &mut Frame, area: Rect, app: &App) {
+fn render_hourly_section(f: &mut Frame, area: Rect, app: &App) {
+    if area.height == 0 {
+        return;
+    }
     let theme = &app.theme;
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(theme::PANEL_BORDER)
-        .border_style(theme.border_dim_style())
-        .padding(theme::PANEL_PADDING_TIGHT)
-        .title(panel_title(
-            theme,
-            " Hourly distribution ",
-            app.data.hourly.is_in_flight(),
-        ));
+    let in_flight = app.data.hourly.is_in_flight();
+    render_section_header(f, area, theme, "Active minutes per hour", in_flight);
+    let drop = 2u16.min(area.height);
+    let inner = Rect {
+        x: area.x,
+        y: area.y.saturating_add(drop),
+        width: area.width,
+        height: area.height.saturating_sub(drop),
+    };
 
     let Some(buckets) = app.data.hourly.value() else {
-        let inner = block.inner(area);
-        f.render_widget(block, area);
-        render_skeleton_body(f, inner, theme, &app.throbber, app.data.hourly.is_in_flight());
+        render_skeleton_body(f, inner, theme, &app.throbber, in_flight);
         return;
     };
 
     if buckets.is_empty() {
-        let p = Paragraph::new("no hourly data")
-            .block(block)
-            .style(Style::default().fg(theme.dim));
-        f.render_widget(p, area);
+        let p = Paragraph::new("no hourly data").style(Style::default().fg(theme.dim));
+        f.render_widget(p, inner);
         return;
     }
 
-    // Bucket each hour into one of five spectrum bands so the per-bar
-    // colour signal survives. ratatui's Chart paints one colour per
-    // Dataset, so we emit five datasets — one per band — each carrying
-    // only the hours that fall in that band.
+    // One Dataset per spectrum band; skip zero-minute hours so the marker doesn't paint a baseline sliver.
     let mut band_data: [Vec<(f64, f64)>; 5] =
         [Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new()];
     let mut max_min = 0.0_f64;
     for b in buckets {
+        let minutes = (b.duration / 60.0).max(0.0);
+        if minutes <= 0.0 {
+            continue;
+        }
         let h = b.hour as usize;
         let band_idx = match b.hour {
             0..=4 => 0,
@@ -419,7 +536,6 @@ fn render_hourly(f: &mut Frame, area: Rect, app: &App) {
             15..=19 => 3,
             _ => 4,
         };
-        let minutes = (b.duration / 60.0).max(0.0);
         if minutes > max_min {
             max_min = minutes;
         }
@@ -446,16 +562,13 @@ fn render_hourly(f: &mut Frame, area: Rect, app: &App) {
         })
         .collect();
 
-    // Y-ceiling rounds to the next 30-min so axis labels stay
-    // round-numbered. Floor at 60m so an empty-ish day doesn't squish
-    // bars to nothing.
+    // Round ceiling up to 30-min and floor at 60m so labels stay round and bars don't squish on empty days.
     let y_ceiling = ((max_min / 30.0).ceil() * 30.0).max(60.0);
     let y_mid = (y_ceiling / 2.0).round() as u64;
     let y_top = y_ceiling.round() as u64;
     let axis_style = Style::default().fg(theme.dim);
 
     let chart = Chart::new(datasets)
-        .block(block)
         .x_axis(
             Axis::default()
                 .bounds([0.0, 23.0])
@@ -478,7 +591,7 @@ fn render_hourly(f: &mut Frame, area: Rect, app: &App) {
                 ])
                 .style(axis_style),
         );
-    f.render_widget(chart, area);
+    f.render_widget(chart, inner);
 }
 
 #[cfg(test)]
@@ -566,11 +679,11 @@ mod tests {
         );
 
         assert!(
-            rendered.contains("Today's timeline"),
-            "missing Today's timeline title\n{rendered}"
+            rendered.contains("TODAY \u{00b7} SO FAR"),
+            "missing today-timeline section header\n{rendered}"
         );
 
-        assert!(rendered.contains("Top apps"), "missing Top apps title");
+        assert!(rendered.contains("TOP APPS"), "missing TOP APPS section header");
         assert!(rendered.contains("kitty"), "missing kitty in top apps");
         assert!(rendered.contains("brave"), "missing brave in top apps");
         assert!(
@@ -579,29 +692,23 @@ mod tests {
         );
 
         assert!(
-            rendered.contains("Top categories"),
-            "missing Top categories title"
+            rendered.contains("TOP CATEGORIES"),
+            "missing TOP CATEGORIES section header"
         );
         assert!(
             rendered.contains("Work / Programming"),
             "missing nested category label"
         );
 
-        assert!(rendered.contains("Top domains"), "missing Top domains title");
+        assert!(rendered.contains("TOP DOMAINS"), "missing TOP DOMAINS section header");
         assert!(
             rendered.contains("no web watcher"),
             "no-web-watcher hint missing in domains panel\n{rendered}"
         );
 
         assert!(
-            rendered.contains("Hourly distribution"),
-            "missing Hourly title"
-        );
-
-        // Empty Ok top_domains → footer shows install tip.
-        assert!(
-            rendered.contains("tip:") && rendered.contains("Top domains"),
-            "domains-empty tip missing from footer\n{rendered}"
+            rendered.contains("ACTIVE MINUTES PER HOUR"),
+            "missing hourly-chart section header\n{rendered}"
         );
 
         assert!(
@@ -621,16 +728,16 @@ mod tests {
             .expect("render frame");
         let rendered = buffer_to_string(terminal.backend().buffer());
         assert!(
-            rendered.contains("Top apps"),
-            "Top apps panel chrome should render even with no data\n{rendered}"
+            rendered.contains("TOP APPS"),
+            "Top apps section header should render even with no data\n{rendered}"
         );
         assert!(
-            rendered.contains("Today's timeline"),
-            "Timeline panel chrome should render even with no data\n{rendered}"
+            rendered.contains("TODAY \u{00b7} SO FAR"),
+            "Today-timeline header should render even with no data\n{rendered}"
         );
         assert!(
-            rendered.contains("Top domains"),
-            "Top domains panel chrome should render even with no data\n{rendered}"
+            rendered.contains("TOP DOMAINS"),
+            "Top domains section header should render even with no data\n{rendered}"
         );
         assert!(
             !rendered.contains("kpi unavailable"),
