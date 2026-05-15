@@ -1,6 +1,6 @@
 [package]
 name = "daylog-core"
-version = "0.1.3"
+version = "0.1.4"
 edition = "2021"
 description = "Shared data layer for the daylog screen-time tracker: aw-server client, aggregations, categories, time ranges"
 license = "MIT"
