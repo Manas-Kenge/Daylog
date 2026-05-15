@@ -5,7 +5,7 @@ use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::Style,
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph},
+    widgets::{Block, Borders, Padding, Paragraph},
     Frame,
 };
 
@@ -99,11 +99,13 @@ fn render_this_week_card(
     in_flight: bool,
     throbber: &throbber_widgets_tui::ThrobberState,
 ) {
+    // Wider padding + an extra row of top inset gives the four stats
+    // room to breathe against the activity chart neighbour.
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(theme::PANEL_BORDER)
         .border_style(theme.border_dim_style())
-        .padding(theme::PANEL_PADDING)
+        .padding(Padding::new(2, 2, 1, 0))
         .title(panel_title(theme, " This week ", in_flight));
     let inner = block.inner(area);
     f.render_widget(block, area);
@@ -119,7 +121,7 @@ fn render_this_week_card(
 
     let stat_line = |label_text: &'static str, value_text: String, hint: Option<String>| {
         let mut spans = vec![
-            Span::styled(format!(" {:<13}", label_text), label),
+            Span::styled(format!("{:<14}", label_text), label),
             Span::styled(value_text, value),
         ];
         if let Some(h) = hint {
@@ -143,14 +145,19 @@ fn render_this_week_card(
         .as_ref()
         .map(|b| format!("{} {}", short_weekday(b.weekday), format_month_day(b.date)));
 
+    // Blank lines between stats double the vertical rhythm — the card's
+    // 14-row container has the budget for it.
     let lines = vec![
         stat_line("Total active", format_duration(stats.total_secs), None),
+        Line::from(""),
         stat_line(
             "Daily avg",
             avg,
             (stats.days_elapsed > 0).then_some(format!("over {} days", stats.days_elapsed)),
         ),
+        Line::from(""),
         stat_line("Best day", best_value, best_hint),
+        Line::from(""),
         stat_line(
             "Active days",
             format!("{}/{}", stats.active_days, stats.days_elapsed),

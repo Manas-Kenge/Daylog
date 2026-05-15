@@ -92,10 +92,11 @@ fn render_apps_categories_row(f: &mut Frame, area: Rect, app: &App) {
 }
 
 fn render_hourly_domains_row(f: &mut Frame, area: Rect, app: &App) {
-    // Fixed 46-col hourly column keeps 24 bars dense; domains takes the rest.
+    // Fixed 54-col hourly column gives the 24 bars more breathing room;
+    // domains takes the rest.
     let cols = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Length(46), Constraint::Min(20)])
+        .constraints([Constraint::Length(54), Constraint::Min(20)])
         .split(area);
     render_hourly(f, cols[0], app);
     render_top_domains_panel(
