@@ -26,10 +26,6 @@ impl TimeRange {
         }
     }
 
-    pub fn as_aw_timeperiod(&self) -> String {
-        let (start, end) = self.resolve();
-        format!("{}/{}", start.to_rfc3339(), end.to_rfc3339())
-    }
 }
 
 fn local_midnight(date: chrono::NaiveDate) -> DateTime<Utc> {
@@ -95,14 +91,4 @@ mod tests {
         assert_eq!(re, e);
     }
 
-    #[test]
-    fn timeperiod_format_is_rfc3339_pair() {
-        let s = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
-        let e = Utc.with_ymd_and_hms(2026, 1, 2, 0, 0, 0).unwrap();
-        let tp = TimeRange::Custom { start: s, end: e }.as_aw_timeperiod();
-        assert!(tp.contains('/'));
-        let (a, b) = tp.split_once('/').unwrap();
-        assert!(DateTime::parse_from_rfc3339(a).is_ok());
-        assert!(DateTime::parse_from_rfc3339(b).is_ok());
-    }
 }

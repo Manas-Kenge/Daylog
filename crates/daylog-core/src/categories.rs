@@ -7,7 +7,6 @@ use std::sync::OnceLock;
 
 use regex::RegexBuilder;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use tokio::sync::RwLock;
 
 use crate::aw_client::{AwClient, AwError};
@@ -178,20 +177,6 @@ pub async fn save(client: &AwClient, cfg: &CategoryConfig) -> Result<(), Categor
     Ok(())
 }
 
-/// Serialize the rule list for embedding into AQL. Categories whose rule is
-/// `none` (decoration-only parents like "Uncategorized") are filtered out —
-/// matching the WebUI's `classes_for_query` getter, which drops `type:null`
-/// rules before passing them to `categorize()`.
-pub fn classes_to_aql(cfg: &CategoryConfig) -> String {
-    let pairs: Vec<Value> = cfg
-        .categories
-        .iter()
-        .filter(|c| !matches!(c.rule, Rule::None))
-        .map(|c| serde_json::json!([c.name, c.rule]))
-        .collect();
-    serde_json::to_string(&pairs).unwrap_or_else(|_| "[]".into())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -220,32 +205,6 @@ mod tests {
             }
             other => panic!("expected InvalidRegex, got {other:?}"),
         }
-    }
-
-    #[test]
-    fn classes_to_aql_drops_none_rules() {
-        let cfg = CategoryConfig {
-            categories: vec![
-                Category {
-                    name: vec!["Work".into()],
-                    rule: Rule::Regex {
-                        regex: "code".into(),
-                        ignore_case: true,
-                    },
-                    data: None,
-                },
-                Category {
-                    name: vec!["Uncategorized".into()],
-                    rule: Rule::None,
-                    data: None,
-                },
-            ],
-        };
-        let aql = classes_to_aql(&cfg);
-        assert!(aql.contains("Work"));
-        assert!(!aql.contains("Uncategorized"));
-        assert!(aql.starts_with('['));
-        assert!(aql.ends_with(']'));
     }
 
     #[test]

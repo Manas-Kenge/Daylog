@@ -17,7 +17,7 @@ use crate::aggregate::{
     bucketize_hourly, parse_categorized_events, parse_category_summaries, summarize_afk,
     AfkSummary, CategorizedEvent, CategorySummary, HourBucket,
 };
-use crate::aw_client::{AwClient, AwError, Bucket, Event, ServerInfo};
+use crate::aw_client::{AwClient, AwError, Event};
 use crate::categories::{self, CategoryError};
 use crate::datastore::{self, DatastoreError};
 use crate::kpi::{self, KpiSummary};
@@ -64,25 +64,6 @@ pub struct TrailingDayPayload {
     pub events: Vec<CategorizedEvent>,
     pub afk: AfkSummary,
 }
-
-// -- thin AwClient passthroughs that still need HTTP --
-
-pub async fn info(client: &AwClient) -> Result<ServerInfo, AwError> {
-    client.info().await
-}
-
-pub async fn buckets(client: &AwClient) -> Result<Vec<Bucket>, AwError> {
-    client.buckets().await
-}
-
-pub async fn has_web_watcher(_client: &AwClient) -> Result<bool, AwError> {
-    // Bucket presence is now a SQLite read, not an HTTP call.
-    // Errors collapse to "false" — if we can't open the datastore the
-    // wider rendering path will surface that error elsewhere.
-    Ok(datastore::bucket_exists_for_prefix(BUCKET_WEB).unwrap_or(false))
-}
-
-// -- range plumbing --
 
 fn range_bounds(range: &TimeRange) -> (chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>) {
     range.resolve()

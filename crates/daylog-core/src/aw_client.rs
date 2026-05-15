@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::sync::OnceLock;
 use std::time::Duration;
 
@@ -48,18 +47,6 @@ pub struct ServerInfo {
     pub testing: bool,
     #[serde(default)]
     pub device_id: Option<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct Bucket {
-    pub id: String,
-    #[serde(rename = "type")]
-    pub bucket_type: String,
-    pub client: String,
-    pub hostname: String,
-    pub created: DateTime<Utc>,
-    #[serde(default)]
-    pub last_updated: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -131,40 +118,6 @@ impl AwClient {
 
     pub async fn info(&self) -> Result<ServerInfo, AwError> {
         self.get_json("/api/0/info").await
-    }
-
-    pub async fn buckets(&self) -> Result<Vec<Bucket>, AwError> {
-        let map: HashMap<String, Bucket> = self.get_json("/api/0/buckets/").await?;
-        let mut out: Vec<Bucket> = map.into_values().collect();
-        out.sort_by(|a, b| a.id.cmp(&b.id));
-        Ok(out)
-    }
-
-    pub async fn events(
-        &self,
-        bucket_id: &str,
-        start: Option<DateTime<Utc>>,
-        end: Option<DateTime<Utc>>,
-        limit: Option<u32>,
-    ) -> Result<Vec<Event>, AwError> {
-        let mut params: Vec<(&str, String)> = Vec::new();
-        if let Some(s) = start {
-            params.push(("start", s.to_rfc3339()));
-        }
-        if let Some(e) = end {
-            params.push(("end", e.to_rfc3339()));
-        }
-        if let Some(l) = limit {
-            params.push(("limit", l.to_string()));
-        }
-        let resp = self
-            .http
-            .get(self.url(&format!("/api/0/buckets/{bucket_id}/events")))
-            .query(&params)
-            .send()
-            .await
-            .map_err(|e| self.classify(e))?;
-        self.decode(resp).await
     }
 
     /// Read a value from aw-server's settings store. Used as the canonical
