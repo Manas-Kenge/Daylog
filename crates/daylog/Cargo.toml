@@ -33,3 +33,32 @@ reqwest = { workspace = true, features = ["stream"] }
 sha2 = "0.10"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 futures-util = "0.3"
+
+# --- Distribution packaging --------------------------------------------------
+# `cargo deb` and `cargo generate-rpm` read these blocks. They have no effect
+# on `cargo build`, `cargo install`, or `cargo publish`.
+
+[package.metadata.deb]
+name = "daylog"
+maintainer = "Manas Kenge <Manas-Kenge@users.noreply.github.com>"
+license-file = ["../../LICENSE", "0"]
+section = "utils"
+priority = "optional"
+extended-description = """\
+Daylog is a Linux terminal screen-time tracker. It runs entirely on \
+your machine — no cloud, no sign-in, no telemetry. On first launch it \
+offers to install a userspace activity tracker; from then on it \
+surfaces 24-hour timelines, top apps, categories, and domains for \
+today, this week, and this month."""
+assets = [
+    ["../../target/release/daylog", "usr/bin/", "755"],
+    ["../../README.md", "usr/share/doc/daylog/README", "644"],
+]
+
+[package.metadata.generate-rpm]
+name = "daylog"
+assets = [
+    { source = "../../target/release/daylog", dest = "/usr/bin/daylog", mode = "755" },
+    { source = "../../README.md", dest = "/usr/share/doc/daylog/README", mode = "644", doc = true },
+    { source = "../../LICENSE", dest = "/usr/share/licenses/daylog/LICENSE", mode = "644" },
+]

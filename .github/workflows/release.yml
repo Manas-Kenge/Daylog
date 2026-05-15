@@ -53,10 +53,33 @@ jobs:
           echo "tarball=${NAME}.tar.gz" >> "$GITHUB_OUTPUT"
           ls -lh dist/
 
+      # cargo-deb + cargo-generate-rpm read [package.metadata.*] in
+      # crates/daylog/Cargo.toml. Prebuilt binaries via taiki-e/install-action
+      # keep this step at ~10s instead of a 2-min cargo-install rebuild.
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deb,cargo-generate-rpm
+
+      - name: Build .deb
+        run: cargo deb -p daylog-tui --no-build --no-strip
+
+      - name: Build .rpm
+        run: cargo generate-rpm -p crates/daylog
+
+      - name: Collect Linux packages into dist/
+        run: |
+          set -euo pipefail
+          cp target/debian/*.deb dist/
+          cp target/generate-rpm/*.rpm dist/
+          ls -lh dist/
+
       - uses: actions/upload-artifact@v4
         with:
-          name: tarball
-          path: dist/*.tar.gz
+          name: release-artifacts
+          path: |
+            dist/*.tar.gz
+            dist/*.deb
+            dist/*.rpm
           if-no-files-found: error
 
   # ---------------------------------------------------------------------------
@@ -126,12 +149,15 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          name: tarball
+          name: release-artifacts
           path: dist/
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/*.tar.gz
+          files: |
+            dist/*.tar.gz
+            dist/*.deb
+            dist/*.rpm
           fail_on_unmatched_files: true
           generate_release_notes: true
