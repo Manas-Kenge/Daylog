@@ -5,7 +5,7 @@ Terminal screen-time tracker for Linux.
 <!-- TODO: asciinema cast -->
 
 ```bash
-cargo install daylog-tui
+cargo install daylog-tui --locked
 daylog
 ```
 
@@ -21,18 +21,24 @@ Daylog runs entirely on your machine. No cloud, no sign-in, no telemetry.
 
 ## Install
 
-The binary is published to crates.io as `daylog-tui`; the executable it installs is named `daylog`:
-
-```bash
-cargo install daylog-tui
-```
-
-Or grab a prebuilt tarball from [Releases](https://github.com/Manas-Kenge/Daylog/releases):
+### Prebuilt binary (no Rust toolchain needed)
 
 ```bash
 curl -L https://github.com/Manas-Kenge/Daylog/releases/latest/download/daylog-x86_64-unknown-linux-gnu.tar.gz | tar -xz
 ./daylog
 ```
+
+Move it onto `$PATH` (e.g. `~/.local/bin/daylog`) to keep it around.
+
+### Via Cargo
+
+Published to crates.io as `daylog-tui`; the executable is `daylog`:
+
+```bash
+cargo install daylog-tui --locked
+```
+
+Requires a Rust toolchain (`rustup default stable`) and a C toolchain — `rusqlite` builds SQLite from source. On Debian/Ubuntu: `apt install build-essential`. On Arch/Omarchy: `pacman -S base-devel`. On Fedora: `dnf install gcc`.
 
 On first launch, daylog detects whether a local activity tracker is running. If not, it offers to install one (a single Y/N prompt). The installer is fully userspace — no sudo, no system packages.
 
@@ -52,7 +58,9 @@ Custom category rules live at `~/.config/daylog/categories.json`. Daylog ships w
 
 ## Compatibility
 
-x86_64 Linux. Tested on Ubuntu, Debian, Fedora, Arch, openSUSE, and derivatives. The tracker uses systemd-user units when available and falls back to XDG-autostart on non-systemd distros (Void, Artix, Devuan).
+x86_64 Linux. Tested on Ubuntu, Debian, Fedora, Arch (incl. Omarchy / EndeavourOS / CachyOS), openSUSE, and derivatives. The tracker uses systemd-user units when available and falls back to XDG-autostart on non-systemd distros (Void, Artix, Devuan).
+
+Display servers: X11, GNOME-Wayland (auto-installs the `focused-window-dbus` shell extension; logout/login once after install), KDE-Wayland, and wlroots compositors (Hyprland, Sway, river, …).
 
 aarch64 and non-Linux platforms are not supported in v0.1.
 
