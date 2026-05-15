@@ -60,3 +60,60 @@ pub(crate) fn render_template(
         .map_err(|e| LifecycleError::Io(format!("write {}: {e}", dest.display())))?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Regression: `--testing` on the pinned aw-server-rust is a boolean flag
+    // with no value. Passing `--testing false` makes it parse `false` as a
+    // positional arg and exit 2 in a restart loop, which hangs the wizard at
+    // "didn't come up within 15s." Production mode is the default — keep the
+    // flag off.
+
+    fn render(template: &str) -> String {
+        template.replace("{BIN_DIR}", "/fake/bin")
+    }
+
+    #[test]
+    fn server_unit_execstart_is_exact() {
+        let rendered = render(SERVER_TEMPLATE);
+        assert!(
+            rendered.contains("ExecStart=/fake/bin/aw-server-rust --port 5600\n"),
+            "server unit ExecStart drifted:\n{rendered}"
+        );
+        assert!(
+            !rendered.contains("--testing"),
+            "server unit reintroduced --testing flag:\n{rendered}"
+        );
+    }
+
+    #[test]
+    fn watcher_unit_execstart_is_exact() {
+        let rendered = render(WATCHER_TEMPLATE);
+        assert!(
+            rendered.contains("ExecStart=/fake/bin/aw-awatcher\n"),
+            "watcher unit ExecStart drifted:\n{rendered}"
+        );
+    }
+
+    #[test]
+    fn supervisor_script_has_no_testing_flag() {
+        // The supervisor script substitutes {BIN_DIR} once at the top and
+        // uses `$BIN_DIR` (shell var) thereafter, so we assert against the
+        // post-render literal that bash will exec.
+        let rendered = render(SUPERVISOR_TEMPLATE);
+        assert!(
+            rendered.contains(r#"BIN_DIR="/fake/bin""#),
+            "supervisor BIN_DIR assignment drifted:\n{rendered}"
+        );
+        assert!(
+            rendered.contains(r#"'$BIN_DIR/aw-server-rust' --port 5600"#),
+            "supervisor server invocation drifted:\n{rendered}"
+        );
+        assert!(
+            !rendered.contains("--testing"),
+            "supervisor reintroduced --testing flag:\n{rendered}"
+        );
+    }
+}
