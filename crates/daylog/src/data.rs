@@ -16,10 +16,7 @@
 use std::time::{Duration, Instant};
 
 use chrono::{Datelike, Local, NaiveDate, Weekday};
-use daylog_core::aggregate::{
-    fetch_afk_events, parse_categorized_events, summarize_afk, unwrap_first_array,
-    CategorizedEvent, CategorySummary, HourBucket,
-};
+use daylog_core::aggregate::{CategorizedEvent, CategorySummary, HourBucket};
 use daylog_core::kpi::KpiSummary;
 use daylog_core::queries::TrailingDayPayload;
 use daylog_core::time::TimeRange;
@@ -467,11 +464,11 @@ pub fn dispatch_refetches(
         });
     }
 
-    // Shared trailing-7-day fetch. Drives the kpi baselines (cloned
-    // into the kpi task below) and the week chart (paired with
-    // `timeline_events` in `try_rebuild_week`). Previously each
-    // consumer fanned out its own copy, paying the 14-HTTP cost twice
-    // on cold start.
+    // Shared trailing-7-day cache. Drives the kpi baselines and the
+    // week chart (paired with `timeline_events` in `try_rebuild_week`).
+    // SQLite reads are now sub-second, so the dedup is no longer
+    // load-bearing — but the 5-minute cadence still saves us from
+    // re-aggregating ~70k events on every tick.
     if cache.trailing_7.should_refetch(now) {
         cache.trailing_7.mark_in_flight();
         let tx = tx.clone();
@@ -495,35 +492,29 @@ pub fn dispatch_refetches(
             let trailing = trailing.clone();
             tokio::spawn(async move {
                 let client = daylog_core::aw_client::AwClient::new();
-                let cfg = match daylog_core::categories::load(&client).await {
-                    Ok(c) => c,
+                let today_events = match daylog_core::queries::categorized_events(
+                    &client,
+                    range.clone(),
+                )
+                .await
+                {
+                    Ok(v) => v,
                     Err(e) => {
                         let _ = tx.send(FetchResult::Kpi(Err(e.to_string())));
                         return;
                     }
                 };
-                let classes_json = daylog_core::categories::classes_to_aql(&cfg);
-                let timeperiods = [range.as_aw_timeperiod()];
-                let aql = daylog_core::aw_client::queries::categorized_events(&classes_json);
-                let (today_events_res, today_afk_events_res) = tokio::join!(
-                    client.query(&aql, &timeperiods),
-                    fetch_afk_events(&client, &range),
-                );
-                let today_events = match today_events_res {
-                    Ok(r) => parse_categorized_events(&unwrap_first_array(r)),
+                let today_afk = match daylog_core::queries::afk_summary(
+                    &client, range, false,
+                )
+                .await
+                {
+                    Ok(v) => v,
                     Err(e) => {
                         let _ = tx.send(FetchResult::Kpi(Err(e.to_string())));
                         return;
                     }
                 };
-                let today_afk_events = match today_afk_events_res {
-                    Ok(r) => r,
-                    Err(e) => {
-                        let _ = tx.send(FetchResult::Kpi(Err(e.to_string())));
-                        return;
-                    }
-                };
-                let today_afk = summarize_afk(&today_afk_events, false);
                 let summary = daylog_core::queries::kpi_from_parts(
                     &today_events,
                     &today_afk,

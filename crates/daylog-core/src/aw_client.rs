@@ -7,8 +7,12 @@ use serde::{Deserialize, Serialize};
 
 const DEFAULT_BASE_URL: &str = "http://127.0.0.1:5600";
 
-/// One pooled, process-wide HTTP client. Keep-alive amortizes TLS setup
-/// across the burst of fetches the dashboard issues per refresh tick.
+/// One pooled, process-wide HTTP client. Since analytical queries now
+/// go through `crate::datastore` (SQLite reads), the only HTTP traffic
+/// is metadata: `/info`, `/buckets`, and settings reads/writes for
+/// category rules. All of those finish in <100ms, so a tight 5s timeout
+/// is correct — anything slower is genuinely a hung server, not the
+/// flood-heavy AQL burst we used to wait through.
 fn shared_http() -> &'static reqwest::Client {
     static HTTP: OnceLock<reqwest::Client> = OnceLock::new();
     HTTP.get_or_init(|| {
@@ -163,25 +167,6 @@ impl AwClient {
         self.decode(resp).await
     }
 
-    pub async fn query(
-        &self,
-        query: &str,
-        timeperiods: &[String],
-    ) -> Result<Vec<serde_json::Value>, AwError> {
-        let body = serde_json::json!({
-            "query": [query],
-            "timeperiods": timeperiods,
-        });
-        let resp = self
-            .http
-            .post(self.url("/api/0/query/"))
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| self.classify(e))?;
-        self.decode(resp).await
-    }
-
     /// Read a value from aw-server's settings store. Used as the canonical
     /// home for category rules (`classes`), matching the AW WebUI.
     /// Returns `Ok(None)` for 404 (key absent) so callers can seed defaults
@@ -233,99 +218,3 @@ impl AwClient {
     }
 }
 
-/// Canonical AQL query strings, mirroring the patterns the AW WebUI uses
-/// (see `webpack://aw-webui/./src/queries.ts` in upstream sourcemaps).
-///
-/// `flood()` wraps window-event reads so small gaps between watcher samples
-/// don't get dropped on the floor — this matches WebUI behavior and avoids
-/// undercounting durations.
-///
-/// Queries that need categorization take a pre-serialized JSON `classes`
-/// argument (the `[[name, rule], ...]` shape AQL `categorize()` expects).
-pub mod queries {
-    pub fn top_apps() -> String {
-        r#"
-        afk = query_bucket(find_bucket("aw-watcher-afk_"));
-        events = flood(query_bucket(find_bucket("aw-watcher-window_")));
-        events = filter_period_intersect(events, filter_keyvals(afk, "status", ["not-afk"]));
-        events = merge_events_by_keys(events, ["app"]);
-        events = sort_by_duration(events);
-        RETURN = events;
-        "#
-        .to_string()
-    }
-
-    pub fn timeline() -> String {
-        r#"
-        afk = query_bucket(find_bucket("aw-watcher-afk_"));
-        events = flood(query_bucket(find_bucket("aw-watcher-window_")));
-        events = filter_period_intersect(events, filter_keyvals(afk, "status", ["not-afk"]));
-        RETURN = events;
-        "#
-        .to_string()
-    }
-
-    pub fn web_top_domains() -> String {
-        r#"
-        afk = query_bucket(find_bucket("aw-watcher-afk_"));
-        events = query_bucket(find_bucket("aw-watcher-web-"));
-        events = split_url_events(events);
-        events = filter_period_intersect(events, filter_keyvals(afk, "status", ["not-afk"]));
-        events = merge_events_by_keys(events, ["$domain"]);
-        events = sort_by_duration(events);
-        RETURN = events;
-        "#
-        .to_string()
-    }
-
-    pub fn web_top_urls() -> String {
-        r#"
-        afk = query_bucket(find_bucket("aw-watcher-afk_"));
-        events = query_bucket(find_bucket("aw-watcher-web-"));
-        events = filter_period_intersect(events, filter_keyvals(afk, "status", ["not-afk"]));
-        events = merge_events_by_keys(events, ["url"]);
-        events = sort_by_duration(events);
-        RETURN = events;
-        "#
-        .to_string()
-    }
-
-    pub fn afk_events() -> String {
-        r#"
-        events = query_bucket(find_bucket("aw-watcher-afk_"));
-        RETURN = events;
-        "#
-        .to_string()
-    }
-
-    /// Top categories: server-side `categorize()` + `merge_events_by_keys(["$category"])`.
-    /// `classes_json` is the JSON literal `[[name, rule], ...]` array, embedded
-    /// verbatim into the AQL string (AQL parses JSON-ish literals).
-    pub fn top_categories(classes_json: &str) -> String {
-        format!(
-            r#"
-        afk = query_bucket(find_bucket("aw-watcher-afk_"));
-        events = flood(query_bucket(find_bucket("aw-watcher-window_")));
-        events = filter_period_intersect(events, filter_keyvals(afk, "status", ["not-afk"]));
-        events = categorize(events, {classes_json});
-        events = merge_events_by_keys(events, ["$category"]);
-        events = sort_by_duration(events);
-        RETURN = events;
-        "#
-        )
-    }
-
-    /// All AFK-filtered window events, with `data.$category` populated by aw-server.
-    /// Drives the timeline + sparkline pipelines.
-    pub fn categorized_events(classes_json: &str) -> String {
-        format!(
-            r#"
-        afk = query_bucket(find_bucket("aw-watcher-afk_"));
-        events = flood(query_bucket(find_bucket("aw-watcher-window_")));
-        events = filter_period_intersect(events, filter_keyvals(afk, "status", ["not-afk"]));
-        events = categorize(events, {classes_json});
-        RETURN = events;
-        "#
-        )
-    }
-}

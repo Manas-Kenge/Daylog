@@ -4,6 +4,12 @@
 //! a pin, update the version + sha256 here AND in the lockfile so the
 //! `scripts/fetch-binaries.sh` developer cache pre-warmer stays valid.
 //!
+//! **Schema coupling**: daylog reads aw-server-rust's SQLite store
+//! directly (see `daylog_core::datastore`). The current pin targets
+//! schema `user_version=4`. If a future bump alters the events/buckets
+//! table layout, `crates/daylog-core/src/datastore.rs` needs to follow
+//! before this pin lands.
+//!
 //! The crate ships ~5 MB instead of ~50 MB by keeping these out of the
 //! source tarball — they're downloaded into `~/.cache/daylog/binaries/`
 //! on first launch, sha256-verified, then extracted into

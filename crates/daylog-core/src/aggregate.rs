@@ -1,36 +1,14 @@
+//! Pure-compute aggregations over `Event` lists fetched from the
+//! datastore. The previous HTTP-era versions of this module accepted
+//! `Vec<serde_json::Value>` returned by aw-server's /query/ endpoint;
+//! everything now takes `&[Event]` so callers can drive the pipeline
+//! with `datastore::events_in_range` + `transforms::*`.
+
 use chrono::{DateTime, Local, Timelike, Utc};
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::aw_client::{queries, AwClient, AwError};
-use crate::time::TimeRange;
-
-pub async fn fetch_window_events(
-    client: &AwClient,
-    range: &TimeRange,
-) -> Result<Vec<Value>, AwError> {
-    let res = client
-        .query(&queries::timeline(), &[range.as_aw_timeperiod()])
-        .await?;
-    Ok(unwrap_first_array(res))
-}
-
-pub async fn fetch_afk_events(
-    client: &AwClient,
-    range: &TimeRange,
-) -> Result<Vec<Value>, AwError> {
-    let res = client
-        .query(&queries::afk_events(), &[range.as_aw_timeperiod()])
-        .await?;
-    Ok(unwrap_first_array(res))
-}
-
-pub fn unwrap_first_array(res: Vec<Value>) -> Vec<Value> {
-    res.into_iter()
-        .next()
-        .and_then(|v| v.as_array().cloned())
-        .unwrap_or_default()
-}
+use crate::aw_client::Event;
 
 #[derive(Debug, Serialize, PartialEq)]
 pub struct HourBucket {
@@ -38,18 +16,10 @@ pub struct HourBucket {
     pub duration: f64,
 }
 
-pub fn bucketize_hourly(events: &[Value]) -> Vec<HourBucket> {
+pub fn bucketize_hourly(events: &[Event]) -> Vec<HourBucket> {
     let mut totals = [0.0_f64; 24];
     for ev in events {
-        let timestamp = ev
-            .get("timestamp")
-            .and_then(|v| v.as_str())
-            .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
-            .map(|dt| dt.with_timezone(&Utc));
-        let duration = ev.get("duration").and_then(|v| v.as_f64()).unwrap_or(0.0);
-        if let Some(start) = timestamp {
-            split_event_into_hours(start, duration, &mut totals);
-        }
+        split_event_into_hours(ev.timestamp, ev.duration, &mut totals);
     }
     totals
         .iter()
@@ -108,34 +78,23 @@ pub struct AfkSummary {
     pub intervals: Vec<AfkInterval>,
 }
 
-pub fn summarize_afk(events: &[Value], include_intervals: bool) -> AfkSummary {
+pub fn summarize_afk(events: &[Event], include_intervals: bool) -> AfkSummary {
     let mut active = 0.0_f64;
     let mut afk = 0.0_f64;
     let mut intervals = Vec::new();
     for ev in events {
-        let duration = ev.get("duration").and_then(|v| v.as_f64()).unwrap_or(0.0);
-        let status = ev
-            .get("data")
-            .and_then(|d| d.get("status"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let status = ev.data.get("status").and_then(|v| v.as_str()).unwrap_or("");
         match status {
-            "not-afk" => active += duration,
-            "afk" => afk += duration,
+            "not-afk" => active += ev.duration,
+            "afk" => afk += ev.duration,
             _ => {}
         }
         if include_intervals {
-            if let Some(ts) = ev
-                .get("timestamp")
-                .and_then(|v| v.as_str())
-                .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
-            {
-                intervals.push(AfkInterval {
-                    timestamp: ts.with_timezone(&Utc),
-                    duration,
-                    status: status.to_string(),
-                });
-            }
+            intervals.push(AfkInterval {
+                timestamp: ev.timestamp,
+                duration: ev.duration,
+                status: status.to_string(),
+            });
         }
     }
     let total = active + afk;
@@ -162,21 +121,14 @@ pub struct CategorySummary {
     pub duration: f64,
 }
 
-/// Pull `data.$category` off each event. Server always writes
-/// `["Uncategorized"]` for unmatched events. Events lacking a parseable
-/// timestamp are dropped.
-pub fn parse_categorized_events(events: &[Value]) -> Vec<CategorizedEvent> {
+/// Pull `data.$category` off each event. Events without the field default
+/// to `["Uncategorized"]` (matches what `transforms::categorize` writes).
+pub fn parse_categorized_events(events: &[Event]) -> Vec<CategorizedEvent> {
     events
         .iter()
-        .filter_map(|ev| {
-            let timestamp = ev
-                .get("timestamp")
-                .and_then(|v| v.as_str())
-                .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
-                .map(|dt| dt.with_timezone(&Utc))?;
-            let duration = ev.get("duration").and_then(|v| v.as_f64()).unwrap_or(0.0);
-            let data = ev.get("data").cloned().unwrap_or(Value::Null);
-            let category = data
+        .map(|ev| {
+            let category = ev
+                .data
                 .get("$category")
                 .and_then(|v| v.as_array())
                 .map(|arr| {
@@ -185,29 +137,26 @@ pub fn parse_categorized_events(events: &[Value]) -> Vec<CategorizedEvent> {
                         .collect::<Vec<_>>()
                 })
                 .unwrap_or_else(|| vec!["Uncategorized".into()]);
-            Some(CategorizedEvent {
-                timestamp,
-                duration,
-                data,
+            CategorizedEvent {
+                timestamp: ev.timestamp,
+                duration: ev.duration,
+                data: ev.data.clone(),
                 category,
-            })
+            }
         })
         .collect()
 }
 
-/// Server-merged events from `merge_events_by_keys(events, ["$category"])`
-/// arrive shaped as `{data: {"$category": [..]}, duration: <sum>}`. Flatten
-/// to `{name, duration}` pairs sorted by duration desc (server already
-/// sorts, but we re-sort defensively in case a future upstream change
-/// removes it).
-pub fn parse_category_summaries(events: &[Value]) -> Vec<CategorySummary> {
+/// Convert merged-by-category events into `{name, duration}` pairs sorted
+/// by duration descending. Inputs are expected to be the output of
+/// `transforms::merge_events_by_keys(_, ["$category"])`.
+pub fn parse_category_summaries(events: &[Event]) -> Vec<CategorySummary> {
     let mut out: Vec<CategorySummary> = events
         .iter()
         .filter_map(|ev| {
-            let duration = ev.get("duration").and_then(|v| v.as_f64())?;
             let name = ev
-                .get("data")
-                .and_then(|d| d.get("$category"))
+                .data
+                .get("$category")
                 .and_then(|v| v.as_array())
                 .map(|arr| {
                     arr.iter()
@@ -217,7 +166,10 @@ pub fn parse_category_summaries(events: &[Value]) -> Vec<CategorySummary> {
             if name.is_empty() {
                 return None;
             }
-            Some(CategorySummary { name, duration })
+            Some(CategorySummary {
+                name,
+                duration: ev.duration,
+            })
         })
         .collect();
     out.sort_by(|a, b| {
@@ -232,6 +184,15 @@ pub fn parse_category_summaries(events: &[Value]) -> Vec<CategorySummary> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    fn event(ts: DateTime<Utc>, dur: f64, data: Value) -> Event {
+        Event {
+            id: None,
+            timestamp: ts,
+            duration: dur,
+            data,
+        }
+    }
 
     #[test]
     fn hourly_returns_24_buckets_for_empty() {
@@ -254,11 +215,7 @@ mod tests {
             .with_nanosecond(0)
             .unwrap();
         let start_utc = start_local.with_timezone(&Utc);
-        let ev = json!({
-            "timestamp": start_utc.to_rfc3339(),
-            "duration": 1800.0,
-            "data": {},
-        });
+        let ev = event(start_utc, 1800.0, json!({}));
         let out = bucketize_hourly(&[ev]);
         let h = start_local.hour() as usize;
         assert_eq!(out[h].duration, 1800.0);
@@ -277,11 +234,7 @@ mod tests {
             .with_nanosecond(0)
             .unwrap();
         let start_utc = base.with_timezone(&Utc);
-        let ev = json!({
-            "timestamp": start_utc.to_rfc3339(),
-            "duration": 1800.0,
-            "data": {},
-        });
+        let ev = event(start_utc, 1800.0, json!({}));
         let out = bucketize_hourly(&[ev]);
         let h = base.hour() as usize;
         let h_next = (h + 1) % 24;
@@ -291,11 +244,7 @@ mod tests {
 
     #[test]
     fn hourly_ignores_zero_and_negative_duration() {
-        let ev = json!({
-            "timestamp": Utc::now().to_rfc3339(),
-            "duration": 0.0,
-            "data": {},
-        });
+        let ev = event(Utc::now(), 0.0, json!({}));
         let out = bucketize_hourly(&[ev]);
         let total: f64 = out.iter().map(|b| b.duration).sum();
         assert_eq!(total, 0.0);
@@ -304,8 +253,16 @@ mod tests {
     #[test]
     fn afk_summary_basic_ratio() {
         let events = vec![
-            json!({"timestamp": "2026-01-01T10:00:00Z", "duration": 300.0, "data": {"status": "not-afk"}}),
-            json!({"timestamp": "2026-01-01T10:05:00Z", "duration": 100.0, "data": {"status": "afk"}}),
+            event(
+                "2026-01-01T10:00:00Z".parse().unwrap(),
+                300.0,
+                json!({"status": "not-afk"}),
+            ),
+            event(
+                "2026-01-01T10:05:00Z".parse().unwrap(),
+                100.0,
+                json!({"status": "afk"}),
+            ),
         ];
         let s = summarize_afk(&events, false);
         assert_eq!(s.active_seconds, 300.0);
@@ -325,8 +282,16 @@ mod tests {
     #[test]
     fn afk_summary_include_intervals() {
         let events = vec![
-            json!({"timestamp": "2026-01-01T10:00:00Z", "duration": 60.0, "data": {"status": "not-afk"}}),
-            json!({"timestamp": "2026-01-01T10:01:00Z", "duration": 60.0, "data": {"status": "afk"}}),
+            event(
+                "2026-01-01T10:00:00Z".parse().unwrap(),
+                60.0,
+                json!({"status": "not-afk"}),
+            ),
+            event(
+                "2026-01-01T10:01:00Z".parse().unwrap(),
+                60.0,
+                json!({"status": "afk"}),
+            ),
         ];
         let s = summarize_afk(&events, true);
         assert_eq!(s.intervals.len(), 2);
@@ -337,16 +302,16 @@ mod tests {
     #[test]
     fn parse_categorized_events_pulls_category_from_data() {
         let events = vec![
-            json!({
-                "timestamp": "2026-01-01T10:00:00Z",
-                "duration": 10.0,
-                "data": {"app": "vim", "$category": ["Work", "Programming"]}
-            }),
-            json!({
-                "timestamp": "2026-01-01T10:01:00Z",
-                "duration": 20.0,
-                "data": {"app": "weirdapp", "$category": ["Uncategorized"]}
-            }),
+            event(
+                "2026-01-01T10:00:00Z".parse().unwrap(),
+                10.0,
+                json!({"app": "vim", "$category": ["Work", "Programming"]}),
+            ),
+            event(
+                "2026-01-01T10:01:00Z".parse().unwrap(),
+                20.0,
+                json!({"app": "weirdapp", "$category": ["Uncategorized"]}),
+            ),
         ];
         let out = parse_categorized_events(&events);
         assert_eq!(out.len(), 2);
@@ -355,19 +320,12 @@ mod tests {
     }
 
     #[test]
-    fn parse_categorized_events_drops_events_without_timestamp() {
-        let events = vec![json!({"duration": 10.0, "data": {"$category": ["Work"]}})];
-        let out = parse_categorized_events(&events);
-        assert!(out.is_empty());
-    }
-
-    #[test]
     fn parse_categorized_events_falls_back_when_category_missing() {
-        let events = vec![json!({
-            "timestamp": "2026-01-01T10:00:00Z",
-            "duration": 10.0,
-            "data": {"app": "x"}
-        })];
+        let events = vec![event(
+            "2026-01-01T10:00:00Z".parse().unwrap(),
+            10.0,
+            json!({"app": "x"}),
+        )];
         let out = parse_categorized_events(&events);
         assert_eq!(out[0].category, vec!["Uncategorized"]);
     }
@@ -375,9 +333,21 @@ mod tests {
     #[test]
     fn parse_category_summaries_groups_and_sorts() {
         let events = vec![
-            json!({"data": {"$category": ["Work", "Programming"]}, "duration": 150.0}),
-            json!({"data": {"$category": ["Media", "Music"]}, "duration": 200.0}),
-            json!({"data": {"$category": ["Uncategorized"]}, "duration": 25.0}),
+            event(
+                "2026-01-01T10:00:00Z".parse().unwrap(),
+                150.0,
+                json!({"$category": ["Work", "Programming"]}),
+            ),
+            event(
+                "2026-01-01T10:00:00Z".parse().unwrap(),
+                200.0,
+                json!({"$category": ["Media", "Music"]}),
+            ),
+            event(
+                "2026-01-01T10:00:00Z".parse().unwrap(),
+                25.0,
+                json!({"$category": ["Uncategorized"]}),
+            ),
         ];
         let out = parse_category_summaries(&events);
         assert_eq!(out[0].name, vec!["Media", "Music"]);
@@ -385,12 +355,5 @@ mod tests {
         assert_eq!(out[1].name, vec!["Work", "Programming"]);
         assert_eq!(out[1].duration, 150.0);
         assert_eq!(out[2].name, vec!["Uncategorized"]);
-    }
-
-    #[test]
-    fn unwrap_first_array_handles_empty() {
-        assert!(unwrap_first_array(vec![]).is_empty());
-        assert!(unwrap_first_array(vec![json!(null)]).is_empty());
-        assert_eq!(unwrap_first_array(vec![json!([1, 2, 3])]).len(), 3);
     }
 }

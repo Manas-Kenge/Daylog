@@ -1,62 +1,53 @@
-//! High-level read API. Each fn takes a borrowed `AwClient`, runs the
-//! AQL query, parses the response, and returns a plain Rust type.
+//! High-level read API. Composes `datastore::events_in_range` +
+//! `transforms::*` + `aggregate::*` to produce the typed rows the TUI
+//! consumes. The pipelines mirror the AQL bodies daylog used to send
+//! over /api/0/query/ but execute entirely in-process: SQLite SELECT +
+//! Rust transforms, no HTTP round-trip, no server-side serialization.
+//!
+//! Each function is `async fn` so call sites in the dispatcher
+//! (`crates/daylog/src/data.rs`) don't have to change shape. The bodies
+//! are synchronous internally — datastore reads are millisecond-scale,
+//! cheap enough to run on the runtime thread without `spawn_blocking`.
 
-use std::sync::OnceLock;
-
+use chrono::Duration as ChronoDuration;
 use serde::Serialize;
-use serde_json::Value;
+use serde_json::{json, Value};
 
 use crate::aggregate::{
-    bucketize_hourly, fetch_afk_events, fetch_window_events, parse_categorized_events,
-    parse_category_summaries, summarize_afk, unwrap_first_array, AfkSummary, CategorizedEvent,
-    CategorySummary, HourBucket,
+    bucketize_hourly, parse_categorized_events, parse_category_summaries, summarize_afk,
+    AfkSummary, CategorizedEvent, CategorySummary, HourBucket,
 };
-use crate::aw_client::{queries, AwClient, AwError, Bucket, Event, ServerInfo};
+use crate::aw_client::{AwClient, AwError, Bucket, Event, ServerInfo};
 use crate::categories::{self, CategoryError};
+use crate::datastore::{self, DatastoreError};
 use crate::kpi::{self, KpiSummary};
 use crate::time::TimeRange;
+use crate::transforms;
 
-/// Memoized "does any bucket id start with `prefix`?" lookup. Watcher
-/// presence doesn't change at runtime — installing aw-watcher-web or
-/// aw-watcher-afk requires restarting the watcher tree, at which point
-/// daylog also typically restarts. Without memoization, `top_domains`
-/// re-fetches the bucket list every 5s on the live cadence purely to
-/// re-confirm a fact that can't have changed.
-pub async fn bucket_prefix_present(
-    client: &AwClient,
-    prefix: &'static str,
-    memo: &OnceLock<bool>,
-) -> Result<bool, AwError> {
-    if let Some(v) = memo.get() {
-        return Ok(*v);
-    }
-    let buckets = client.buckets().await?;
-    let v = buckets.iter().any(|b| b.id.starts_with(prefix));
-    // Race-safe: concurrent first-callers may both Set, only one wins;
-    // both compute the same value so either outcome is correct.
-    let _ = memo.set(v);
-    Ok(v)
-}
+/// `pulsetime` for `flood()`. Heartbeats land every 5s in the upstream
+/// defaults, so 5s closes the gaps without bridging legitimate pauses.
+const PULSE_SECS: i64 = 5;
 
-fn web_watcher_memo() -> &'static OnceLock<bool> {
-    static MEMO: OnceLock<bool> = OnceLock::new();
-    &MEMO
-}
+const BUCKET_WINDOW: &str = "aw-watcher-window_";
+const BUCKET_AFK: &str = "aw-watcher-afk_";
+const BUCKET_WEB: &str = "aw-watcher-web-";
 
-fn afk_watcher_memo() -> &'static OnceLock<bool> {
-    static MEMO: OnceLock<bool> = OnceLock::new();
-    &MEMO
-}
-
-/// Manually serializes to a string so the enum shape isn't part of the wire format.
 #[derive(Debug, thiserror::Error)]
 pub enum QueryError {
     #[error("{0}")]
     Aw(#[from] AwError),
     #[error("{0}")]
     Category(#[from] CategoryError),
-    #[error("task join: {0}")]
-    Join(String),
+    #[error("{0}")]
+    Datastore(#[from] DatastoreError),
+    #[error("regex: {0}")]
+    Regex(String),
+}
+
+impl From<fancy_regex::Error> for QueryError {
+    fn from(e: fancy_regex::Error) -> Self {
+        QueryError::Regex(e.to_string())
+    }
 }
 
 impl serde::Serialize for QueryError {
@@ -74,6 +65,8 @@ pub struct TrailingDayPayload {
     pub afk: AfkSummary,
 }
 
+// -- thin AwClient passthroughs that still need HTTP --
+
 pub async fn info(client: &AwClient) -> Result<ServerInfo, AwError> {
     client.info().await
 }
@@ -82,36 +75,45 @@ pub async fn buckets(client: &AwClient) -> Result<Vec<Bucket>, AwError> {
     client.buckets().await
 }
 
-pub async fn events(
-    client: &AwClient,
-    bucket_id: &str,
-    start: Option<chrono::DateTime<chrono::Utc>>,
-    end: Option<chrono::DateTime<chrono::Utc>>,
-    limit: Option<u32>,
-) -> Result<Vec<Event>, AwError> {
-    client.events(bucket_id, start, end, limit).await
+pub async fn has_web_watcher(_client: &AwClient) -> Result<bool, AwError> {
+    // Bucket presence is now a SQLite read, not an HTTP call.
+    // Errors collapse to "false" — if we can't open the datastore the
+    // wider rendering path will surface that error elsewhere.
+    Ok(datastore::bucket_exists_for_prefix(BUCKET_WEB).unwrap_or(false))
 }
 
-pub async fn raw_query(
-    client: &AwClient,
-    query: &str,
-    timeperiods: &[String],
-) -> Result<Vec<Value>, AwError> {
-    client.query(query, timeperiods).await
+// -- range plumbing --
+
+fn range_bounds(range: &TimeRange) -> (chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>) {
+    range.resolve()
 }
 
-pub async fn top_apps(client: &AwClient, range: TimeRange) -> Result<Vec<Value>, AwError> {
-    let res = client
-        .query(&queries::top_apps(), &[range.as_aw_timeperiod()])
-        .await?;
-    Ok(unwrap_first_array(res))
+// -- top apps / top categories / top domains --
+
+/// Today's-or-Nday's top apps. Output is `Vec<Value>` shaped exactly like
+/// the AQL response, so the existing `TopAppRow::parse_many` in the TUI
+/// still works without churn. Future cleanup can swap this for the typed
+/// vec once call sites are migrated.
+pub async fn top_apps(_client: &AwClient, range: TimeRange) -> Result<Vec<Value>, QueryError> {
+    let (start, end) = range_bounds(&range);
+    let window = datastore::events_in_range(BUCKET_WINDOW, start, end)?;
+    let afk = datastore::events_in_range(BUCKET_AFK, start, end)?;
+    let flooded = transforms::flood(window, ChronoDuration::seconds(PULSE_SECS));
+    let not_afk = transforms::filter_keyvals(afk, "status", &[json!("not-afk")]);
+    let intersected = transforms::filter_period_intersect(flooded, not_afk);
+    let merged = transforms::merge_events_by_keys(intersected, &["app"]);
+    let sorted = transforms::sort_by_duration(merged);
+    Ok(sorted.into_iter().map(event_to_value).collect())
 }
 
-pub async fn timeline(client: &AwClient, range: TimeRange) -> Result<Vec<Value>, AwError> {
-    let res = client
-        .query(&queries::timeline(), &[range.as_aw_timeperiod()])
-        .await?;
-    Ok(unwrap_first_array(res))
+pub async fn timeline(_client: &AwClient, range: TimeRange) -> Result<Vec<Value>, QueryError> {
+    let (start, end) = range_bounds(&range);
+    let window = datastore::events_in_range(BUCKET_WINDOW, start, end)?;
+    let afk = datastore::events_in_range(BUCKET_AFK, start, end)?;
+    let flooded = transforms::flood(window, ChronoDuration::seconds(PULSE_SECS));
+    let not_afk = transforms::filter_keyvals(afk, "status", &[json!("not-afk")]);
+    let intersected = transforms::filter_period_intersect(flooded, not_afk);
+    Ok(intersected.into_iter().map(event_to_value).collect())
 }
 
 pub async fn top_categories(
@@ -119,19 +121,27 @@ pub async fn top_categories(
     range: TimeRange,
 ) -> Result<Vec<CategorySummary>, QueryError> {
     let cfg = categories::load(client).await?;
-    let classes_json = categories::classes_to_aql(&cfg);
-    let res = client
-        .query(
-            &queries::top_categories(&classes_json),
-            &[range.as_aw_timeperiod()],
-        )
-        .await?;
-    Ok(parse_category_summaries(&unwrap_first_array(res)))
+    let rules = transforms::compile_rules(&cfg)?;
+    let (start, end) = range_bounds(&range);
+    let window = datastore::events_in_range(BUCKET_WINDOW, start, end)?;
+    let afk = datastore::events_in_range(BUCKET_AFK, start, end)?;
+    let flooded = transforms::flood(window, ChronoDuration::seconds(PULSE_SECS));
+    let not_afk = transforms::filter_keyvals(afk, "status", &[json!("not-afk")]);
+    let intersected = transforms::filter_period_intersect(flooded, not_afk);
+    let categorized = transforms::categorize(intersected, &rules);
+    let merged = transforms::merge_events_by_keys(categorized, &["$category"]);
+    let sorted = transforms::sort_by_duration(merged);
+    Ok(parse_category_summaries(&sorted))
 }
 
-pub async fn hourly(client: &AwClient, range: TimeRange) -> Result<Vec<HourBucket>, AwError> {
-    let events = fetch_window_events(client, &range).await?;
-    Ok(bucketize_hourly(&events))
+pub async fn hourly(_client: &AwClient, range: TimeRange) -> Result<Vec<HourBucket>, QueryError> {
+    let (start, end) = range_bounds(&range);
+    let window = datastore::events_in_range(BUCKET_WINDOW, start, end)?;
+    let afk = datastore::events_in_range(BUCKET_AFK, start, end)?;
+    let flooded = transforms::flood(window, ChronoDuration::seconds(PULSE_SECS));
+    let not_afk = transforms::filter_keyvals(afk, "status", &[json!("not-afk")]);
+    let intersected = transforms::filter_period_intersect(flooded, not_afk);
+    Ok(bucketize_hourly(&intersected))
 }
 
 pub async fn categorized_events(
@@ -139,99 +149,101 @@ pub async fn categorized_events(
     range: TimeRange,
 ) -> Result<Vec<CategorizedEvent>, QueryError> {
     let cfg = categories::load(client).await?;
-    let classes_json = categories::classes_to_aql(&cfg);
-    let res = client
-        .query(
-            &queries::categorized_events(&classes_json),
-            &[range.as_aw_timeperiod()],
-        )
-        .await?;
-    Ok(parse_categorized_events(&unwrap_first_array(res)))
+    let rules = transforms::compile_rules(&cfg)?;
+    let (start, end) = range_bounds(&range);
+    let window = datastore::events_in_range(BUCKET_WINDOW, start, end)?;
+    let afk = datastore::events_in_range(BUCKET_AFK, start, end)?;
+    let flooded = transforms::flood(window, ChronoDuration::seconds(PULSE_SECS));
+    let not_afk = transforms::filter_keyvals(afk, "status", &[json!("not-afk")]);
+    let intersected = transforms::filter_period_intersect(flooded, not_afk);
+    let categorized = transforms::categorize(intersected, &rules);
+    Ok(parse_categorized_events(&categorized))
 }
 
 pub async fn afk_summary(
-    client: &AwClient,
+    _client: &AwClient,
     range: TimeRange,
     include_intervals: bool,
-) -> Result<AfkSummary, AwError> {
-    if !bucket_prefix_present(client, "aw-watcher-afk_", afk_watcher_memo()).await? {
-        return Ok(summarize_afk(&[], include_intervals));
-    }
-    let events = fetch_afk_events(client, &range).await?;
-    Ok(summarize_afk(&events, include_intervals))
+) -> Result<AfkSummary, QueryError> {
+    let (start, end) = range_bounds(&range);
+    let afk = datastore::events_in_range(BUCKET_AFK, start, end)?;
+    Ok(summarize_afk(&afk, include_intervals))
 }
+
+pub async fn top_domains(_client: &AwClient, range: TimeRange) -> Result<Vec<Value>, QueryError> {
+    let (start, end) = range_bounds(&range);
+    let web = datastore::events_in_range(BUCKET_WEB, start, end)?;
+    if web.is_empty() {
+        return Ok(Vec::new());
+    }
+    let afk = datastore::events_in_range(BUCKET_AFK, start, end)?;
+    let split = transforms::split_url_events(web);
+    let not_afk = transforms::filter_keyvals(afk, "status", &[json!("not-afk")]);
+    let intersected = transforms::filter_period_intersect(split, not_afk);
+    let merged = transforms::merge_events_by_keys(intersected, &["$domain"]);
+    let sorted = transforms::sort_by_duration(merged);
+    Ok(sorted.into_iter().map(event_to_value).collect())
+}
+
+pub async fn top_urls(_client: &AwClient, range: TimeRange) -> Result<Vec<Value>, QueryError> {
+    let (start, end) = range_bounds(&range);
+    let web = datastore::events_in_range(BUCKET_WEB, start, end)?;
+    if web.is_empty() {
+        return Ok(Vec::new());
+    }
+    let afk = datastore::events_in_range(BUCKET_AFK, start, end)?;
+    let not_afk = transforms::filter_keyvals(afk, "status", &[json!("not-afk")]);
+    let intersected = transforms::filter_period_intersect(web, not_afk);
+    let merged = transforms::merge_events_by_keys(intersected, &["url"]);
+    let sorted = transforms::sort_by_duration(merged);
+    Ok(sorted.into_iter().map(event_to_value).collect())
+}
+
+// -- trailing windows --
 
 pub async fn trailing_days_past(days: u32) -> Result<Vec<TrailingDayPayload>, QueryError> {
     if days == 0 {
         return Ok(Vec::new());
     }
-    // Pre-load + cache categories once; per-day tasks below hit the cache.
     let client = AwClient::new();
-    let _ = categories::load(&client).await?;
+    let cfg = categories::load(&client).await?;
+    let rules = transforms::compile_rules(&cfg)?;
 
-    // Bound the fan-out. Each per-day task issues 2 concurrent HTTP
-    // calls (categorized query + AFK events), so a cap of 2 here means
-    // at most 4 in-flight HTTP requests, which aw-server-rust handles
-    // reliably. Higher caps (4+) intermittently overwhelm its accept
-    // queue and reqwest reports the connect failures as `is_connect()`
-    // -> AwError::Unreachable, even though the server is up. The retry
-    // below handles the rare residual blip without surfacing it.
-    let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(2));
-    let mut handles = Vec::with_capacity(days as usize);
+    // Sequential is fine: each day's compose is <10ms against an
+    // indexed SQLite read, so a 7-day cold start completes in <100ms
+    // total. Previously this needed a Semaphore(2) HTTP fan-out because
+    // /api/0/query/ serialized on Mutex<Datastore>; that constraint is
+    // gone now.
+    let mut out = Vec::with_capacity(days as usize);
     for n in 1..=days {
-        let permit = sem.clone().acquire_owned().await.map_err(|e| {
-            QueryError::Join(format!("semaphore closed: {e}"))
-        })?;
-        handles.push(tokio::spawn(async move {
-            let _permit = permit; // released when task ends
-            // One retry on connect failure: the cap above prevents most
-            // overload, but a single Unreachable can still slip through
-            // under load. Refusing to swallow non-connect errors keeps
-            // real outages visible.
-            match fetch_trailing_day(n).await {
-                Err(QueryError::Aw(AwError::Unreachable(_))) => {
-                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-                    fetch_trailing_day(n).await
-                }
-                other => other,
-            }
-        }));
+        let range = TimeRange::DaysAgo { days: n };
+        let (start, end) = range_bounds(&range);
+        let window = datastore::events_in_range(BUCKET_WINDOW, start, end)?;
+        let afk_raw = datastore::events_in_range(BUCKET_AFK, start, end)?;
+        let flooded = transforms::flood(window, ChronoDuration::seconds(PULSE_SECS));
+        let not_afk = transforms::filter_keyvals(
+            afk_raw.clone(),
+            "status",
+            &[json!("not-afk")],
+        );
+        let intersected = transforms::filter_period_intersect(flooded, not_afk);
+        let categorized = transforms::categorize(intersected, &rules);
+        let events = parse_categorized_events(&categorized);
+        let afk = summarize_afk(&afk_raw, false);
+        out.push(TrailingDayPayload {
+            days_ago: n,
+            events,
+            afk,
+        });
     }
-    let mut out = Vec::with_capacity(handles.len());
-    for h in handles {
-        match h.await {
-            Ok(res) => out.push(res?),
-            Err(e) => return Err(QueryError::Join(e.to_string())),
-        }
-    }
-    out.sort_by_key(|d| d.days_ago);
     Ok(out)
 }
 
-async fn fetch_trailing_day(n: u32) -> Result<TrailingDayPayload, QueryError> {
-    let client = AwClient::new();
-    let cfg = categories::load(&client).await?;
-    let classes_json = categories::classes_to_aql(&cfg);
-    let range = TimeRange::DaysAgo { days: n };
-    let timeperiods = [range.as_aw_timeperiod()];
-    let aql = queries::categorized_events(&classes_json);
-    let (events_res, afk_events) = tokio::join!(
-        client.query(&aql, &timeperiods),
-        fetch_afk_events(&client, &range),
-    );
-    let events = parse_categorized_events(&unwrap_first_array(events_res?));
-    let afk = summarize_afk(&afk_events?, false);
-    Ok(TrailingDayPayload {
-        days_ago: n,
-        events,
-        afk,
-    })
-}
+// -- kpi orchestrator --
 
 /// Pure-compute KPI synthesis. Takes today's payload + the trailing
-/// window directly so the caller controls how the trailing data is
-/// fetched (or — in the TUI path — derived from a shared cache slot
-/// instead of re-fetched per call).
+/// window directly so the caller can fetch them how it likes (the TUI
+/// derives them from shared cache slots).
 pub fn kpi_from_parts(
     today_events: &[CategorizedEvent],
     today_afk: &AfkSummary,
@@ -250,52 +262,34 @@ pub fn kpi_from_parts(
     )
 }
 
-/// One-shot KPI payload: today + trailing-7. Past days are fetched concurrently.
-/// Thin orchestrator around `kpi_from_parts` — kept for the non-TUI callers
-/// (CLI tools, future external consumers) that want a one-call API.
+/// One-shot KPI payload: today + trailing-7. Thin orchestrator around
+/// `kpi_from_parts` for non-TUI callers (CLI tools, future external
+/// consumers).
 pub async fn kpi(client: &AwClient, range: TimeRange) -> Result<KpiSummary, QueryError> {
-    let cfg = categories::load(client).await?;
-    let classes_json = categories::classes_to_aql(&cfg);
-
-    // Today: events + AFK in parallel.
-    let timeperiods = [range.as_aw_timeperiod()];
-    let today_aql = queries::categorized_events(&classes_json);
-    let (today_events_res, today_afk_events) = tokio::join!(
-        client.query(&today_aql, &timeperiods),
-        fetch_afk_events(client, &range),
-    );
-    let today_events = parse_categorized_events(&unwrap_first_array(today_events_res?));
-    let today_afk = summarize_afk(&today_afk_events?, false);
-
-    // Past 7 days for baselines + pattern shift. Reuse the existing
-    // bundled query so concurrency lives in one place.
+    let today_events = categorized_events(client, range.clone()).await?;
+    let today_afk = afk_summary(client, range, false).await?;
     let past = trailing_days_past(7).await?;
-
     Ok(kpi_from_parts(&today_events, &today_afk, &past))
 }
 
-pub async fn has_web_watcher(client: &AwClient) -> Result<bool, AwError> {
-    bucket_prefix_present(client, "aw-watcher-web-", web_watcher_memo()).await
-}
+// -- helpers --
 
-pub async fn top_domains(client: &AwClient, range: TimeRange) -> Result<Vec<Value>, AwError> {
-    if !has_web_watcher(client).await? {
-        return Ok(vec![]);
+/// Re-emit an `Event` in the JSON shape downstream parsers expect
+/// (`{timestamp, duration, data, id}`).
+fn event_to_value(e: Event) -> Value {
+    let mut m = serde_json::Map::with_capacity(4);
+    m.insert("timestamp".to_string(), Value::String(e.timestamp.to_rfc3339()));
+    m.insert(
+        "duration".to_string(),
+        serde_json::Number::from_f64(e.duration)
+            .map(Value::Number)
+            .unwrap_or(Value::Null),
+    );
+    m.insert("data".to_string(), e.data);
+    if let Some(id) = e.id {
+        m.insert("id".to_string(), Value::Number(id.into()));
     }
-    let res = client
-        .query(&queries::web_top_domains(), &[range.as_aw_timeperiod()])
-        .await?;
-    Ok(unwrap_first_array(res))
-}
-
-pub async fn top_urls(client: &AwClient, range: TimeRange) -> Result<Vec<Value>, AwError> {
-    if !has_web_watcher(client).await? {
-        return Ok(vec![]);
-    }
-    let res = client
-        .query(&queries::web_top_urls(), &[range.as_aw_timeperiod()])
-        .await?;
-    Ok(unwrap_first_array(res))
+    Value::Object(m)
 }
 
 #[cfg(test)]
@@ -305,11 +299,6 @@ mod tests {
 
     #[test]
     fn kpi_from_parts_forwards_today_afk_into_summary() {
-        // Forwarding pin: `active_secs` and `afk_secs` flow through
-        // unchanged; `past_active` slices the AFK active_seconds out of
-        // each TrailingDayPayload in order. If kpi_from_parts ever
-        // accidentally re-derives these from today's events, the
-        // assertion below will catch it.
         let today_afk = AfkSummary {
             active_seconds: 12_345.0,
             afk_seconds: 678.0,
@@ -330,36 +319,9 @@ mod tests {
             .collect();
 
         let summary = kpi_from_parts(&[], &today_afk, &past);
-
-        // Direct passthrough of today's AFK numbers — this is the
-        // contract that must not regress when the caller switches from
-        // a fresh `trailing_days_past(7)` fetch to a shared cache slot.
         assert_eq!(summary.active_secs, 12_345.0);
         assert_eq!(summary.afk_secs, 678.0);
-        // Baseline was computed across all 7 past days (some kpi math
-        // may filter, so we don't pin the exact median — just that
-        // the baseline was populated from non-empty past data).
         assert!(summary.active_baseline.effective_days > 0);
         assert!(summary.active_baseline.median > 0.0);
-    }
-
-    #[tokio::test]
-    async fn bucket_prefix_present_returns_memo_without_calling_client() {
-        // Pre-seed a local memo. The function must short-circuit on the
-        // cached value and never touch the client — proved by passing a
-        // client pointed at the default localhost URL and asserting the
-        // call resolves synchronously without a Network error.
-        let memo: OnceLock<bool> = OnceLock::new();
-        let _ = memo.set(true);
-
-        let client = AwClient::new();
-        let result = bucket_prefix_present(&client, "aw-watcher-web-", &memo).await;
-        assert_eq!(result.unwrap(), true);
-
-        // Confirm a `false` memo also short-circuits.
-        let memo_off: OnceLock<bool> = OnceLock::new();
-        let _ = memo_off.set(false);
-        let result = bucket_prefix_present(&client, "aw-watcher-web-", &memo_off).await;
-        assert_eq!(result.unwrap(), false);
     }
 }
