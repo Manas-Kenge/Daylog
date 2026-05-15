@@ -1,11 +1,12 @@
 //! Category rules. Stored in aw-server's settings bucket under the key
-//! `classes`, matching the AW WebUI's convention. Matching itself is done
-//! server-side via AQL `categorize()` — this module just handles the rule
-//! shape, validation, and AQL serialization.
+//! `classes`, matching the AW WebUI's convention. Matching is now done
+//! in-process by `crate::transforms::categorize` against `fancy_regex`
+//! — this module just handles the rule shape, validation, and HTTP
+//! load/save round-trips.
 
 use std::sync::OnceLock;
 
-use regex::RegexBuilder;
+use fancy_regex::Regex as FancyRegex;
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
@@ -127,13 +128,19 @@ impl CategoryConfig {
     }
 }
 
-/// Validate every regex compiles; surfaces which category failed.
+/// Validate every regex compiles under the same engine
+/// (`fancy_regex`) the runtime evaluator uses in `transforms::compile_rules`.
+/// Without this alignment, a rule with a lookahead would validate fine
+/// under `regex` and then fail at categorize-time.
 pub fn validate(cfg: &CategoryConfig) -> Result<(), CategoryError> {
     for cat in &cfg.categories {
         if let Rule::Regex { regex, ignore_case } = &cat.rule {
-            let mut b = RegexBuilder::new(regex);
-            b.case_insensitive(*ignore_case);
-            b.build().map_err(|e| CategoryError::InvalidRegex {
+            let pat = if *ignore_case {
+                format!("(?i){regex}")
+            } else {
+                regex.clone()
+            };
+            FancyRegex::new(&pat).map_err(|e| CategoryError::InvalidRegex {
                 category: cat.name.clone(),
                 error: e.to_string(),
             })?;
@@ -205,6 +212,25 @@ mod tests {
             }
             other => panic!("expected InvalidRegex, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn validate_accepts_lookahead_patterns() {
+        // Regression: validate() used to reject lookaheads because it ran
+        // through the `regex` crate. transforms::compile_rules uses
+        // fancy_regex, which supports them. validate now mirrors that so
+        // a lookahead-bearing rule no longer fails at categorize-time.
+        let cfg = CategoryConfig {
+            categories: vec![Category {
+                name: vec!["LookaheadOk".into()],
+                rule: Rule::Regex {
+                    regex: "testing (?!lookahead)".into(),
+                    ignore_case: false,
+                },
+                data: None,
+            }],
+        };
+        validate(&cfg).expect("fancy_regex lookahead should validate");
     }
 
     #[test]
