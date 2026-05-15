@@ -222,10 +222,6 @@ pub enum FetchResult {
     Hourly(Result<Vec<HourBucket>, String>),
     TopCategories(Result<Vec<CategorySummary>, String>),
     Kpi(Result<KpiSummary, String>),
-    /// Past 7 days of active seconds. Index `i` is days_ago = i + 1, so
-    /// index 0 = yesterday, index 6 = 7 days ago. The sparkline widget
-    /// composes this with today's `kpi.active_secs` at render time.
-    TrailingActive(Result<[f64; 7], String>),
     /// Today's categorized events for the 24h timeline widget. Same
     /// data shape `top_categories` is aggregated from, but kept raw so
     /// the bucketize96 step can place each event into 15-min slots.
@@ -245,10 +241,9 @@ pub enum FetchResult {
     /// Top web domains over the trailing 7 days for the Week tab.
     WeekTopDomains(Result<Vec<TopDomainRow>, String>),
     /// Trailing 365 days of active seconds for the Month tab heatmap.
-    /// Index `i` is days_ago = i + 1 (matches `TrailingActive`'s
-    /// convention so today's value composes from `kpi.active_secs`).
-    /// Vec, not [_; 365], because aw-server may have less than a year
-    /// of history on fresh installs.
+    /// Index `i` is days_ago = i + 1 (today's value composes from
+    /// `kpi.active_secs`). Vec, not [_; 365], because aw-server may
+    /// have less than a year of history on fresh installs.
     MonthTrailingYear(Result<Vec<f64>, String>),
     /// Top apps over the trailing 30 days. Independent of the active
     /// `RangeChip`; the Month tab's view is scope-fixed.
@@ -258,11 +253,10 @@ pub enum FetchResult {
     /// Top web domains over the trailing 30 days. Empty `Ok(vec![])`
     /// is again the "no web watcher" signal — same as `TopDomains`.
     MonthTopDomains(Result<Vec<TopDomainRow>, String>),
-    /// Shared trailing-7-day payload. Apply derives `trailing_active` and
-    /// (paired with `timeline_events`) `week` from this single fetch.
-    /// Failure propagates to the dependent slots so the UI shows
-    /// consistent error state instead of one panel updating and the
-    /// others freezing.
+    /// Shared trailing-7-day payload. Apply derives `week` (paired
+    /// with `timeline_events`) from this single fetch. Failure
+    /// propagates to dependent slots so the UI shows consistent error
+    /// state instead of one panel updating and the others freezing.
     Trailing7(Result<Vec<TrailingDayPayload>, String>),
 }
 
@@ -274,9 +268,6 @@ pub struct DataCache {
     pub top_categories: Cached<Vec<CategorySummary>>,
     /// Live KPI summary. One roundtrip bundles today + trailing-7 baselines.
     pub kpi: Cached<KpiSummary>,
-    /// Past-7-day active seconds for the sparkline. 5min cadence —
-    /// past days don't change within a day.
-    pub trailing_active: Cached<[f64; 7]>,
     /// Raw categorized events for today; consumed by the 24h timeline.
     pub timeline_events: Cached<Vec<CategorizedEvent>>,
     /// Top web domains for today. Empty value with `last_error == None`
@@ -307,10 +298,10 @@ pub struct DataCache {
     /// means "no web watcher", same convention as `top_domains`.
     pub month_top_domains: Cached<Vec<TopDomainRow>>,
     /// Shared source of truth for the trailing-7-day window. Before
-    /// this slot existed, `kpi`, `trailing_active`, and `week` each
-    /// dispatched their own `trailing_days_past(7)` fan-out on every
-    /// refresh — three identical 14-HTTP fan-outs through a 2-wide
-    /// semaphore. Now all three derive from this one cache.
+    /// this slot existed, `kpi` and `week` each dispatched their own
+    /// `trailing_days_past(7)` fan-out on every refresh — duplicate
+    /// 14-HTTP fan-outs through a 2-wide semaphore. Now both derive
+    /// from this one cache.
     pub trailing_7: Cached<Vec<TrailingDayPayload>>,
 }
 
@@ -321,7 +312,6 @@ impl DataCache {
             hourly: Cached::new(REFRESH_LIVE),
             top_categories: Cached::new(REFRESH_LIVE),
             kpi: Cached::new(REFRESH_LIVE),
-            trailing_active: Cached::new(REFRESH_PAST_DAYS),
             timeline_events: Cached::new(REFRESH_LIVE),
             top_domains: Cached::new(REFRESH_LIVE),
             week: Cached::new(REFRESH_PAST_DAYS),
@@ -361,11 +351,6 @@ impl DataCache {
             FetchResult::TopCategories(Err(e)) => self.top_categories.apply_failure(e, now),
             FetchResult::Kpi(Ok(v)) => self.kpi.apply_success(v, now),
             FetchResult::Kpi(Err(e)) => self.kpi.apply_failure(e, now),
-            // TrailingActive is no longer dispatched directly — it's
-            // derived from `Trailing7` below. The variant remains as
-            // a defensive apply path (also exercised by existing tests).
-            FetchResult::TrailingActive(Ok(v)) => self.trailing_active.apply_success(v, now),
-            FetchResult::TrailingActive(Err(e)) => self.trailing_active.apply_failure(e, now),
             FetchResult::TimelineEvents(Ok(v)) => {
                 self.timeline_events.apply_success(v, now);
                 self.try_rebuild_week(now);
@@ -398,27 +383,15 @@ impl DataCache {
             FetchResult::MonthTopDomains(Ok(v)) => self.month_top_domains.apply_success(v, now),
             FetchResult::MonthTopDomains(Err(e)) => self.month_top_domains.apply_failure(e, now),
             FetchResult::Trailing7(Ok(v)) => {
-                // Derive trailing_active from the same payload — no
-                // separate fetch needed. Index i is days_ago = i + 1
-                // (matches the established convention).
-                let mut active = [0.0_f64; 7];
-                for d in &v {
-                    let idx = d.days_ago.saturating_sub(1) as usize;
-                    if idx < 7 {
-                        active[idx] = d.afk.active_seconds;
-                    }
-                }
-                self.trailing_active.apply_success(active, now);
                 self.trailing_7.apply_success(v, now);
                 self.try_rebuild_week(now);
             }
             FetchResult::Trailing7(Err(e)) => {
                 // Propagate the failure to every dependent slot so the
                 // UI shows consistent error state. `Cached::apply_failure`
-                // preserves the previous value (the sparkline / week
-                // chart freeze at last good values, not blank).
+                // preserves the previous value (the week chart freezes
+                // at last good values, not blank).
                 self.trailing_7.apply_failure(e.clone(), now);
-                self.trailing_active.apply_failure(e.clone(), now);
                 self.week.apply_failure(e, now);
             }
         }
@@ -494,11 +467,11 @@ pub fn dispatch_refetches(
         });
     }
 
-    // Shared trailing-7-day fetch. Drives the sparkline (via
-    // `trailing_active`), the kpi baselines (cloned into the kpi task
-    // below), and the week chart (paired with `timeline_events` in
-    // `try_rebuild_week`). Previously each consumer fanned out its own
-    // copy, paying the 14-HTTP cost three times on cold start.
+    // Shared trailing-7-day fetch. Drives the kpi baselines (cloned
+    // into the kpi task below) and the week chart (paired with
+    // `timeline_events` in `try_rebuild_week`). Previously each
+    // consumer fanned out its own copy, paying the 14-HTTP cost twice
+    // on cold start.
     if cache.trailing_7.should_refetch(now) {
         cache.trailing_7.mark_in_flight();
         let tx = tx.clone();
@@ -815,12 +788,12 @@ mod tests {
         assert!(was_dispatched(&cache.top_apps, now));
         assert!(was_dispatched(&cache.timeline_events, now));
 
-        // The shared trailing-7 slot fires on Today too — the sparkline
-        // and kpi baselines both need it. This is the *deduplication*
-        // win: one fetch instead of three.
+        // The shared trailing-7 slot fires on Today too — the kpi
+        // baselines need it. This is the *deduplication* win: one
+        // fetch instead of two.
         assert!(
             was_dispatched(&cache.trailing_7, now),
-            "trailing_7 is now the single source of truth for kpi/sparkline/week and must fire on Today"
+            "trailing_7 is the single source of truth for kpi/week and must fire on Today"
         );
 
         // The week chart itself (`cache.week`) is no longer dispatched —
@@ -1000,7 +973,6 @@ mod tests {
         assert!(dc.hourly.value().is_none());
         assert!(dc.top_categories.value().is_none());
         assert!(dc.kpi.value().is_none());
-        assert!(dc.trailing_active.value().is_none());
         assert!(!dc.any_offline());
     }
 
@@ -1033,30 +1005,12 @@ mod tests {
     }
 
     #[test]
-    fn trailing_7_success_derives_trailing_active() {
-        // T3 — apply(Trailing7) must populate trailing_active in the
-        // same call. Without this, the sparkline would lag the
-        // shared cache by one tick.
-        let mut dc = DataCache::new();
-        let now = Instant::now();
-        let payload = fake_trailing(7);
-        dc.apply(FetchResult::Trailing7(Ok(payload)), now);
-
-        let active = dc.trailing_active.value().expect("derived array");
-        assert_eq!(active[0], 100.0); // days_ago=1
-        assert_eq!(active[6], 700.0); // days_ago=7
-        assert!(dc.trailing_7.value().is_some());
-    }
-
-    #[test]
     fn trailing_7_failure_propagates_to_dependents() {
-        // T4 — Trailing7 failure surfaces on every consumer. Stale
-        // values stay visible per Cached's contract; only last_error
-        // flips.
+        // Trailing7 failure surfaces on every consumer. Stale values
+        // stay visible per Cached's contract; only last_error flips.
         let mut dc = DataCache::new();
         let now = Instant::now();
         // Seed prior successful values.
-        dc.trailing_active.apply_success([1.0; 7], now);
         dc.trailing_7
             .apply_success(fake_trailing(7), now);
         dc.week.apply_success(Vec::new(), now);
@@ -1064,8 +1018,6 @@ mod tests {
         dc.apply(FetchResult::Trailing7(Err("aw down".into())), now);
 
         // Values stay (stale-during-blip contract); errors flip on.
-        assert!(dc.trailing_active.value().is_some());
-        assert_eq!(dc.trailing_active.last_error(), Some("aw down"));
         assert!(dc.trailing_7.value().is_some());
         assert_eq!(dc.trailing_7.last_error(), Some("aw down"));
         assert_eq!(dc.week.last_error(), Some("aw down"));
@@ -1116,8 +1068,8 @@ mod tests {
 
     #[test]
     fn trailing_7_offline_does_not_flip_aggregate_flag() {
-        // T8 — Same precedent as trailing_active and week: 5min cadence
-        // slots blipping shouldn't flicker the footer indicator.
+        // Same precedent as `week`: 5min cadence slots blipping
+        // shouldn't flicker the footer indicator.
         let mut dc = DataCache::new();
         let now = Instant::now();
         for _ in 0..(OFFLINE_THRESHOLD + 2) {
@@ -1130,23 +1082,7 @@ mod tests {
     }
 
     #[test]
-    fn data_cache_trailing_offline_does_not_flip_aggregate_flag() {
-        // trailing_active runs at 5min cadence; surfacing offline on
-        // its blips would create false positives. Live slots are the
-        // signal for the footer indicator.
-        let mut dc = DataCache::new();
-        let now = Instant::now();
-        for _ in 0..(OFFLINE_THRESHOLD + 2) {
-            dc.trailing_active.apply_failure("err".into(), now);
-        }
-        assert!(
-            !dc.any_offline(),
-            "trailing_active failures alone must not flag the tracker offline"
-        );
-    }
-
-    #[test]
-    fn data_cache_apply_routes_kpi_and_trailing_results() {
+    fn data_cache_apply_routes_kpi_result() {
         let mut dc = DataCache::new();
         let now = Instant::now();
         let summary = daylog_core::kpi::KpiSummary {
@@ -1178,10 +1114,6 @@ mod tests {
         };
         dc.apply(FetchResult::Kpi(Ok(summary.clone())), now);
         assert_eq!(dc.kpi.value().map(|s| s.active_secs), Some(1234.0));
-
-        let trailing: [f64; 7] = [10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0];
-        dc.apply(FetchResult::TrailingActive(Ok(trailing)), now);
-        assert_eq!(dc.trailing_active.value().copied(), Some(trailing));
     }
 
     #[test]
@@ -1200,7 +1132,7 @@ mod tests {
     #[test]
     fn data_cache_week_offline_does_not_flip_aggregate_flag() {
         // Week runs at 5min cadence. Surfacing offline on its blips would
-        // create false positives — same precedent as `trailing_active`.
+        // create false positives — same precedent as `trailing_7`.
         let mut dc = DataCache::new();
         let now = Instant::now();
         for _ in 0..(OFFLINE_THRESHOLD + 2) {

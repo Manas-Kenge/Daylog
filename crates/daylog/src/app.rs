@@ -167,7 +167,7 @@ impl App {
     }
 
     /// Cycle the active range, resetting only the slots whose payload
-    /// depends on the range chip. Scope-fixed slots (`trailing_active`,
+    /// depends on the range chip. Scope-fixed slots (`trailing_7`,
     /// `week*`, `month_*`) carry their own fixed windows and must survive
     /// the chip flip — wiping them here forces a needless cold reload of
     /// the Week/Month tabs every time the user cycles the chip on Today.
@@ -422,12 +422,11 @@ mod tests {
 
     #[test]
     fn cycle_range_preserves_scope_fixed_slots() {
-        // trailing_active, week*, month_* carry fixed windows that don't
+        // trailing_7, week*, month_* carry fixed windows that don't
         // depend on the range chip. Wiping them here used to cause Week
         // and Month to cold-reload on every chip flip from Today.
         let mut app = App::new();
         let now = Instant::now();
-        app.data.trailing_active.apply_success([1.0; 7], now);
         app.data
             .week
             .apply_success(Vec::new(), now);
@@ -439,10 +438,6 @@ mod tests {
 
         app.cycle_range(true);
 
-        assert!(
-            app.data.trailing_active.value().is_some(),
-            "trailing_active is scope-fixed (Last 7); range cycle must not wipe it"
-        );
         assert!(app.data.week.value().is_some(), "week is scope-fixed");
         assert!(
             app.data.week_top_apps.value().is_some(),

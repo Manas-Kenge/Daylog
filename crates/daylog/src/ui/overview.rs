@@ -14,28 +14,21 @@ use throbber_widgets_tui::ThrobberState;
 use crate::app::App;
 use crate::data::{Cached, TopAppRow, TopDomainRow};
 use crate::theme::{self, LayoutMode, Theme};
-use crate::ui::{format_duration, kpi_strip, render_skeleton_body, sparkline, timeline};
+use crate::ui::{format_duration, kpi_strip, render_skeleton_body, timeline};
 use daylog_core::aggregate::CategorySummary;
 
 pub fn render(f: &mut Frame, area: Rect, app: &App) {
     let layout_mode = Theme::layout_mode(area.width);
 
-    // Sparkline is Wide-only; on Narrow/Stacked the slot collapses.
-    let sparkline_height = match layout_mode {
-        LayoutMode::Wide => 3,
-        _ => 0,
-    };
-
     // Bottom panels clip on short terminals; accepted trade-off for density.
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),                // KPI strip (bordered)
-            Constraint::Length(6),                // 24h timeline (borders + 3 stripes + axis + border)
-            Constraint::Length(11),               // top apps + categories (8 rows + header + borders)
-            Constraint::Length(10),               // hourly + domains
-            Constraint::Length(sparkline_height), // 7-day sparkline panel (Wide only)
-            Constraint::Min(0),                   // flex blank
+            Constraint::Length(3),  // KPI strip (bordered)
+            Constraint::Length(6),  // 24h timeline (borders + 3 stripes + axis + border)
+            Constraint::Length(11), // top apps + categories (8 rows + header + borders)
+            Constraint::Length(10), // hourly + domains
+            Constraint::Min(0),     // flex blank
         ])
         .split(area);
 
@@ -43,10 +36,6 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
     render_timeline(f, chunks[1], app);
     render_apps_categories_row(f, chunks[2], app);
     render_hourly_domains_row(f, chunks[3], app);
-    if sparkline_height > 0 {
-        render_sparkline(f, chunks[4], app, layout_mode);
-    }
-    // chunks[5] is the flex blank — left empty intentionally.
 }
 
 fn render_kpi_strip(f: &mut Frame, area: Rect, app: &App, layout_mode: LayoutMode) {
@@ -77,26 +66,6 @@ fn render_timeline(f: &mut Frame, area: Rect, app: &App) {
         app.data.timeline_events.is_in_flight(),
         &app.throbber,
     );
-}
-
-fn render_sparkline(f: &mut Frame, area: Rect, app: &App, layout_mode: LayoutMode) {
-    let theme: &Theme = &app.theme;
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(theme::PANEL_BORDER)
-        .border_style(theme.border_dim_style())
-        .padding(theme::PANEL_PADDING_TIGHT)
-        .title(panel_title(
-            theme,
-            " 7-day rhythm ",
-            app.data.trailing_active.is_in_flight(),
-        ));
-    let inner = block.inner(area);
-    f.render_widget(block, area);
-    let kpi = app.data.kpi.value();
-    let trailing = app.data.trailing_active.value();
-    let today_active = kpi.map(|k| k.active_secs);
-    sparkline::render(f, inner, theme, layout_mode, today_active, trailing);
 }
 
 fn render_apps_categories_row(f: &mut Frame, area: Rect, app: &App) {

@@ -25,7 +25,6 @@ use crate::theme::Theme;
 pub(crate) mod kpi_strip;
 mod month;
 pub(crate) mod overview;
-pub(crate) mod sparkline;
 pub(crate) mod stacked_bars;
 pub(crate) mod timeline;
 pub(crate) mod week;
