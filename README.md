@@ -67,11 +67,11 @@ cargo build --release -p daylog-tui
 
 The two crates in this workspace are:
 
-- `daylog-core` — pure-Rust data layer (HTTP client, queries, aggregations, KPI math).
+- `daylog-core` — pure-Rust data layer (reads aw-server-rust's SQLite directly, plus queries, aggregations, KPI math).
 - `daylog-tui` (binary `daylog`) — the ratatui dashboard plus the first-launch tracker installer.
 
 ## License
 
 MIT — see [LICENSE](./LICENSE).
 
-Daylog bundles `aw-server-rust` and `aw-awatcher` from the [ActivityWatch](https://activitywatch.net) project (MPL-2.0). Full attribution lives in [THIRD-PARTY-NOTICES.md](./THIRD-PARTY-NOTICES.md).
+Daylog downloads `aw-server-rust` and `aw-awatcher` from the [ActivityWatch](https://activitywatch.net) project (MPL-2.0) on first launch. Full attribution lives in [THIRD-PARTY-NOTICES.md](./THIRD-PARTY-NOTICES.md).
