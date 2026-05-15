@@ -294,11 +294,12 @@ pub struct DataCache {
     /// Trailing-30-day Top web domains for the Month tab. Empty-Ok
     /// means "no web watcher", same convention as `top_domains`.
     pub month_top_domains: Cached<Vec<TopDomainRow>>,
-    /// Shared source of truth for the trailing-7-day window. Before
-    /// this slot existed, `kpi` and `week` each dispatched their own
-    /// `trailing_days_past(7)` fan-out on every refresh — duplicate
-    /// 14-HTTP fan-outs through a 2-wide semaphore. Now both derive
-    /// from this one cache.
+    /// Shared source of truth for the trailing-7-day window. SQLite
+    /// reads themselves are sub-second now, but the *aggregation* step
+    /// (flood + filter_period_intersect + categorize over ~70k events
+    /// per week) is still heavy enough that recomputing it for every
+    /// kpi tick + week-chart consumer is wasteful. The dedup is now
+    /// load-bearing for aggregation, not for the fetch.
     pub trailing_7: Cached<Vec<TrailingDayPayload>>,
 }
 
@@ -324,11 +325,19 @@ impl DataCache {
     }
 
     /// True if any tracked LIVE cache has crossed the offline threshold.
-    /// Drives the footer's "○ tracker offline" indicator. The trailing
-    /// past-days slot is excluded — its 5min cadence would create false
-    /// positives during transient blips. `top_domains` is also excluded
-    /// because an empty-result is its normal state on machines without
-    /// a web watcher.
+    /// Drives the footer's "○ tracker offline" indicator.
+    ///
+    /// Post-SQLite, "offline" most commonly means the aw-server-rust
+    /// `sqlite.db` file is missing or unreadable — not an HTTP timeout.
+    /// The most likely root causes are (1) aw-server-rust hasn't been
+    /// installed yet (user dismissed the wizard) or (2) a different
+    /// aw-server is running on `:5600` (wizard surfaces a warning for
+    /// this; see `wizard::render_wrong_server`).
+    ///
+    /// The trailing past-days slot is excluded — its 5min cadence
+    /// would create false positives during transient blips. `top_domains`
+    /// is also excluded because an empty-result is its normal state on
+    /// machines without a web watcher.
     pub fn any_offline(&self) -> bool {
         self.top_apps.is_offline()
             || self.hourly.is_offline()

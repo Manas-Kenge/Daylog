@@ -31,14 +31,14 @@ CI runs `cargo check --workspace`, `cargo test --workspace`, `cargo build --rele
 
 ### Two crates, one binary
 
-- **`crates/daylog-core`** — pure-Rust data layer. aw-server HTTP client, query layer, aggregations, KPI math, category rules + matcher, `TimeRange` enum. No Tauri, no Wry, no frontend dependency. Published to crates.io as `daylog-core`.
+- **`crates/daylog-core`** — pure-Rust data layer. Reads aw-server-rust's SQLite file directly via `datastore.rs` + `transforms.rs` (ports of upstream's `aw-transform/` crate). Tiny `aw_client.rs` is HTTP-only for metadata (server info, category settings). Plus aggregations, KPI math, category rules + matcher, `TimeRange` enum. No Tauri, no Wry, no frontend dependency. Published to crates.io as `daylog-core`.
 - **`crates/daylog`** — the ratatui TUI plus the first-launch tracker installer. The package name on crates.io is **`daylog-tui`** (the bare `daylog` is taken by an unrelated project), but the executable it produces is named `daylog`. Both invariants live in `crates/daylog/Cargo.toml`'s `[package] name` and `[[bin]] name`.
 
 The two crates are co-versioned and bumped together. `crates/daylog/Cargo.toml`'s path dep on `daylog-core` carries an explicit `version = "X.Y.Z"` matching `daylog-core`'s package version — without it, `cargo publish` rejects the upload.
 
 ### Tracker bootstrap
 
-Lives in `crates/daylog/src/tracking/`. On first launch the wizard probes `:5600`. If aw-server is up, it skips. Otherwise it downloads the pinned upstream binaries (aw-server-rust + aw-awatcher) into `~/.cache/daylog/binaries/`, sha256-verifies, extracts to `~/.local/share/daylog/bin/`, then writes either systemd-user units or an XDG-autostart supervisor depending on what `lifecycle::detect()` finds, and starts both. On GNOME-Wayland it also offers to install the upstream `focused-window-dbus` shell extension.
+Lives in `crates/daylog/src/tracking/`. On first launch the wizard probes `:5600`. If aw-server-rust is up (verified by `datastore::db_path().exists()`), it skips. If a *different* aw-server is running — most commonly the older aw-server (Python) from a pre-Rust ActivityWatch desktop install — the wizard renders a "wrong tracker" warning explaining how to migrate: daylog only reads aw-server-rust's SQLite schema. Otherwise it downloads the pinned upstream binaries (aw-server-rust + aw-awatcher) into `~/.cache/daylog/binaries/`, sha256-verifies, extracts to `~/.local/share/daylog/bin/`, then writes either systemd-user units or an XDG-autostart supervisor depending on what `lifecycle::detect()` finds, and starts both. On GNOME-Wayland it also offers to install the upstream `focused-window-dbus` shell extension.
 
 Why download instead of bundle? Embedding the ~44 MB of upstream binaries via `include_bytes!` blew past crates.io's 10 MB tarball limit. The download path keeps the published crate small.
 
