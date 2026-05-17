@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/daylog-core", "crates/daylog"]
+members = ["crates/daylog"]
 resolver = "2"
 
 # Shared dependency versions. The Tauri shell crate previously lived at

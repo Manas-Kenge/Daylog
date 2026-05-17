@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use daylog_core::aw_client::AwClient;
+use crate::data::aw_client::AwClient;
 
 use crate::tracking::{config_dir, systemd, xdg_autostart, BinDir, InstallError};
 

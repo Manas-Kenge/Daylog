@@ -39,7 +39,7 @@ use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection, OpenFlags};
 use serde_json::Value;
 
-use crate::aw_client::Event;
+use crate::data::aw_client::Event;
 
 #[derive(Debug, thiserror::Error)]
 pub enum DatastoreError {

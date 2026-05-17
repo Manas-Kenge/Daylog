@@ -13,16 +13,16 @@ use chrono::Duration as ChronoDuration;
 use serde::Serialize;
 use serde_json::{json, Value};
 
-use crate::aggregate::{
+use crate::data::aggregate::{
     bucketize_hourly, parse_categorized_events, parse_category_summaries, summarize_afk,
     AfkSummary, CategorizedEvent, CategorySummary, HourBucket,
 };
-use crate::aw_client::{AwClient, AwError, Event};
-use crate::categories::{self, CategoryError};
-use crate::datastore::{self, DatastoreError};
-use crate::kpi::{self, KpiSummary};
-use crate::time::TimeRange;
-use crate::transforms;
+use crate::data::aw_client::{AwClient, AwError, Event};
+use crate::data::categories::{self, CategoryError};
+use crate::data::datastore::{self, DatastoreError};
+use crate::data::kpi::{self, KpiSummary};
+use crate::data::time::TimeRange;
+use crate::data::transforms;
 
 /// `pulsetime` for `flood()`. Heartbeats land every 5s in the upstream
 /// defaults, so 5s closes the gaps without bridging legitimate pauses.
@@ -276,7 +276,7 @@ fn event_to_value(e: Event) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::aggregate::AfkSummary;
+    use crate::data::aggregate::AfkSummary;
 
     #[test]
     fn kpi_from_parts_forwards_today_afk_into_summary() {

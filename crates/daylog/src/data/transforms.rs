@@ -14,7 +14,7 @@ use fancy_regex::Regex as FancyRegex;
 use serde_json::{Map, Value};
 use url::Url;
 
-use crate::aw_client::Event;
+use crate::data::aw_client::Event;
 
 fn endtime(e: &Event) -> chrono::DateTime<chrono::Utc> {
     e.timestamp + ChronoDuration::nanoseconds((e.duration * 1_000_000_000.0) as i64)
@@ -182,12 +182,12 @@ pub struct CompiledRule {
 /// types (decoration-only parents like "Uncategorized") compile to a
 /// `CompiledRule` with `regex: None`, which never matches.
 pub fn compile_rules(
-    cfg: &crate::categories::CategoryConfig,
+    cfg: &crate::data::categories::CategoryConfig,
 ) -> Result<Vec<CompiledRule>, fancy_regex::Error> {
     let mut out = Vec::with_capacity(cfg.categories.len());
     for cat in &cfg.categories {
         let regex = match &cat.rule {
-            crate::categories::Rule::Regex { regex, ignore_case } => {
+            crate::data::categories::Rule::Regex { regex, ignore_case } => {
                 // fancy_regex has no RegexBuilder API; embed `(?i)` for
                 // case-insensitivity, matching upstream's approach.
                 let pat = if *ignore_case {
@@ -197,7 +197,7 @@ pub fn compile_rules(
                 };
                 Some(FancyRegex::new(&pat)?)
             }
-            crate::categories::Rule::None => None,
+            crate::data::categories::Rule::None => None,
         };
         out.push(CompiledRule {
             category: cat.name.clone(),
@@ -468,7 +468,7 @@ mod tests {
 
     #[test]
     fn categorize_picks_deepest_match() {
-        use crate::categories::{Category, CategoryConfig, Rule};
+        use crate::data::categories::{Category, CategoryConfig, Rule};
         let cfg = CategoryConfig {
             categories: vec![
                 Category {
@@ -505,7 +505,7 @@ mod tests {
 
     #[test]
     fn categorize_defaults_to_uncategorized_when_no_match() {
-        use crate::categories::{Category, CategoryConfig, Rule};
+        use crate::data::categories::{Category, CategoryConfig, Rule};
         let cfg = CategoryConfig {
             categories: vec![Category {
                 name: vec!["Work".into()],

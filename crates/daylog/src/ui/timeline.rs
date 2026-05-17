@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 
 use chrono::{Local, Timelike};
-use daylog_core::aggregate::CategorizedEvent;
+use crate::data::aggregate::CategorizedEvent;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::Style,

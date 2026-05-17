@@ -5,9 +5,9 @@
 //! `scripts/fetch-binaries.sh` developer cache pre-warmer stays valid.
 //!
 //! **Schema coupling**: daylog reads aw-server-rust's SQLite store
-//! directly (see `daylog_core::datastore`). The current pin targets
+//! directly (see `crate::data::datastore`). The current pin targets
 //! schema `user_version=4`. If a future bump alters the events/buckets
-//! table layout, `crates/daylog-core/src/datastore.rs` needs to follow
+//! table layout, `crates/daylog/src/data/datastore.rs` needs to follow
 //! before this pin lands.
 //!
 //! The crate ships ~5 MB instead of ~50 MB by keeping these out of the

@@ -75,8 +75,8 @@ jobs:
           if-no-files-found: error
 
   # ---------------------------------------------------------------------------
-  # Publish to crates.io. Triggers on tag push only. daylog-core publishes
-  # first; daylog-tui is gated on it. Both are one-way doors — yank ≠ delete.
+  # Publish to crates.io. Triggers on tag push only. Single crate since
+  # v0.2.0 — daylog-core was collapsed into daylog-tui::data. Yank ≠ delete.
   # ---------------------------------------------------------------------------
   publish:
     if: startsWith(github.ref, 'refs/tags/v')
@@ -91,31 +91,6 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: .
-
-      - name: cargo publish daylog-core
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: cargo publish -p daylog-core --locked
-
-      # Poll the sparse index for the exact version we just published.
-      # `cargo search` hits a separate, lagging search index — don't use it.
-      - name: Wait for daylog-core on the index
-        env:
-          REF_NAME: ${{ github.ref_name }}
-        run: |
-          set -euo pipefail
-          VER="${REF_NAME#v}"
-          URL="https://index.crates.io/da/yl/daylog-core"
-          for i in $(seq 1 60); do
-            if curl -sf "$URL" | grep -q "\"vers\":\"${VER}\""; then
-              echo "daylog-core ${VER} visible on the sparse index"
-              exit 0
-            fi
-            echo "  waiting (attempt $i/60)…"
-            sleep 5
-          done
-          echo "daylog-core ${VER} never appeared on the sparse index" >&2
-          exit 1
 
       - name: cargo publish daylog-tui
         env:

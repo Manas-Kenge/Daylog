@@ -373,32 +373,18 @@ dependencies = [
 ]
 
 [[package]]
-name = "daylog-core"
-version = "0.1.7"
-dependencies = [
- "chrono",
- "dirs",
- "fancy-regex",
- "reqwest",
- "rusqlite",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "tokio",
- "url",
-]
-
-[[package]]
 name = "daylog-tui"
-version = "0.1.7"
+version = "0.2.0"
 dependencies = [
  "chrono",
  "crossterm",
- "daylog-core",
  "dirs",
+ "fancy-regex",
  "futures-util",
  "ratatui",
  "reqwest",
+ "rusqlite",
+ "serde",
  "serde_json",
  "sha2",
  "tachyonfx",
@@ -406,6 +392,7 @@ dependencies = [
  "throbber-widgets-tui",
  "tokio",
  "tokio-stream",
+ "url",
  "zip",
 ]
 

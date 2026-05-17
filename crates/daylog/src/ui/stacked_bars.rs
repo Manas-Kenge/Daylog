@@ -10,7 +10,7 @@ use ratatui::{
     widgets::Widget,
 };
 
-use crate::data::WeekDayBuckets;
+use crate::cache::WeekDayBuckets;
 use crate::theme::Theme;
 use crate::ui::week::category_root_style;
 

@@ -3,7 +3,7 @@
 use chrono::{DateTime, Local, Timelike, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::aggregate::CategorizedEvent;
+use crate::data::aggregate::CategorizedEvent;
 
 /// Below this, a contiguous run on a single root isn't "focus."
 pub const FOCUS_FLOOR_SECS: f64 = 120.0;

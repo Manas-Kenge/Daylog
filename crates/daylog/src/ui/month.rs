@@ -548,8 +548,8 @@ mod tests {
     #[test]
     fn month_renders_full_layout() {
         use crate::app::{App, Tab};
-        use crate::data::{TopAppRow, TopDomainRow};
-        use daylog_core::aggregate::CategorySummary;
+        use crate::cache::{TopAppRow, TopDomainRow};
+        use crate::data::aggregate::CategorySummary;
         use ratatui::backend::TestBackend;
         use ratatui::Terminal;
         use std::time::Instant;

@@ -1,6 +1,6 @@
 [package]
 name = "daylog-tui"
-version = "0.1.7"
+version = "0.2.0"
 edition = "2021"
 description = "Terminal screen-time and activity tracker for Linux"
 license = "MIT"
@@ -18,13 +18,13 @@ name = "daylog"
 path = "src/main.rs"
 
 [dependencies]
-daylog-core = { path = "../daylog-core", version = "0.1.7" }
 ratatui = "0.29"
 crossterm = { version = "0.28", features = ["event-stream"] }
 throbber-widgets-tui = "0.8"
 tachyonfx = "0.9"
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "signal", "time", "process"] }
 tokio-stream = "0.1"
+serde = { workspace = true }
 serde_json = { workspace = true }
 chrono = { workspace = true }
 thiserror = { workspace = true }
@@ -33,3 +33,6 @@ reqwest = { workspace = true, features = ["stream"] }
 sha2 = "0.10"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 futures-util = "0.3"
+rusqlite = { version = "0.31", features = ["bundled"] }
+fancy-regex = "0.13"
+url = "2"

@@ -13,12 +13,12 @@ use chrono::Local;
 use serde::Serialize;
 use serde_json::json;
 
-use crate::aggregate::{bucketize_hourly, parse_category_summaries};
-use crate::aw_client::{AwClient, Event};
-use crate::categories;
-use crate::datastore;
-use crate::time::TimeRange;
-use crate::transforms;
+use crate::data::aggregate::{bucketize_hourly, parse_category_summaries};
+use crate::data::aw_client::{AwClient, Event};
+use crate::data::categories;
+use crate::data::datastore;
+use crate::data::time::TimeRange;
+use crate::data::transforms;
 
 const PULSE_SECS: i64 = 5;
 const BUCKET_WINDOW: &str = "aw-watcher-window_";
@@ -229,7 +229,7 @@ mod tests {
 
     #[test]
     fn compute_hours_rounds_seconds_to_minutes_capped_at_60() {
-        use crate::aggregate::HourBucket;
+        use crate::data::aggregate::HourBucket;
         // Indirect: feed bucketize_hourly via a synthetic event aligned to
         // local-midnight + 8h, lasting 30 minutes — should land 30 in
         // hours[8] in local time.

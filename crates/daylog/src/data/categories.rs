@@ -1,6 +1,6 @@
 //! Category rules. Stored in aw-server's settings bucket under the key
 //! `classes`, matching the AW WebUI's convention. Matching is now done
-//! in-process by `crate::transforms::categorize` against `fancy_regex`
+//! in-process by `crate::data::transforms::categorize` against `fancy_regex`
 //! — this module just handles the rule shape, validation, and HTTP
 //! load/save round-trips.
 
@@ -10,7 +10,7 @@ use fancy_regex::Regex as FancyRegex;
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
-use crate::aw_client::{AwClient, AwError};
+use crate::data::aw_client::{AwClient, AwError};
 
 const SETTINGS_KEY: &str = "classes";
 

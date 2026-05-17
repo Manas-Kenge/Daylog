@@ -320,8 +320,8 @@ The `1`/`2`/`3` direct-jump is intentionally redundant with the numbered tab pre
 - Render entry: `crates/daylog/src/ui.rs`.
 - Per-tab renderers: `crates/daylog/src/ui/{overview, week, month}.rs`.
 - Hero widgets: `crates/daylog/src/ui/{timeline, stacked_bars}.rs` + `month::render_heatmap`.
-- KPI compute: `crates/daylog-core/src/kpi.rs`.
-- Shared aggregations: `crates/daylog-core/src/aggregate.rs`.
+- KPI compute: `crates/daylog/src/data/kpi.rs`.
+- Shared aggregations: `crates/daylog/src/data/aggregate.rs`.
 
 ## Decisions log
 

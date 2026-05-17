@@ -1,6 +1,6 @@
 //! Compact 1-line KPI strip. Width-driven: Wide/Narrow/Stacked drop slots progressively.
 
-use daylog_core::kpi::KpiSummary;
+use crate::data::kpi::KpiSummary;
 use ratatui::{
     layout::{Alignment, Rect},
     style::{Modifier, Style},
@@ -116,7 +116,7 @@ fn build_skeleton(theme: &Theme, layout: LayoutMode) -> Line<'static> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use daylog_core::kpi::{BaselineStats, BestWindow, KpiSummary, LongestStretch, PatternShift};
+    use crate::data::kpi::{BaselineStats, BestWindow, KpiSummary, LongestStretch, PatternShift};
     use ratatui::backend::TestBackend;
     use ratatui::Terminal;
 

@@ -12,13 +12,13 @@ use ratatui::{
 use throbber_widgets_tui::ThrobberState;
 
 use crate::app::App;
-use crate::data::{Cached, TopAppRow, TopDomainRow};
+use crate::cache::{Cached, TopAppRow, TopDomainRow};
 use crate::theme::{self, LayoutMode, Theme};
 use crate::ui::{
     format_duration, kpi_strip, render_divider, render_section_header, render_skeleton_body,
     timeline,
 };
-use daylog_core::aggregate::CategorySummary;
+use crate::data::aggregate::CategorySummary;
 
 /// BOLD UPPERCASE title inside the panel border, with optional in-flight `↻`.
 /// Leading/trailing spaces keep the title from touching border characters.
@@ -598,7 +598,7 @@ fn render_hourly_section(f: &mut Frame, area: Rect, app: &App) {
 mod tests {
     use super::*;
     use crate::app::App;
-    use daylog_core::aggregate::HourBucket;
+    use crate::data::aggregate::HourBucket;
     use ratatui::backend::TestBackend;
     use ratatui::Terminal;
     use std::time::Instant;

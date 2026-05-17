@@ -7,10 +7,10 @@
 use std::time::{Duration, Instant};
 
 use chrono::{Datelike, Local, NaiveDate, Weekday};
-use daylog_core::aggregate::{CategorizedEvent, CategorySummary, HourBucket};
-use daylog_core::kpi::KpiSummary;
-use daylog_core::queries::TrailingDayPayload;
-use daylog_core::time::TimeRange;
+use crate::data::aggregate::{CategorizedEvent, CategorySummary, HourBucket};
+use crate::data::kpi::KpiSummary;
+use crate::data::queries::TrailingDayPayload;
+use crate::data::time::TimeRange;
 use serde_json::Value;
 
 use crate::app::Tab;
@@ -429,8 +429,8 @@ pub fn dispatch_refetches(
         let tx = tx.clone();
         let range = range.clone();
         tokio::spawn(async move {
-            let client = daylog_core::aw_client::AwClient::new();
-            let result = daylog_core::queries::top_apps(&client, range)
+            let client = crate::data::aw_client::AwClient::new();
+            let result = crate::data::queries::top_apps(&client, range)
                 .await
                 .map(|raw| TopAppRow::parse_many(&raw))
                 .map_err(|e| e.to_string());
@@ -443,8 +443,8 @@ pub fn dispatch_refetches(
         let tx = tx.clone();
         let range = range.clone();
         tokio::spawn(async move {
-            let client = daylog_core::aw_client::AwClient::new();
-            let result = daylog_core::queries::hourly(&client, range)
+            let client = crate::data::aw_client::AwClient::new();
+            let result = crate::data::queries::hourly(&client, range)
                 .await
                 .map_err(|e| e.to_string());
             let _ = tx.send(FetchResult::Hourly(result));
@@ -456,8 +456,8 @@ pub fn dispatch_refetches(
         let tx = tx.clone();
         let range = range.clone();
         tokio::spawn(async move {
-            let client = daylog_core::aw_client::AwClient::new();
-            let result = daylog_core::queries::top_categories(&client, range)
+            let client = crate::data::aw_client::AwClient::new();
+            let result = crate::data::queries::top_categories(&client, range)
                 .await
                 .map_err(|e| e.to_string());
             let _ = tx.send(FetchResult::TopCategories(result));
@@ -469,7 +469,7 @@ pub fn dispatch_refetches(
         cache.trailing_7.mark_in_flight();
         let tx = tx.clone();
         tokio::spawn(async move {
-            let result = daylog_core::queries::trailing_days_past(7)
+            let result = crate::data::queries::trailing_days_past(7)
                 .await
                 .map_err(|e| e.to_string());
             let _ = tx.send(FetchResult::Trailing7(result));
@@ -487,8 +487,8 @@ pub fn dispatch_refetches(
             let range = range.clone();
             let trailing = trailing.clone();
             tokio::spawn(async move {
-                let client = daylog_core::aw_client::AwClient::new();
-                let today_events = match daylog_core::queries::categorized_events(
+                let client = crate::data::aw_client::AwClient::new();
+                let today_events = match crate::data::queries::categorized_events(
                     &client,
                     range.clone(),
                 )
@@ -500,7 +500,7 @@ pub fn dispatch_refetches(
                         return;
                     }
                 };
-                let today_afk = match daylog_core::queries::afk_summary(
+                let today_afk = match crate::data::queries::afk_summary(
                     &client, range, false,
                 )
                 .await
@@ -511,7 +511,7 @@ pub fn dispatch_refetches(
                         return;
                     }
                 };
-                let summary = daylog_core::queries::kpi_from_parts(
+                let summary = crate::data::queries::kpi_from_parts(
                     &today_events,
                     &today_afk,
                     &trailing,
@@ -526,8 +526,8 @@ pub fn dispatch_refetches(
         let tx = tx.clone();
         let range = range.clone();
         tokio::spawn(async move {
-            let client = daylog_core::aw_client::AwClient::new();
-            let result = daylog_core::queries::categorized_events(&client, range)
+            let client = crate::data::aw_client::AwClient::new();
+            let result = crate::data::queries::categorized_events(&client, range)
                 .await
                 .map_err(|e| e.to_string());
             let _ = tx.send(FetchResult::TimelineEvents(result));
@@ -539,8 +539,8 @@ pub fn dispatch_refetches(
         let tx = tx.clone();
         let range = range.clone();
         tokio::spawn(async move {
-            let client = daylog_core::aw_client::AwClient::new();
-            let result = daylog_core::queries::top_domains(&client, range)
+            let client = crate::data::aw_client::AwClient::new();
+            let result = crate::data::queries::top_domains(&client, range)
                 .await
                 .map(|raw| TopDomainRow::parse_many(&raw))
                 .map_err(|e| e.to_string());
@@ -558,9 +558,9 @@ pub fn dispatch_refetches(
             cache.week_top_apps.mark_in_flight();
             let tx = tx.clone();
             tokio::spawn(async move {
-                let client = daylog_core::aw_client::AwClient::new();
+                let client = crate::data::aw_client::AwClient::new();
                 let result =
-                    daylog_core::queries::top_apps(&client, TimeRange::LastNDays { days: 7 })
+                    crate::data::queries::top_apps(&client, TimeRange::LastNDays { days: 7 })
                         .await
                         .map(|raw| TopAppRow::parse_many(&raw))
                         .map_err(|e| e.to_string());
@@ -572,9 +572,9 @@ pub fn dispatch_refetches(
             cache.week_top_categories.mark_in_flight();
             let tx = tx.clone();
             tokio::spawn(async move {
-                let client = daylog_core::aw_client::AwClient::new();
+                let client = crate::data::aw_client::AwClient::new();
                 let result =
-                    daylog_core::queries::top_categories(&client, TimeRange::LastNDays { days: 7 })
+                    crate::data::queries::top_categories(&client, TimeRange::LastNDays { days: 7 })
                         .await
                         .map_err(|e| e.to_string());
                 let _ = tx.send(FetchResult::WeekTopCategories(result));
@@ -585,9 +585,9 @@ pub fn dispatch_refetches(
             cache.week_top_domains.mark_in_flight();
             let tx = tx.clone();
             tokio::spawn(async move {
-                let client = daylog_core::aw_client::AwClient::new();
+                let client = crate::data::aw_client::AwClient::new();
                 let result =
-                    daylog_core::queries::top_domains(&client, TimeRange::LastNDays { days: 7 })
+                    crate::data::queries::top_domains(&client, TimeRange::LastNDays { days: 7 })
                         .await
                         .map(|raw| TopDomainRow::parse_many(&raw))
                         .map_err(|e| e.to_string());
@@ -607,7 +607,7 @@ pub fn dispatch_refetches(
         tokio::spawn(async move {
             // 365 concurrent per-day fetches under the hood. First paint
             // is the dominant cost; staleness is 5min thereafter.
-            let result = daylog_core::queries::trailing_days_past(365)
+            let result = crate::data::queries::trailing_days_past(365)
                 .await
                 .map(|days| {
                     let mut out = vec![0.0_f64; 365];
@@ -628,8 +628,8 @@ pub fn dispatch_refetches(
         cache.month_top_apps.mark_in_flight();
         let tx = tx.clone();
         tokio::spawn(async move {
-            let client = daylog_core::aw_client::AwClient::new();
-            let result = daylog_core::queries::top_apps(&client, TimeRange::LastNDays { days: 30 })
+            let client = crate::data::aw_client::AwClient::new();
+            let result = crate::data::queries::top_apps(&client, TimeRange::LastNDays { days: 30 })
                 .await
                 .map(|raw| TopAppRow::parse_many(&raw))
                 .map_err(|e| e.to_string());
@@ -641,9 +641,9 @@ pub fn dispatch_refetches(
         cache.month_top_categories.mark_in_flight();
         let tx = tx.clone();
         tokio::spawn(async move {
-            let client = daylog_core::aw_client::AwClient::new();
+            let client = crate::data::aw_client::AwClient::new();
             let result =
-                daylog_core::queries::top_categories(&client, TimeRange::LastNDays { days: 30 })
+                crate::data::queries::top_categories(&client, TimeRange::LastNDays { days: 30 })
                     .await
                     .map_err(|e| e.to_string());
             let _ = tx.send(FetchResult::MonthTopCategories(result));
@@ -654,9 +654,9 @@ pub fn dispatch_refetches(
         cache.month_top_domains.mark_in_flight();
         let tx = tx.clone();
         tokio::spawn(async move {
-            let client = daylog_core::aw_client::AwClient::new();
+            let client = crate::data::aw_client::AwClient::new();
             let result =
-                daylog_core::queries::top_domains(&client, TimeRange::LastNDays { days: 30 })
+                crate::data::queries::top_domains(&client, TimeRange::LastNDays { days: 30 })
                     .await
                     .map(|raw| TopDomainRow::parse_many(&raw))
                     .map_err(|e| e.to_string());
@@ -677,7 +677,7 @@ pub fn iso_monday(today: NaiveDate) -> NaiveDate {
 pub fn build_week_buckets(
     today: NaiveDate,
     today_events: &[CategorizedEvent],
-    past: &[daylog_core::queries::TrailingDayPayload],
+    past: &[crate::data::queries::TrailingDayPayload],
 ) -> Vec<WeekDayBuckets> {
     let monday = iso_monday(today);
     (0..7)
@@ -977,7 +977,7 @@ mod tests {
             .map(|n| TrailingDayPayload {
                 days_ago: n,
                 events: Vec::new(),
-                afk: daylog_core::aggregate::AfkSummary {
+                afk: crate::data::aggregate::AfkSummary {
                     active_seconds: 100.0 * n as f64,
                     afk_seconds: 0.0,
                     active_ratio: 1.0,
@@ -1068,7 +1068,7 @@ mod tests {
     fn data_cache_apply_routes_kpi_result() {
         let mut dc = DataCache::new();
         let now = Instant::now();
-        let summary = daylog_core::kpi::KpiSummary {
+        let summary = crate::data::kpi::KpiSummary {
             active_secs: 1234.0,
             afk_secs: 100.0,
             active_ratio: 1234.0 / 1334.0,
@@ -1076,19 +1076,19 @@ mod tests {
             best_window: None,
             pattern_shift: None,
             focus_by_hour: [0.0; 24],
-            active_baseline: daylog_core::kpi::BaselineStats {
+            active_baseline: crate::data::kpi::BaselineStats {
                 effective_days: 0,
                 median: 0.0,
                 mean: 0.0,
                 stdev: 0.0,
             },
-            longest_baseline: daylog_core::kpi::BaselineStats {
+            longest_baseline: crate::data::kpi::BaselineStats {
                 effective_days: 0,
                 median: 0.0,
                 mean: 0.0,
                 stdev: 0.0,
             },
-            best_window_baseline: daylog_core::kpi::BaselineStats {
+            best_window_baseline: crate::data::kpi::BaselineStats {
                 effective_days: 0,
                 median: 0.0,
                 mean: 0.0,
@@ -1169,20 +1169,20 @@ mod tests {
         // "Today" is Wed May 6; Mon-Tue are past, Wed is today, Thu-Sun are future.
         let today = NaiveDate::from_ymd_opt(2026, 5, 6).unwrap();
         let past = vec![
-            daylog_core::queries::TrailingDayPayload {
+            crate::data::queries::TrailingDayPayload {
                 days_ago: 1,
                 events: vec![ev(&["Work"], 7200.0)],
-                afk: daylog_core::aggregate::AfkSummary {
+                afk: crate::data::aggregate::AfkSummary {
                     active_seconds: 7200.0,
                     afk_seconds: 0.0,
                     active_ratio: 1.0,
                     intervals: Vec::new(),
                 },
             },
-            daylog_core::queries::TrailingDayPayload {
+            crate::data::queries::TrailingDayPayload {
                 days_ago: 2,
                 events: vec![ev(&["Browsing"], 3600.0)],
-                afk: daylog_core::aggregate::AfkSummary {
+                afk: crate::data::aggregate::AfkSummary {
                     active_seconds: 3600.0,
                     afk_seconds: 0.0,
                     active_ratio: 1.0,

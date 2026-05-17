@@ -140,10 +140,7 @@ cargo build --release -p daylog-tui
 ./target/release/daylog
 ```
 
-The two crates in this workspace are:
-
-- `daylog-core` — pure-Rust data layer (reads aw-server-rust's SQLite directly, plus queries, aggregations, KPI math).
-- `daylog-tui` (binary `daylog`) — the ratatui dashboard plus the first-launch tracker installer.
+Single crate, library + binary. `daylog-tui` on crates.io produces a `daylog` executable, with the data layer in `daylog_tui::data` and the TUI on top.
 
 ## License
 

@@ -9,7 +9,7 @@ Daylog downloads upstream binaries and a GNOME Shell extension on first launch. 
 - **Project:** [ActivityWatch / aw-server-rust](https://github.com/ActivityWatch/aw-server-rust)
 - **Pinned version:** `v0.13.2`
 - **License:** MPL-2.0 — <https://mozilla.org/MPL/2.0/>
-- **Role in Daylog:** the local HTTP server on `:5600` that stores and queries activity events. Daylog reads from it via the `daylog-core::aw_client` module and never modifies it.
+- **Role in Daylog:** the local HTTP server on `:5600` that stores and queries activity events. Daylog reads from it via the `daylog_tui::data::aw_client` module and never modifies it.
 
 ## `awatcher` (`aw-awatcher`) — Mozilla Public License 2.0
 

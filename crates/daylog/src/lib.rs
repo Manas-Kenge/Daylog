@@ -1,10 +1,11 @@
 //! Daylog — terminal screen time tracker for Linux. Ratatui surface
-//! backed by `daylog-core`; first launch downloads the upstream tracker
-//! (see `tracking/`).
+//! over a pure-Rust data layer (`data::`); first launch downloads the
+//! upstream tracker (see `tracking/`).
 
 use std::io;
 
 mod app;
+pub mod cache;
 pub mod data;
 pub mod theme;
 pub mod tracking;
@@ -125,7 +126,7 @@ fn run_json_today() -> i32 {
             return 1;
         }
     };
-    let snapshot = rt.block_on(daylog_core::snapshot::today());
+    let snapshot = rt.block_on(crate::data::snapshot::today());
     match serde_json::to_string(&snapshot) {
         Ok(s) => {
             println!("{s}");

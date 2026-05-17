@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 const DEFAULT_BASE_URL: &str = "http://127.0.0.1:5600";
 
 /// One pooled, process-wide HTTP client. Since analytical queries now
-/// go through `crate::datastore` (SQLite reads), the only HTTP traffic
+/// go through `crate::data::datastore` (SQLite reads), the only HTTP traffic
 /// is metadata: `/info`, `/buckets`, and settings reads/writes for
 /// category rules. All of those finish in <100ms, so a tight 5s timeout
 /// is correct — anything slower is genuinely a hung server, not the

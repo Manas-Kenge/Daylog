@@ -10,7 +10,7 @@ use ratatui::{
 };
 
 use crate::app::App;
-use crate::data::{WeekDayBuckets, WEEK_ROOT_ORDER};
+use crate::cache::{WeekDayBuckets, WEEK_ROOT_ORDER};
 use crate::theme::Theme;
 use crate::ui::stacked_bars::StackedBars;
 use crate::ui::{
@@ -490,8 +490,8 @@ mod tests {
 
     #[test]
     fn week_renders_full_layout() {
-        use crate::data::{TopAppRow, TopDomainRow};
-        use daylog_core::aggregate::CategorySummary;
+        use crate::cache::{TopAppRow, TopDomainRow};
+        use crate::data::aggregate::CategorySummary;
 
         let theme = Theme::from_env_pair(Some("truecolor"), None);
         let mut app = App::with_theme(theme);

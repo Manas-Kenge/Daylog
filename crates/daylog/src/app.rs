@@ -5,7 +5,7 @@ use std::io;
 use std::time::{Duration, Instant};
 
 use crossterm::event::{Event, EventStream, KeyCode, KeyEventKind, KeyModifiers};
-use daylog_core::time::TimeRange;
+use crate::data::time::TimeRange;
 use ratatui::style::Color;
 use ratatui::Terminal;
 use tachyonfx::fx::Direction;
@@ -15,7 +15,7 @@ use tokio::sync::mpsc;
 use tokio::time::interval;
 use tokio_stream::StreamExt;
 
-use crate::data::{dispatch_refetches, Cached, DataCache, FetchResult, REFRESH_LIVE};
+use crate::cache::{dispatch_refetches, Cached, DataCache, FetchResult, REFRESH_LIVE};
 use crate::theme::Theme;
 use crate::ui::Backend;
 

@@ -19,8 +19,8 @@ use ratatui::{
 };
 use tokio_stream::StreamExt;
 
-use daylog_core::aw_client::AwClient;
-use daylog_core::datastore;
+use crate::data::aw_client::AwClient;
+use crate::data::datastore;
 
 use crate::theme::Theme;
 use crate::tracking::{self, InstallError, LifecycleError};

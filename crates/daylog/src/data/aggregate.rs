@@ -8,7 +8,7 @@ use chrono::{DateTime, Local, Timelike, Utc};
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::aw_client::Event;
+use crate::data::aw_client::Event;
 
 #[derive(Debug, Serialize, PartialEq)]
 pub struct HourBucket {
