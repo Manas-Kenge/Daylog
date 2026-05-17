@@ -97,6 +97,27 @@ mod tests {
         );
     }
 
+    // Regression: aw-awatcher exits cleanly (code 0) when it can't reach the
+    // server on first connect — common at boot since systemd's `After=` only
+    // waits for the server's ExecStart, not for `:5600` to be bound.
+    // `Restart=on-failure` ignores code-0 exits, so a single boot race used
+    // to silently disable tracking until the next reboot. Both units must
+    // use `Restart=always` to match upstream aw-qt's respawn behavior.
+    #[test]
+    fn both_units_restart_always() {
+        for (name, tmpl) in [("server", SERVER_TEMPLATE), ("watcher", WATCHER_TEMPLATE)] {
+            let rendered = render(tmpl);
+            assert!(
+                rendered.contains("Restart=always"),
+                "{name} unit must use Restart=always to survive clean exits:\n{rendered}"
+            );
+            assert!(
+                !rendered.contains("Restart=on-failure"),
+                "{name} unit still has Restart=on-failure:\n{rendered}"
+            );
+        }
+    }
+
     #[test]
     fn supervisor_script_has_no_testing_flag() {
         // The supervisor script substitutes {BIN_DIR} once at the top and

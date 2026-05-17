@@ -2,12 +2,17 @@
 Description=Daylog activity tracking server (aw-server-rust)
 Documentation=https://github.com/ActivityWatch/aw-server-rust
 After=graphical-session.target
+# Mirror the watcher's restart posture: always restart, no burst cap. The
+# server hasn't been observed exiting cleanly today, but matching policies
+# means future graceful-shutdown paths (signal handlers, internal asserts)
+# can't silently kill tracking the same way the watcher race did.
+StartLimitBurst=0
 
 [Service]
 Type=simple
 ExecStart={BIN_DIR}/aw-server-rust --port 5600
-Restart=on-failure
-RestartSec=3
+Restart=always
+RestartSec=5
 
 [Install]
 WantedBy=default.target

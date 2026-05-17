@@ -1,6 +1,6 @@
 [package]
 name = "daylog-tui"
-version = "0.1.5"
+version = "0.1.6"
 edition = "2021"
 description = "Terminal screen-time and activity tracker for Linux"
 license = "MIT"
@@ -18,7 +18,7 @@ name = "daylog"
 path = "src/main.rs"
 
 [dependencies]
-daylog-core = { path = "../daylog-core", version = "0.1.5" }
+daylog-core = { path = "../daylog-core", version = "0.1.6" }
 ratatui = "0.29"
 crossterm = { version = "0.28", features = ["event-stream"] }
 throbber-widgets-tui = "0.8"

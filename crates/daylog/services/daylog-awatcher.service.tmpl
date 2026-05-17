@@ -3,12 +3,18 @@ Description=Daylog activity watcher (aw-awatcher)
 Documentation=https://github.com/2e3s/awatcher
 After=daylog-aw-server.service
 Requires=daylog-aw-server.service
+# aw-awatcher exits cleanly (code 0) when the server isn't yet listening on
+# :5600 — common at login, since `After=` only waits for the server's
+# ExecStart to fire, not for it to bind the socket. on-failure won't catch a
+# code-0 exit, so we use `always`. StartLimitBurst=0 disables systemd's
+# "give up after N rapid restarts" cap, matching the upstream aw-qt model.
+StartLimitBurst=0
 
 [Service]
 Type=simple
 ExecStart={BIN_DIR}/aw-awatcher
-Restart=on-failure
-RestartSec=3
+Restart=always
+RestartSec=5
 
 [Install]
 WantedBy=default.target
