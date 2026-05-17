@@ -52,6 +52,73 @@ daylog --help                # full usage
 daylog --version             # print version
 ```
 
+## Status bar integration
+
+`daylog --json today` prints today's KPIs as a single JSON object to stdout. Safe to poll on a short interval; exits 0 even when there's no data yet.
+
+```json
+{
+  "as_of": "2026-05-17T11:45:00+05:30",
+  "today": {
+    "total_active": "PT4H32M",
+    "top_app":      { "name": "kitty", "duration": "PT2H10M" },
+    "top_category": { "name": "Work > Programming", "duration": "PT3H5M" },
+    "hours":        [0, 0, 0, 0, 0, 0, 0, 0, 12, 47, 60, 60, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  }
+}
+```
+
+`as_of` is RFC 3339 with local timezone. `total_active` is the sum of non-AFK time today, as an ISO-8601 duration. `top_app` and `top_category` are the highest-duration entries; both are `null` when there's no activity yet. `hours` is 24 ints — minutes of active time per hour, indexed `hours[0]` = 00:00–00:59 local time.
+
+### Quickshell
+
+```qml
+import Quickshell
+import Quickshell.Io
+import QtQuick
+
+Scope {
+  property string totalActive: "—"
+
+  Process {
+    id: poller
+    command: ["daylog", "--json", "today"]
+    running: true
+    stdout: SplitParser {
+      onRead: data => {
+        try { totalActive = JSON.parse(data).today.total_active } catch (e) {}
+      }
+    }
+  }
+
+  Timer {
+    interval: 30000; repeat: true; running: true
+    onTriggered: poller.running = true
+  }
+
+  Text { text: totalActive }
+}
+```
+
+See the [`Process` docs](https://quickshell.org/docs/v0.1.0/types/Quickshell.Io/Process/) for the API.
+
+### waybar
+
+```json
+"custom/daylog": {
+  "exec": "daylog --json today | jq -r '.today.total_active'",
+  "interval": 30
+}
+```
+
+### i3blocks
+
+```
+[daylog]
+command=daylog --json today | jq -r '.today.total_active'
+interval=30
+```
+
 ## Configuration
 
 Custom category rules live at `~/.config/daylog/categories.json`. Daylog ships with sensible defaults — edit only if you want different buckets.

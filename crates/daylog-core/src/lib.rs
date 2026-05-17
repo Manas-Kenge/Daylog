@@ -8,5 +8,6 @@ pub mod datastore;
 pub mod kpi;
 pub mod paths;
 pub mod queries;
+pub mod snapshot;
 pub mod time;
 pub mod transforms;

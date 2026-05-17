@@ -22,6 +22,10 @@ enum Command {
     UninstallTracking,
     Help,
     Version,
+    /// Emit today's KPIs to stdout as JSON (`--json today`). For status
+    /// bars (Quickshell, waybar, i3blocks) that poll on a short
+    /// interval; must never touch the wizard or open a TTY.
+    JsonToday,
 }
 
 fn parse_args(args: &[String]) -> Result<Command, String> {
@@ -31,6 +35,16 @@ fn parse_args(args: &[String]) -> Result<Command, String> {
         Some("--uninstall-tracking") => Ok(Command::UninstallTracking),
         Some("--help") | Some("-h") => Ok(Command::Help),
         Some("--version") | Some("-V") => Ok(Command::Version),
+        Some("--json") => match args.get(1).map(String::as_str) {
+            None => Err("--json requires a subcommand (e.g. 'today')".into()),
+            Some("today") => {
+                if let Some(extra) = args.get(2) {
+                    return Err(format!("unexpected argument after --json today: {extra}"));
+                }
+                Ok(Command::JsonToday)
+            }
+            Some(other) => Err(format!("unknown --json mode: {other}")),
+        },
         Some(other) => Err(format!("unknown argument: {other}")),
     }
 }
@@ -45,6 +59,9 @@ Usage:
   daylog --uninstall-tracking  Stop and remove the bundled tracker. Your
                                recorded data at ~/.local/share/activitywatch/
                                is preserved.
+  daylog --json today          Print today's KPIs as JSON to stdout. For
+                               status bars (Quickshell, waybar, i3blocks).
+                               Exits 0 even with no data; safe to poll.
   daylog --help                Show this help.
   daylog --version             Print version and exit.
 ";
@@ -68,6 +85,7 @@ pub fn run(args: &[String]) -> i32 {
             println!("daylog {}", env!("CARGO_PKG_VERSION"));
             return 0;
         }
+        Command::JsonToday => return run_json_today(),
         Command::UninstallTracking => return run_uninstall(),
         Command::Setup | Command::Dashboard => {}
     }
@@ -94,6 +112,27 @@ pub fn run(args: &[String]) -> i32 {
         Err(e) => {
             // Terminal already restored by restore_terminal / panic handler.
             eprintln!("daylog: {e}");
+            1
+        }
+    }
+}
+
+fn run_json_today() -> i32 {
+    let rt = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
+        Ok(rt) => rt,
+        Err(e) => {
+            eprintln!("daylog: failed to start runtime: {e}");
+            return 1;
+        }
+    };
+    let snapshot = rt.block_on(daylog_core::snapshot::today());
+    match serde_json::to_string(&snapshot) {
+        Ok(s) => {
+            println!("{s}");
+            0
+        }
+        Err(e) => {
+            eprintln!("daylog: failed to serialize snapshot: {e}");
             1
         }
     }

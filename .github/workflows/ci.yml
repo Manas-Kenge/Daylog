@@ -37,3 +37,6 @@ jobs:
 
       - name: smoke — daylog --version
         run: target/release/daylog --version
+
+      - name: smoke — daylog --json today
+        run: target/release/daylog --json today | python3 -m json.tool > /dev/null
