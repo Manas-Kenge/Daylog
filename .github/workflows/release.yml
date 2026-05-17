@@ -53,33 +53,25 @@ jobs:
           echo "tarball=${NAME}.tar.gz" >> "$GITHUB_OUTPUT"
           ls -lh dist/
 
-      # cargo-deb + cargo-generate-rpm read [package.metadata.*] in
-      # crates/daylog/Cargo.toml. Prebuilt binaries via taiki-e/install-action
-      # keep this step at ~10s instead of a 2-min cargo-install rebuild.
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-deb,cargo-generate-rpm
-
-      - name: Build .deb
-        run: cargo deb -p daylog-tui --no-build --no-strip
-
-      - name: Build .rpm
-        run: cargo generate-rpm -p crates/daylog
-
-      - name: Collect Linux packages into dist/
+      # Match the lazygit / cliamp pattern: ship a portable tarball plus a
+      # checksums file, let distro maintainers package downstream (Arch via
+      # AUR PKGBUILD, Nixpkgs, Fedora COPR, etc). We previously tried building
+      # .deb / .rpm in-CI via taiki-e/install-action + cargo-deb, but the
+      # prebuilt cargo-deb is linked against glibc 2.39 and ubuntu-22.04 has
+      # glibc 2.35 — the step failed on its first real run (v0.1.6).
+      - name: Generate checksums
         run: |
           set -euo pipefail
-          cp target/debian/*.deb dist/
-          cp target/generate-rpm/*.rpm dist/
-          ls -lh dist/
+          cd dist
+          sha256sum *.tar.gz > checksums.txt
+          cat checksums.txt
 
       - uses: actions/upload-artifact@v4
         with:
           name: release-artifacts
           path: |
             dist/*.tar.gz
-            dist/*.deb
-            dist/*.rpm
+            dist/checksums.txt
           if-no-files-found: error
 
   # ---------------------------------------------------------------------------
@@ -157,7 +149,6 @@ jobs:
         with:
           files: |
             dist/*.tar.gz
-            dist/*.deb
-            dist/*.rpm
+            dist/checksums.txt
           fail_on_unmatched_files: true
           generate_release_notes: true
