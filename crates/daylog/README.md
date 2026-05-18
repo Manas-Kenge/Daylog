@@ -3,7 +3,7 @@
 Terminal screen-time and activity tracker for Linux.
 
 ```
-cargo install daylog
+cargo install daylog-tui --locked
 daylog
 ```
 
@@ -20,7 +20,7 @@ Daylog runs as a single TUI. On first launch it sets up a local activity tracker
 ## Quick start
 
 ```
-cargo install daylog
+cargo install daylog-tui --locked
 daylog
 ```
 
@@ -31,9 +31,12 @@ On first launch, daylog will prompt to install a local tracker (~30 MB, all user
 ```
 daylog --setup               # Re-run the tracker installer
 daylog --uninstall-tracking  # Remove the tracker (keeps your recorded data)
+daylog --json today          # Print today's KPIs as JSON (for status bars)
 daylog --help                # Full usage
 daylog --version             # Print version
 ```
+
+The top-level [README](https://github.com/Manas-Kenge/Daylog#status-bar-integration) has recipes for piping `--json today` into Quickshell, waybar, and i3blocks.
 
 ## Configuration
 

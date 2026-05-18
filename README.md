@@ -129,7 +129,7 @@ x86_64 Linux. Tested on Ubuntu, Debian, Fedora, Arch (incl. Omarchy / EndeavourO
 
 Display servers: X11, GNOME-Wayland (auto-installs the `focused-window-dbus` shell extension; logout/login once after install), KDE-Wayland, and wlroots compositors (Hyprland, Sway, river, …).
 
-aarch64 and non-Linux platforms are not supported in v0.1.
+aarch64 and non-Linux platforms aren't supported in the current release.
 
 ## Build from source
 
