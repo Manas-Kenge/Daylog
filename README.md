@@ -9,17 +9,19 @@ cargo install daylog-tui --locked
 daylog
 ```
 
-Daylog runs entirely on your machine. No cloud, no sign-in, no telemetry.
+## What it does
 
-## Features
+Daylog tells you where your time on this computer goes — which apps, which categories, which hours of the day. Today, this week, this month. It reads a local activity log and shows the breakdown in your terminal. No cloud, no account, no GUI to install.
 
-- 24-hour timeline of every app + window you focused
-- Top apps, top categories, and top web domains for today, this week, and this month
-- KPI strip: today's active time, longest stretch, best window, pattern shift vs. typical day-of-week
-- 7-day, weekly, and monthly rollups
-- Category rules you can edit (`~/.config/daylog/categories.json`)
+I built it because every screen-time tool I tried either wanted me to send data to a server, or didn't run on a tiling window manager.
 
 ## Install
+
+### Arch Linux (AUR)
+
+```bash
+yay -S daylog-bin       # or: paru -S daylog-bin
+```
 
 ### Prebuilt binary (no Rust toolchain needed)
 
@@ -69,38 +71,6 @@ daylog --version             # print version
 ```
 
 `as_of` is RFC 3339 with local timezone. `total_active` is the sum of non-AFK time today, as an ISO-8601 duration. `top_app` and `top_category` are the highest-duration entries; both are `null` when there's no activity yet. `hours` is 24 ints — minutes of active time per hour, indexed `hours[0]` = 00:00–00:59 local time.
-
-### Quickshell
-
-```qml
-import Quickshell
-import Quickshell.Io
-import QtQuick
-
-Scope {
-  property string totalActive: "—"
-
-  Process {
-    id: poller
-    command: ["daylog", "--json", "today"]
-    running: true
-    stdout: SplitParser {
-      onRead: data => {
-        try { totalActive = JSON.parse(data).today.total_active } catch (e) {}
-      }
-    }
-  }
-
-  Timer {
-    interval: 30000; repeat: true; running: true
-    onTriggered: poller.running = true
-  }
-
-  Text { text: totalActive }
-}
-```
-
-See the [`Process` docs](https://quickshell.org/docs/v0.1.0/types/Quickshell.Io/Process/) for the API.
 
 ### waybar
 
