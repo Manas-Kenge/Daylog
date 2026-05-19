@@ -4,25 +4,23 @@ on:
   push:
     tags:
       - "v*.*.*"
-  # Allow manual triggering of the build path without minting a release.
   workflow_dispatch:
 
 jobs:
-  # ---------------------------------------------------------------------------
-  # Build a stripped-and-tarred Linux x86_64 binary. Cross-platform builds
-  # are out of scope for v0.1 — the wizard's tracker installer is Linux-only.
-  # ---------------------------------------------------------------------------
+  # Linux-only by design: the wizard's tracker installer assumes systemd/XDG.
   build:
     runs-on: ubuntu-22.04
     timeout-minutes: 20
     outputs:
       tarball: ${{ steps.pack.outputs.tarball }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          toolchain: stable
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: .
 
@@ -47,18 +45,11 @@ jobs:
           STABLE="daylog-x86_64-unknown-linux-gnu"
           mkdir -p dist
           tar -czf "dist/${NAME}.tar.gz" -C target/release daylog
-          # Stable-named copy so README's releases/latest/download/<name> URL
-          # keeps resolving across versions.
+          # Stable-named copy keeps releases/latest/download/<name> resolving.
           cp "dist/${NAME}.tar.gz" "dist/${STABLE}.tar.gz"
           echo "tarball=${NAME}.tar.gz" >> "$GITHUB_OUTPUT"
           ls -lh dist/
 
-      # Match the lazygit / cliamp pattern: ship a portable tarball plus a
-      # checksums file, let distro maintainers package downstream (Arch via
-      # AUR PKGBUILD, Nixpkgs, Fedora COPR, etc). We previously tried building
-      # .deb / .rpm in-CI via taiki-e/install-action + cargo-deb, but the
-      # prebuilt cargo-deb is linked against glibc 2.39 and ubuntu-22.04 has
-      # glibc 2.35 — the step failed on its first real run (v0.1.6).
       - name: Generate checksums
         run: |
           set -euo pipefail
@@ -66,7 +57,7 @@ jobs:
           sha256sum *.tar.gz > checksums.txt
           cat checksums.txt
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-artifacts
           path: |
@@ -74,21 +65,20 @@ jobs:
             dist/checksums.txt
           if-no-files-found: error
 
-  # ---------------------------------------------------------------------------
-  # Publish to crates.io. Triggers on tag push only. Single crate since
-  # v0.2.0 — daylog-core was collapsed into daylog-tui::data. Yank ≠ delete.
-  # ---------------------------------------------------------------------------
   publish:
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-22.04
     needs: build
     timeout-minutes: 15
+    environment: crates-io
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          toolchain: stable
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: .
 
@@ -97,30 +87,25 @@ jobs:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: cargo publish -p daylog-tui --locked
 
-  # ---------------------------------------------------------------------------
-  # Cut the GitHub Release. Tag push only. Attaches the tarball produced by
-  # `build`. Gated on `publish` so a crates.io failure pulls the GitHub
-  # Release with it (no half-published versions).
-  # ---------------------------------------------------------------------------
+  # Gated on `publish` so a crates.io failure aborts the GitHub Release too —
+  # no half-published versions where the tarball ships but the crate doesn't.
   release:
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-22.04
     needs: [build, publish]
     timeout-minutes: 5
-    # contents: write is required by softprops/action-gh-release to create
-    # the release AND by generate_release_notes to query the compare API.
     permissions:
-      contents: write
+      contents: write  # softprops/action-gh-release + generate_release_notes need it
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: release-artifacts
           path: dist/
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           files: |
             dist/*.tar.gz
