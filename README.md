@@ -2,7 +2,7 @@
 
 Terminal screen-time tracker for Linux.
 
-<!-- TODO: asciinema cast -->
+![Daylog demo](assets/daylog.gif)
 
 ```bash
 cargo install daylog-tui --locked
