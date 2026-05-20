@@ -6,12 +6,6 @@ use serde::{Deserialize, Serialize};
 
 const DEFAULT_BASE_URL: &str = "http://127.0.0.1:5600";
 
-/// One pooled, process-wide HTTP client. Since analytical queries now
-/// go through `crate::data::datastore` (SQLite reads), the only HTTP traffic
-/// is metadata: `/info`, `/buckets`, and settings reads/writes for
-/// category rules. All of those finish in <100ms, so a tight 5s timeout
-/// is correct — anything slower is genuinely a hung server, not the
-/// flood-heavy AQL burst we used to wait through.
 fn shared_http() -> &'static reqwest::Client {
     static HTTP: OnceLock<reqwest::Client> = OnceLock::new();
     HTTP.get_or_init(|| {
@@ -120,10 +114,7 @@ impl AwClient {
         self.get_json("/api/0/info").await
     }
 
-    /// Read a value from aw-server's settings store. Used as the canonical
-    /// home for category rules (`classes`), matching the AW WebUI.
-    /// Returns `Ok(None)` for 404 (key absent) so callers can seed defaults
-    /// without conflating "missing" with "transport error".
+    /// 404 / null both map to `Ok(None)`.
     pub async fn get_setting<T: for<'de> Deserialize<'de>>(
         &self,
         key: &str,

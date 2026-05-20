@@ -57,7 +57,6 @@ mod tests {
     fn today_is_24_hours() {
         let (start, end) = TimeRange::Today.resolve();
         let span = end - start;
-        // 23..=25 hours to allow DST.
         assert!(span >= Duration::hours(23) && span <= Duration::hours(25));
     }
 

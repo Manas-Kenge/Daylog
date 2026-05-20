@@ -1,5 +1,3 @@
-//! Stable panel shapes so first-load skeletons don't reflow when data lands.
-
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
@@ -20,8 +18,6 @@ use crate::ui::{
 };
 use crate::data::aggregate::CategorySummary;
 
-/// BOLD UPPERCASE title inside the panel border, with optional in-flight `↻`.
-/// Leading/trailing spaces keep the title from touching border characters.
 pub(super) fn panel_title(theme: &Theme, base: &str, in_flight: bool) -> Line<'static> {
     let title_style = Style::default().fg(theme.fg).add_modifier(Modifier::BOLD);
     let body = format!(" {} ", base.trim().to_uppercase());
@@ -35,7 +31,6 @@ pub(super) fn panel_title(theme: &Theme, base: &str, in_flight: bool) -> Line<'s
     }
 }
 
-/// Bordered panel: dim rounded border, 1-col h-padding, 1-row top inset, BOLD title.
 pub(super) fn panel_block(theme: &Theme, title: &str, in_flight: bool) -> Block<'static> {
     Block::default()
         .borders(Borders::ALL)
@@ -48,18 +43,17 @@ pub(super) fn panel_block(theme: &Theme, title: &str, in_flight: bool) -> Block<
 pub fn render(f: &mut Frame, area: Rect, app: &App) {
     let layout_mode = Theme::layout_mode(area.width);
 
-    // Borderless 4-band rhythm per DESIGN.md: snapshot → hero → rollups → hourly.
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(2),  // snapshot strip
-            Constraint::Length(1),  // gap before hero
-            Constraint::Length(5),  // today timeline: title row + gap + barcode + ruler
-            Constraint::Length(1),  // divider
-            Constraint::Length(9),  // bordered rollups: 5 rows + header + borders
-            Constraint::Length(1),  // divider
-            Constraint::Length(10), // hourly: header + margin + chart + axis (taller so the 5-band spectrum reads as distinct colour bands instead of a thin smear)
-            Constraint::Min(0),     // flex blank — absorbs slack on tall terminals, collapses to 0 on the 24-row floor
+            Constraint::Length(2),
+            Constraint::Length(1),
+            Constraint::Length(5),
+            Constraint::Length(1),
+            Constraint::Length(9),
+            Constraint::Length(1),
+            Constraint::Length(10),
+            Constraint::Min(0),
         ])
         .split(area);
 
@@ -125,10 +119,6 @@ fn render_timeline_section(f: &mut Frame, area: Rect, app: &App) {
     );
 }
 
-/// Inline category legend used on Today's title row (right-aligned) and
-/// Week's activity card. Static set: shows every canonical root so the
-/// visual signature stays stable across days regardless of which categories
-/// happen to be present today.
 fn render_category_legend(f: &mut Frame, area: Rect, theme: &Theme) {
     if area.width == 0 || area.height == 0 {
         return;
@@ -252,10 +242,10 @@ pub(super) fn render_top_apps_panel(
         .collect();
 
     let widths = [
-        Constraint::Length(3), // rank
-        Constraint::Min(8),    // app name
-        Constraint::Length(8), // active duration
-        Constraint::Length(8), // proportional bar (matches categories + domains)
+        Constraint::Length(3),
+        Constraint::Min(8),
+        Constraint::Length(8),
+        Constraint::Length(8),
     ];
     let table = Table::new(body_rows, widths).header(header);
     f.render_widget(table, inner);
@@ -324,16 +314,15 @@ pub(super) fn render_top_categories_panel(
         .collect();
 
     let widths = [
-        Constraint::Length(3),  // rank
-        Constraint::Min(18),    // category name — must fit "Work / Programming"
-        Constraint::Length(8),  // active duration
-        Constraint::Length(8),  // proportional bar (matches apps + domains)
+        Constraint::Length(3),
+        Constraint::Min(18),
+        Constraint::Length(8),
+        Constraint::Length(8),
     ];
     let table = Table::new(body_rows, widths).header(header);
     f.render_widget(table, inner);
 }
 
-/// Colour each bar by its category root so the column doubles as the legend.
 pub(super) fn category_row(
     rank: usize,
     row: &CategorySummary,
@@ -374,7 +363,6 @@ pub(super) fn render_top_domains_panel(
     };
 
     if rows.is_empty() {
-        // Empty Ok = "no aw-watcher-web bucket"; show the install hint.
         let lines = vec![
             Line::from(Span::styled(
                 "no web watcher detected",
@@ -414,10 +402,10 @@ pub(super) fn render_top_domains_panel(
         .collect();
 
     let widths = [
-        Constraint::Length(3),  // rank
-        Constraint::Min(10),    // domain
-        Constraint::Length(8),  // active
-        Constraint::Length(8),  // bar (matches apps + categories)
+        Constraint::Length(3),
+        Constraint::Min(10),
+        Constraint::Length(8),
+        Constraint::Length(8),
     ];
     let table = Table::new(body_rows, widths).header(header);
     f.render_widget(table, inner);
@@ -439,7 +427,6 @@ pub(super) fn top_domain_row(
     ])
 }
 
-/// Eighth-block proportional bar; zero rows get `·`, trailing cells get `░` so the track stays visible.
 pub(super) fn proportional_bar(value: f64, max: f64, width: usize) -> String {
     if width == 0 {
         return String::new();
@@ -454,22 +441,20 @@ pub(super) fn proportional_bar(value: f64, max: f64, width: usize) -> String {
     }
 
     const PARTIALS: [&str; 8] = [
-        "",         // 0 folds into FULL track
-        "\u{258f}", // ▏ 1/8
-        "\u{258e}", // ▎ 2/8
-        "\u{258d}", // ▍ 3/8
-        "\u{258c}", // ▌ 4/8
-        "\u{258b}", // ▋ 5/8
-        "\u{258a}", // ▊ 6/8
-        "\u{2589}", // ▉ 7/8
+        "",
+        "\u{258f}",
+        "\u{258e}",
+        "\u{258d}",
+        "\u{258c}",
+        "\u{258b}",
+        "\u{258a}",
+        "\u{2589}",
     ];
-    const FULL: &str = "\u{2588}"; // █
-    const EMPTY: &str = "\u{2591}"; // ░
+    const FULL: &str = "\u{2588}";
+    const EMPTY: &str = "\u{2591}";
 
     let frac = (value / max).clamp(0.0, 1.0);
     let mut total_eighths = (frac * (width as f64 * 8.0)).round() as usize;
-    // Sub-eighth values still earn one visible 1/8 sliver — otherwise tiny
-    // non-zero rows look identical to zero rows.
     if total_eighths == 0 {
         total_eighths = 1;
     }
@@ -519,7 +504,6 @@ fn render_hourly_section(f: &mut Frame, area: Rect, app: &App) {
         return;
     }
 
-    // One Dataset per spectrum band; skip zero-minute hours so the marker doesn't paint a baseline sliver.
     let mut band_data: [Vec<(f64, f64)>; 5] =
         [Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new()];
     let mut max_min = 0.0_f64;
@@ -562,7 +546,6 @@ fn render_hourly_section(f: &mut Frame, area: Rect, app: &App) {
         })
         .collect();
 
-    // Round ceiling up to 30-min and floor at 60m so labels stay round and bars don't squish on empty days.
     let y_ceiling = ((max_min / 30.0).ceil() * 30.0).max(60.0);
     let y_mid = (y_ceiling / 2.0).round() as u64;
     let y_top = y_ceiling.round() as u64;
@@ -603,8 +586,6 @@ mod tests {
     use ratatui::Terminal;
     use std::time::Instant;
 
-    /// Builds an App pre-populated with fixture data for snapshot tests.
-    /// Bypasses the network — applies success directly to each Cached<T>.
     fn app_with_fixture() -> App {
         let mut app = App::new();
         let now = Instant::now();
@@ -651,17 +632,11 @@ mod tests {
                 .collect(),
             now,
         );
-        // top_domains: empty Ok = "no web watcher" hint. Tests don't
-        // exercise the populated path here; that's covered by a unit
-        // test inside the rendering module.
         app.data.top_domains.apply_success(vec![], now);
-        // timeline_events: empty so the timeline renders the dim "·"
-        // placeholder strip instead of the skeleton ellipsis.
         app.data.timeline_events.apply_success(vec![], now);
         app
     }
 
-    /// Asserts by content, not byte-exact match, so layout tweaks don't cascade.
     #[test]
     fn overview_renders_full_layout() {
         let app = app_with_fixture();
@@ -717,7 +692,6 @@ mod tests {
         );
     }
 
-    /// First-load skeleton: panel chrome renders before any data lands.
     #[test]
     fn overview_renders_skeleton_when_caches_empty() {
         let app = App::new();
@@ -749,7 +723,6 @@ mod tests {
     fn overview_shows_offline_indicator_when_caches_offline() {
         let mut app = App::new();
         let now = Instant::now();
-        // 3 = OFFLINE_THRESHOLD.
         for _ in 0..3 {
             app.data.top_apps.apply_failure("conn refused".into(), now);
         }
@@ -776,7 +749,6 @@ mod tests {
         out
     }
 
-    /// Guards per-band colouring in the hourly chart.
     #[test]
     fn hourly_chart_paints_multiple_spectrum_bands() {
         use crate::theme::Theme;

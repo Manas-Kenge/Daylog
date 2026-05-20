@@ -54,7 +54,6 @@ pub async fn start_watcher() -> Result<(), LifecycleError> {
 }
 
 pub async fn disable_all() -> Result<(), LifecycleError> {
-    // Best-effort: ignore errors so a partial install can still be torn down.
     let _ = run("systemctl", &["--user", "stop", SERVER_UNIT, WATCHER_UNIT]).await;
     let _ = run(
         "systemctl",

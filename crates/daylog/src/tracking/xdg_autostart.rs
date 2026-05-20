@@ -9,13 +9,10 @@ const AUTOSTART_FILE: &str = "daylog-tracker.desktop";
 const SUPERVISOR_FILE: &str = "daylog-supervisor.sh";
 
 pub async fn install(bin_dir: &Path) -> Result<(), LifecycleError> {
-    // 1. Drop the supervisor script into bin_dir, executable.
     let supervisor = bin_dir.join(SUPERVISOR_FILE);
     render_template(SUPERVISOR_TEMPLATE, &supervisor, bin_dir)?;
     chmod_exec(&supervisor)?;
 
-    // 2. Drop the autostart .desktop entry so the user picks up tracking
-    //    after their next login automatically.
     let autostart_dir = config_dir()?.join("autostart");
     std::fs::create_dir_all(&autostart_dir)
         .map_err(|e| LifecycleError::Io(format!("mkdir {}: {e}", autostart_dir.display())))?;
@@ -25,7 +22,6 @@ pub async fn install(bin_dir: &Path) -> Result<(), LifecycleError> {
         bin_dir,
     )?;
 
-    // 3. Start it now so the user doesn't have to log out/in to begin tracking.
     start(bin_dir).await?;
     Ok(())
 }
@@ -51,14 +47,11 @@ pub async fn start(bin_dir: &Path) -> Result<(), LifecycleError> {
 }
 
 pub async fn stop() -> Result<(), LifecycleError> {
-    // pkill is on every Linux distro that ships procps. Best-effort — if the
-    // supervisor isn't running, exit 1 is fine; we silence it.
     let _ = Command::new("pkill")
         .args(["-TERM", "-f", SUPERVISOR_FILE])
         .output()
         .await;
-    // The supervisor's `trap 'kill 0' EXIT` propagates the kill to the child
-    // binaries, so we don't need to kill them individually.
+    // Supervisor's `trap 'kill 0' EXIT` propagates the kill to children.
     Ok(())
 }
 

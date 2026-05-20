@@ -1,5 +1,3 @@
-//! Application state + main event loop.
-
 use std::cell::RefCell;
 use std::io;
 use std::time::{Duration, Instant};
@@ -52,7 +50,6 @@ impl Tab {
     }
 }
 
-/// Time-range chips. `r` cycles forward, `Shift-R` reverses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RangeChip {
     Today,
@@ -97,19 +94,10 @@ pub struct App {
     pub quit: bool,
     pub dirty: bool,
     pub data: DataCache,
-    /// Latched at startup; sole source of truth for colours/modifiers.
     pub theme: Theme,
-    /// Shared throbber animation state. One state for the whole app —
-    /// every panel's spinner advances on the same 250ms tick so they look
-    /// like one synchronised heartbeat instead of N drifting clocks.
     pub throbber: ThrobberState,
-    /// Currently-running body-scoped effect, if any. RefCell because
-    /// `render(f, &App)` is immutable but `Effect::process` needs `&mut`.
-    /// On first launch we seed a fade-in; tab transitions overwrite with a
-    /// sweep. Cleared once the effect completes.
+    /// RefCell because render(&App) is immutable but Effect::process needs &mut.
     pub effect: RefCell<Option<Effect>>,
-    /// Elapsed since last redraw — fed to `Effect::process` so animations
-    /// advance in real time regardless of redraw cadence.
     pub last_tick: RefCell<tachyonfx::Duration>,
 }
 
@@ -118,7 +106,6 @@ impl App {
         Self::with_theme(Theme::detect())
     }
 
-    /// Tests pin a deterministic theme so snapshot colours don't drift with $COLORTERM.
     pub fn with_theme(theme: Theme) -> Self {
         Self {
             tab: Tab::Today,
@@ -133,8 +120,6 @@ impl App {
         }
     }
 
-    /// Seed the cold-start fade. Not invoked from `with_theme` — test
-    /// fixtures expect pixel-exact first-frame colours.
     pub fn queue_fade_in(&mut self) {
         let bg = self.theme.bg;
         *self.effect.borrow_mut() = Some(fx::fade_from(
@@ -147,7 +132,6 @@ impl App {
         ));
     }
 
-    /// Queue a left-to-right sweep across the body. Fired on tab change.
     pub fn queue_tab_sweep(&mut self) {
         let bg: Color = self.theme.bg;
         *self.effect.borrow_mut() = Some(fx::sweep_in(
@@ -166,11 +150,8 @@ impl App {
         self.range_chip.to_range()
     }
 
-    /// Cycle the active range, resetting only the slots whose payload
-    /// depends on the range chip. Scope-fixed slots (`trailing_7`,
-    /// `week*`, `month_*`) carry their own fixed windows and must survive
-    /// the chip flip — wiping them here forces a needless cold reload of
-    /// the Week/Month tabs every time the user cycles the chip on Today.
+    /// Resets only RangeChip-driven slots. Scope-fixed slots (trailing_7,
+    /// week*, month_*) carry their own fixed windows and must survive flip.
     pub fn cycle_range(&mut self, forward: bool) {
         self.range_chip = if forward {
             self.range_chip.next()
@@ -193,17 +174,13 @@ impl Default for App {
     }
 }
 
-/// Main event loop. Selects between terminal input, periodic ticks (for
-/// refetch staleness checks + dispatch), and incoming fetch results.
 pub async fn event_loop(terminal: &mut Terminal<Backend>, app: &mut App) -> io::Result<()> {
     let mut events = EventStream::new();
     let mut tick = interval(Duration::from_millis(250));
-    tick.tick().await; // first tick fires immediately; consume it.
+    tick.tick().await;
 
     let (result_tx, mut result_rx) = mpsc::unbounded_channel::<FetchResult>();
 
-    // Kick off the first set of fetches so the first frame doesn't wait
-    // 250ms for the initial tick.
     let range = app.range();
     dispatch_refetches(&mut app.data, range, app.tab, &result_tx, Instant::now());
 
@@ -228,18 +205,11 @@ pub async fn event_loop(terminal: &mut Terminal<Backend>, app: &mut App) -> io::
             _ = tick.tick() => {
                 let range = app.range();
                 dispatch_refetches(&mut app.data, range, app.tab, &result_tx, Instant::now());
-                // Advance the shared throbber once per tick so the
-                // skeleton spinner moves at a calm 4 fps.
                 app.throbber.calc_next();
-                // Always redraw on tick so transient indicators (offline
-                // dot, "loading" tickers) animate without input.
                 app.dirty = true;
             }
         }
 
-        // Keep redrawing while an animation effect is in flight so tachyonfx
-        // can advance state. Without this gate, the redraw stops as soon as
-        // `dirty` clears and the effect freezes mid-frame.
         let has_effect = app.effect.borrow().is_some();
         if app.dirty || has_effect {
             let now = Instant::now();
@@ -250,7 +220,6 @@ pub async fn event_loop(terminal: &mut Terminal<Backend>, app: &mut App) -> io::
             last_draw = now;
             terminal.draw(|f| crate::ui::render(f, app))?;
             app.dirty = false;
-            // Drop completed effects so the redraw loop can quiesce.
             let done = app
                 .effect
                 .borrow()
@@ -295,7 +264,6 @@ fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
             app.dirty = true;
         }
         KeyCode::Char('r') => {
-            // lowercase 'r' = forward, Shift+R = reverse.
             let forward = !mods.contains(KeyModifiers::SHIFT);
             app.cycle_range(forward);
         }
@@ -305,7 +273,6 @@ fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
             app.cycle_range(false);
         }
         KeyCode::Char(d) if d.is_ascii_digit() && d != '0' => {
-            // 1..N jump to tab N.
             let idx = (d as u8 - b'1') as usize;
             if idx < Tab::ALL.len() {
                 let new = Tab::ALL[idx];
@@ -385,8 +352,6 @@ mod tests {
 
     #[test]
     fn handle_key_2_lands_on_week() {
-        // Pin numeric routing so reordering Tab::ALL doesn't silently
-        // re-route the Week shortcut.
         let mut app = App::new();
         assert_eq!(app.tab, Tab::Today);
         handle_key(&mut app, KeyCode::Char('2'), KeyModifiers::NONE);
@@ -422,9 +387,6 @@ mod tests {
 
     #[test]
     fn cycle_range_preserves_scope_fixed_slots() {
-        // trailing_7, week*, month_* carry fixed windows that don't
-        // depend on the range chip. Wiping them here used to cause Week
-        // and Month to cold-reload on every chip flip from Today.
         let mut app = App::new();
         let now = Instant::now();
         app.data
@@ -461,7 +423,6 @@ mod tests {
         handle_key(&mut app, KeyCode::Char('r'), KeyModifiers::NONE);
         assert_eq!(app.range_chip, RangeChip::Last7);
 
-        // Shift+r reverses.
         handle_key(&mut app, KeyCode::Char('r'), KeyModifiers::SHIFT);
         assert_eq!(app.range_chip, RangeChip::Yesterday);
     }

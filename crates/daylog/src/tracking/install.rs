@@ -1,15 +1,3 @@
-//! Place the upstream tracker binaries (aw-server-rust + aw-awatcher)
-//! into the user's data dir on first launch.
-//!
-//! Binaries are NOT bundled in the daylog crate — they're fetched from
-//! pinned URLs in `pins.rs`, sha256-verified, cached at
-//! `~/.cache/daylog/binaries/`, and extracted into
-//! `~/.local/share/daylog/bin/`. This keeps the published crate small
-//! enough to fit crates.io's 10 MB tarball limit.
-//!
-//! Idempotent — re-running on an already-installed system with the same
-//! daylog version is a no-op.
-
 use std::fs;
 use std::path::PathBuf;
 
@@ -41,13 +29,9 @@ impl From<std::io::Error> for InstallError {
 #[derive(Debug, Clone)]
 pub struct BinDir {
     pub path: PathBuf,
-    /// daylog version that produced the binaries currently extracted at `path`.
     pub stamped_version: Option<String>,
 }
 
-/// Inspect the bin-dir state without performing any download. Returns
-/// where `{BIN_DIR}` is (or would be) and what version is stamped there,
-/// if anything.
 pub fn resolve_bin_dir() -> Result<BinDir, InstallError> {
     let path = user_bin_dir()?;
     let stamped_version = fs::read_to_string(path.join(STAMP_FILENAME)).ok();
@@ -57,10 +41,6 @@ pub fn resolve_bin_dir() -> Result<BinDir, InstallError> {
     })
 }
 
-/// Resolve `{BIN_DIR}` and ensure all pinned binaries are present +
-/// executable. Downloads any missing/stale archives. Re-extracts when the
-/// stamped daylog version differs from the running one (covers upgrades
-/// that ship newer pinned upstream binaries).
 pub async fn place_binaries() -> Result<BinDir, InstallError> {
     let path = user_bin_dir()?;
     fs::create_dir_all(&path)?;

@@ -1,14 +1,3 @@
-//! Today-only KPI snapshot for `daylog --json today`. Serialized to a
-//! stable JSON schema for status-bar consumers (Quickshell, waybar,
-//! i3blocks) that poll the CLI as a subprocess.
-//!
-//! schema: v1 — may evolve freely while the user count is zero.
-//!
-//! Always returns a valid `Snapshot`. Missing SQLite file, empty buckets,
-//! or an unreachable aw-server all degrade to a zero snapshot so polling
-//! consumers see a stable contract instead of stderr noise or nonzero
-//! exits.
-
 use chrono::Local;
 use serde::Serialize;
 use serde_json::json;
@@ -102,10 +91,7 @@ fn compute_top_app(intersected: &[Event]) -> Option<TopEntry> {
     })
 }
 
-/// Best-effort: category rules live in aw-server's settings store, so
-/// fetching them requires HTTP. If aw-server is restarting (the very
-/// case `Restart=always` exists to handle), we degrade to `None` rather
-/// than fail the whole snapshot.
+/// Returns `None` if aw-server can't be reached for category rules.
 async fn top_category_best_effort(intersected: Vec<Event>) -> Option<TopEntry> {
     let client = AwClient::new();
     let cfg = categories::load(&client).await.ok()?;
@@ -129,8 +115,6 @@ fn compute_hours(intersected: &[Event]) -> [u32; 24] {
     hours
 }
 
-/// ISO-8601 duration. `0` → `PT0S`; otherwise drops zero components, e.g.
-/// `3600` → `PT1H`, `4*3600 + 32*60` → `PT4H32M`, `125` → `PT2M5S`.
 pub fn format_iso_duration(secs: f64) -> String {
     let total = secs.round().max(0.0) as i64;
     if total == 0 {
@@ -230,9 +214,6 @@ mod tests {
     #[test]
     fn compute_hours_rounds_seconds_to_minutes_capped_at_60() {
         use crate::data::aggregate::HourBucket;
-        // Indirect: feed bucketize_hourly via a synthetic event aligned to
-        // local-midnight + 8h, lasting 30 minutes — should land 30 in
-        // hours[8] in local time.
         use chrono::{Local, Timelike};
         let start_local = Local::now()
             .with_hour(8).unwrap()
@@ -243,8 +224,6 @@ mod tests {
         let ev = Event { id: None, timestamp: start_utc, duration: 30.0 * 60.0, data: json!({}) };
         let hours = compute_hours(&[ev]);
         assert_eq!(hours[8], 30);
-        // Buckets that bucketize_hourly emits are clamped via the
-        // clamp(0, 60); spot-check the type.
         let _: &HourBucket = bucketize_hourly(&[]).first().unwrap();
     }
 }

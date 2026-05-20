@@ -1,9 +1,3 @@
-//! Category rules. Stored in aw-server's settings bucket under the key
-//! `classes`, matching the AW WebUI's convention. Matching is now done
-//! in-process by `crate::data::transforms::categorize` against `fancy_regex`
-//! — this module just handles the rule shape, validation, and HTTP
-//! load/save round-trips.
-
 use std::sync::OnceLock;
 
 use fancy_regex::Regex as FancyRegex;
@@ -14,10 +8,6 @@ use crate::data::aw_client::{AwClient, AwError};
 
 const SETTINGS_KEY: &str = "classes";
 
-/// Process-level cache. `load()` is invoked by every top_categories /
-/// categorized_events query; without this the dashboard issued ~14
-/// redundant settings GETs per refresh. Invalidated only by local
-/// `save()`; external mutations (WebUI writing the same key) aren't observed.
 fn cache() -> &'static RwLock<Option<CategoryConfig>> {
     static CACHE: OnceLock<RwLock<Option<CategoryConfig>>> = OnceLock::new();
     CACHE.get_or_init(|| RwLock::new(None))
@@ -54,7 +44,6 @@ pub enum Rule {
     None,
 }
 
-/// Optional decoration round-tripped to stay schema-compatible with the AW WebUI.
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 pub struct CategoryData {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -77,9 +66,6 @@ pub struct CategoryConfig {
 }
 
 impl CategoryConfig {
-    /// Hybrid defaults: WebUI-style hierarchy + Linux-flavored editor and
-    /// terminal coverage so the dashboard isn't all "Uncategorized" on a
-    /// fresh install.
     pub fn defaults() -> Self {
         let r = |re: &str| Rule::Regex {
             regex: re.into(),
@@ -128,10 +114,8 @@ impl CategoryConfig {
     }
 }
 
-/// Validate every regex compiles under the same engine
-/// (`fancy_regex`) the runtime evaluator uses in `transforms::compile_rules`.
-/// Without this alignment, a rule with a lookahead would validate fine
-/// under `regex` and then fail at categorize-time.
+/// Patterns must compile under `fancy_regex` — the runtime engine in
+/// `transforms::compile_rules`.
 pub fn validate(cfg: &CategoryConfig) -> Result<(), CategoryError> {
     for cat in &cfg.categories {
         if let Rule::Regex { regex, ignore_case } = &cat.rule {
@@ -149,13 +133,7 @@ pub fn validate(cfg: &CategoryConfig) -> Result<(), CategoryError> {
     Ok(())
 }
 
-/// Load rules from aw-server's settings bucket. If the key is absent or
-/// empty, seed defaults — best-effort persisted back to aw-server so the
-/// AW WebUI sees the same rules. If the persist write fails, we still
-/// return defaults in-memory so the dashboard works.
-///
-/// Memoized: subsequent calls in the same process return the cached
-/// config until `save()` mutates it.
+/// Memoized. Seeds defaults on absent key; persist write is best-effort.
 pub async fn load(client: &AwClient) -> Result<CategoryConfig, CategoryError> {
     if let Some(cfg) = cache().read().await.as_ref() {
         return Ok(cfg.clone());
@@ -216,10 +194,6 @@ mod tests {
 
     #[test]
     fn validate_accepts_lookahead_patterns() {
-        // Regression: validate() used to reject lookaheads because it ran
-        // through the `regex` crate. transforms::compile_rules uses
-        // fancy_regex, which supports them. validate now mirrors that so
-        // a lookahead-bearing rule no longer fails at categorize-time.
         let cfg = CategoryConfig {
             categories: vec![Category {
                 name: vec!["LookaheadOk".into()],

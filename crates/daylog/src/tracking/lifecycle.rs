@@ -29,9 +29,7 @@ impl From<std::io::Error> for LifecycleError {
 pub enum Supervisor {
     Systemd,
     XdgAutostart,
-    /// daylog is using a pre-existing aw-server we don't manage. Constructed
-    /// by the first-launch wizard when probing :5600 finds AW already
-    /// running. Not produced by `lifecycle::detect()`.
+    /// Pre-existing aw-server we don't manage.
     #[allow(dead_code)]
     External,
 }
@@ -51,8 +49,6 @@ pub struct TrackerStatus {
     pub watcher: UnitState,
 }
 
-/// Pick a supervisor for this machine. systemd if `/run/systemd/system`
-/// exists; XDG-autostart otherwise.
 pub fn detect() -> Supervisor {
     if Path::new("/run/systemd/system").exists() {
         Supervisor::Systemd
@@ -61,9 +57,6 @@ pub fn detect() -> Supervisor {
     }
 }
 
-/// Install + start the tracker. Picks systemd or XDG-autostart based on
-/// `detect()`. Idempotent — re-running on an already-installed system
-/// re-renders templates and restarts services.
 pub async fn install_supervisor(bin_dir: &BinDir) -> Result<(), LifecycleError> {
     match detect() {
         Supervisor::Systemd => systemd::install(&bin_dir.path).await,
@@ -99,10 +92,6 @@ pub async fn status() -> Result<TrackerStatus, LifecycleError> {
     }
 }
 
-/// Pause tracking. On systemd: stops the watcher only — server keeps running
-/// so historical queries still work. On XDG-autostart: stops the supervisor
-/// (and therefore both binaries), since selectively pausing a child of a
-/// shell-loop supervisor is fragile.
 pub async fn pause() -> Result<(), LifecycleError> {
     match detect() {
         Supervisor::Systemd => systemd::stop_watcher().await,
@@ -119,8 +108,6 @@ pub async fn resume(bin_dir: &BinDir) -> Result<(), LifecycleError> {
     }
 }
 
-/// Disable + stop everything. Leaves unit files / autostart entries / binaries
-/// in place so a re-enable is one command. For full removal, see `uninstall()`.
 pub async fn stop() -> Result<(), LifecycleError> {
     match detect() {
         Supervisor::Systemd => systemd::disable_all().await,
@@ -129,12 +116,6 @@ pub async fn stop() -> Result<(), LifecycleError> {
     }
 }
 
-/// Full removal: stop services, delete unit files / autostart entries, delete
-/// the user-extracted binaries dir. Used by `daylog --uninstall-tracking`.
-/// Best-effort — missing files are not errors.
-///
-/// We do **not** delete `~/.local/share/activitywatch/` — that's the user's
-/// tracking history, not ours to remove.
 pub async fn uninstall() -> Result<(), LifecycleError> {
     let _ = stop().await;
 
@@ -158,7 +139,6 @@ fn user_bin_dir() -> Option<PathBuf> {
     dirs::data_dir().map(|d| d.join("daylog").join("bin"))
 }
 
-/// Poll `127.0.0.1:5600/api/0/info` until it answers, or `timeout_secs` elapses.
 pub async fn wait_until_live(timeout_secs: u64) -> Result<(), LifecycleError> {
     let deadline = std::time::Instant::now() + Duration::from_secs(timeout_secs);
     let client = AwClient::new();

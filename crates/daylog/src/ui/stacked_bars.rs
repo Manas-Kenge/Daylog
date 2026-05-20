@@ -1,14 +1,3 @@
-//! 7-row horizontal-bar widget for the Week tab. Each row maps to one day
-//! of the calendar week (Mon → Sun). Bar cells within a row map to
-//! category roots, coloured via `category_root_style`. Past days with zero
-//! activity render a single `·` glyph; future days the user hasn't reached
-//! yet render the dim day label only.
-//!
-//! The horizontal layout replaces the previous vertical stacked-column
-//! layout (DESIGN.md 2026-05-20). The category-split rounding is shared
-//! via `allocate_segments`, so colours and totals match what the legend
-//! advertises.
-
 use chrono::NaiveDate;
 use ratatui::{
     buffer::Buffer,
@@ -21,23 +10,16 @@ use crate::cache::WeekDayBuckets;
 use crate::theme::Theme;
 use crate::ui::week::{category_root_style, short_weekday};
 
-// `▆` (lower 3/4 block) instead of `█` so each row's colour fills the
-// bottom 3/4 of the cell, leaving a thin 1/4-cell gap visible above —
-// reads as a slight vertical gap between consecutive day rows without
-// needing extra layout rows we don't have on the 24-row terminal floor.
 const BLOCK: &str = "\u{2586}";
 const DOT: &str = "\u{00b7}";
-const PEAK_LABEL: &str = "\u{2190} peak"; // ← peak
+const PEAK_LABEL: &str = "\u{2190} peak";
 
-/// Column allocations inside each row (in cells, left-to-right).
-const DAY_W: u16 = 4; // "Mon "
-const DUR_W: u16 = 7; // "4h 30m " right-aligned
+const DAY_W: u16 = 4;
+const DUR_W: u16 = 7;
 const GAP_W: u16 = 2;
-const PEAK_W: u16 = 8; // reserved on every row so all bars share max width
+const PEAK_W: u16 = 8;
 const FIXED_W: u16 = DAY_W + DUR_W + GAP_W + PEAK_W;
 
-/// Render the horizontal bar chart into `area`. The caller owns the panel
-/// block + title; this fn paints into the inner rect.
 fn render(
     area: Rect,
     buf: &mut Buffer,
@@ -58,13 +40,11 @@ fn render(
     if days.len() != 7 {
         return;
     }
-    // Need room for fixed columns + at least 1 bar cell.
     if area.width <= FIXED_W {
         return;
     }
     let bar_w = area.width - FIXED_W;
 
-    // Scale bars against the week's max (excluding future days).
     let max_secs = days
         .iter()
         .filter(|d| !d.is_future)
@@ -103,12 +83,10 @@ fn paint_row(
     let day_label = short_weekday(day.weekday);
     write_str(buf, area.x, area.y, day_label, label_style);
 
-    // Future days: label only.
     if day.is_future {
         return;
     }
 
-    // Duration column, right-aligned inside DUR_W.
     let dur_x = area.x + DAY_W;
     let dur_text = if day.total_active_secs > 0.0 {
         crate::ui::format_duration(day.total_active_secs)
@@ -118,23 +96,17 @@ fn paint_row(
     let dur_padded = right_align(&dur_text, DUR_W as usize);
     write_str(buf, dur_x, area.y, &dur_padded, theme.dim_style());
 
-    // Bar column.
     let bar_x = area.x + DAY_W + DUR_W + GAP_W;
 
     if day.total_active_secs <= 0.0 {
-        // Past day with no activity — single dim baseline dot at the bar's
-        // start so the row reads as "tracked, empty" rather than "missing".
         write_str(buf, bar_x, area.y, DOT, theme.dim_style());
         return;
     }
 
-    // Bar width in cells, scaled against the week's max.
     let max = max_secs.max(day.total_active_secs).max(1.0);
     let frac = (day.total_active_secs / max).clamp(0.0, 1.0);
     let bar_cells = ((frac * bar_w as f64).round() as u16).max(1).min(bar_w);
 
-    // Split bar cells across category roots (left-to-right) using the same
-    // largest-remainder allocator that the previous vertical layout used.
     let segments = allocate_segments(&day.roots, day.total_active_secs, bar_cells);
     let mut x = bar_x;
     for (root, seg_w) in segments {
@@ -148,16 +120,12 @@ fn paint_row(
         }
     }
 
-    // Peak annotation in the reserved right slot.
     if is_peak {
         let peak_x = area.x + DAY_W + DUR_W + GAP_W + bar_w;
         write_str(buf, peak_x, area.y, PEAK_LABEL, theme.dim_style());
     }
 }
 
-/// Allocate `bar_cells` integer cells across roots in proportion to each
-/// root's share of `total`. Uses largest-remainder rounding so the sum is
-/// exactly `bar_cells`. Order of returned segments matches `roots` order.
 pub(crate) fn allocate_segments(
     roots: &[(String, f64)],
     total: f64,
@@ -223,13 +191,10 @@ fn right_align(s: &str, width: usize) -> String {
     out
 }
 
-/// `Widget` shim so callers can `f.render_widget(HorizontalBars{..}, area)`.
 pub struct HorizontalBars<'a> {
     pub theme: &'a Theme,
     pub days: Option<&'a [WeekDayBuckets]>,
     pub in_flight: bool,
-    /// Date of the day with the largest `total_active_secs` (excluding
-    /// future days). When `Some`, that row gets the `← peak` annotation.
     pub peak_date: Option<NaiveDate>,
 }
 
@@ -270,9 +235,9 @@ mod tests {
     #[test]
     fn largest_remainder_rounding_sums_to_bar_cells() {
         let roots = vec![
-            ("Work".to_string(), 3300.0),    // 55%
-            ("Browsing".to_string(), 1800.0), // 30%
-            ("Comms".to_string(), 900.0),     // 15%
+            ("Work".to_string(), 3300.0),
+            ("Browsing".to_string(), 1800.0),
+            ("Comms".to_string(), 900.0),
         ];
         let total = 3300.0 + 1800.0 + 900.0;
         for bar_cells in [1u16, 3, 5, 8, 13, 40] {
@@ -328,7 +293,7 @@ mod tests {
             day((2026, 5, 4), false, &[("Work", 4.0 * 3600.0), ("Comms", 1800.0)]),
             day((2026, 5, 5), false, &[("Work", 6.0 * 3600.0), ("Browsing", 3600.0)]),
             day((2026, 5, 6), false, &[("Work", 5.0 * 3600.0)]),
-            day((2026, 5, 7), false, &[]), // empty past day
+            day((2026, 5, 7), false, &[]),
             day((2026, 5, 8), true, &[]),
             day((2026, 5, 9), true, &[]),
             day((2026, 5, 10), true, &[]),
@@ -349,7 +314,6 @@ mod tests {
     fn empty_past_day_paints_baseline_dot() {
         let area = Rect { x: 0, y: 0, width: 80, height: 8 };
         let buf = render_to_buf(&fixture(), None, area);
-        // Thu row is index 3.
         let bar_x = DAY_W + DUR_W + GAP_W;
         assert_eq!(buf[(bar_x, 3)].symbol(), DOT);
     }
@@ -358,7 +322,6 @@ mod tests {
     fn future_day_renders_label_only_no_bar() {
         let area = Rect { x: 0, y: 0, width: 80, height: 8 };
         let buf = render_to_buf(&fixture(), None, area);
-        // Sat row is index 5 (future).
         for x in 0..area.width {
             assert_ne!(
                 buf[(x, 5)].symbol(),
@@ -371,7 +334,6 @@ mod tests {
                 "future row must not paint baseline dots"
             );
         }
-        // Label is still painted.
         let row_str: String = (0..area.width).map(|x| buf[(x, 5)].symbol().to_string()).collect();
         assert!(row_str.starts_with("Sat"), "future row should still show its label: {row_str:?}");
     }
@@ -379,11 +341,10 @@ mod tests {
     #[test]
     fn peak_row_paints_arrow_annotation() {
         let area = Rect { x: 0, y: 0, width: 80, height: 8 };
-        let peak = NaiveDate::from_ymd_opt(2026, 5, 5).unwrap(); // Tue
+        let peak = NaiveDate::from_ymd_opt(2026, 5, 5).unwrap();
         let buf = render_to_buf(&fixture(), Some(peak), area);
         let row_str: String = (0..area.width).map(|x| buf[(x, 1)].symbol().to_string()).collect();
         assert!(row_str.contains("peak"), "peak annotation missing on Tue row: {row_str:?}");
-        // Non-peak row should not have it.
         let other: String = (0..area.width).map(|x| buf[(x, 0)].symbol().to_string()).collect();
         assert!(!other.contains("peak"), "non-peak row should not show 'peak': {other:?}");
     }
@@ -394,14 +355,12 @@ mod tests {
         let area = Rect { x: 0, y: 0, width: 80, height: 8 };
         let buf = render_to_buf(&fixture(), None, area);
         let bar_x = DAY_W + DUR_W + GAP_W;
-        // Mon row 0 has Work + Comms — first cell should be chart_1 (Work).
         assert_eq!(buf[(bar_x, 0)].symbol(), BLOCK);
         assert_eq!(buf[(bar_x, 0)].style().fg, Some(theme.chart_1));
     }
 
     #[test]
     fn narrow_area_returns_without_panicking() {
-        // Less than FIXED_W (= 21) — should bail without painting bars.
         let area = Rect { x: 0, y: 0, width: 10, height: 8 };
         let buf = render_to_buf(&fixture(), None, area);
         for y in 0..area.height {
@@ -413,10 +372,6 @@ mod tests {
 
     #[test]
     fn future_day_uses_actual_weekday_label() {
-        // Sanity: confirms the widget pulls labels from `day.weekday`
-        // rather than a positional table — verified by the fact that
-        // `Weekday::Sat` resolves to "Sat" for the 6th day (index 5) in
-        // the fixture's Mon-anchored week.
         let area = Rect { x: 0, y: 0, width: 80, height: 8 };
         let buf = render_to_buf(&fixture(), None, area);
         let row5: String = (0..3).map(|x| buf[(x, 5)].symbol().to_string()).collect();

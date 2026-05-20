@@ -1,9 +1,3 @@
-//! `Cached<T>` — data-layer primitive. Each entry tracks staleness, dedupes
-//! concurrent refetches, and backs off exponentially (5s → 10s → 20s → 40s →
-//! 60s cap; resets on success). After `OFFLINE_THRESHOLD` consecutive failures
-//! `is_offline()` flips true so the UI can surface the tracker as offline.
-//! Time is injected via `Instant` so tests don't sleep.
-
 use std::time::{Duration, Instant};
 
 use chrono::{Datelike, Local, NaiveDate, Weekday};
@@ -15,24 +9,11 @@ use serde_json::Value;
 
 use crate::app::Tab;
 
-/// Live cadence: 5s.
 pub const REFRESH_LIVE: Duration = Duration::from_secs(5);
-
-/// Past-day cadence: 5min (past days don't change until midnight).
 pub const REFRESH_PAST_DAYS: Duration = Duration::from_secs(5 * 60);
-
-/// After this many consecutive failures, the cache surfaces as offline.
-/// Tuned so a single transient blip doesn't flicker the indicator: at
-/// the 5s base interval, three failures = ~35s of confirmed unreachable
-/// before users see "offline".
 pub const OFFLINE_THRESHOLD: u32 = 3;
-
-/// Hard cap on per-entry retry interval. Without a cap, backoff blows
-/// past useful refresh rates after ~6 failures.
 pub const MAX_BACKOFF: Duration = Duration::from_secs(60);
 
-/// One in-memory cache entry. Generic over the payload so the same logic
-/// drives every widget query.
 #[derive(Debug)]
 pub struct Cached<T> {
     value: Option<T>,
@@ -44,9 +25,6 @@ pub struct Cached<T> {
 }
 
 impl<T> Cached<T> {
-    /// Create a new cache entry. `base_interval` is the steady-state
-    /// refetch cadence (e.g. 5s for live tab data, 5min for trailing
-    /// historical bundles).
     pub fn new(base_interval: Duration) -> Self {
         Self {
             value: None,
@@ -70,24 +48,16 @@ impl<T> Cached<T> {
         self.last_error.as_deref()
     }
 
-    /// Surfaces as offline after OFFLINE_THRESHOLD consecutive failures.
-    /// Reset by `apply_success`.
     pub fn is_offline(&self) -> bool {
         self.consecutive_failures >= OFFLINE_THRESHOLD
     }
 
-    /// Time-since-last-fetch threshold. Equals base_interval on success,
-    /// doubles per failure, capped at MAX_BACKOFF.
     pub fn current_interval(&self) -> Duration {
         let multiplier = 1_u32 << self.consecutive_failures.min(31);
         let scaled = self.base_interval.saturating_mul(multiplier);
         scaled.min(MAX_BACKOFF)
     }
 
-    /// True if a refetch should fire now. Three rules:
-    /// 1. Never refetch while a request is in flight (dedup).
-    /// 2. If never fetched, always refetch.
-    /// 3. Otherwise, refetch only after current_interval has elapsed.
     pub fn should_refetch(&self, now: Instant) -> bool {
         if self.in_flight {
             return false;
@@ -98,14 +68,10 @@ impl<T> Cached<T> {
         }
     }
 
-    /// Mark a refetch as dispatched. Caller must follow with either
-    /// `apply_success` or `apply_failure` once the request resolves.
     pub fn mark_in_flight(&mut self) {
         self.in_flight = true;
     }
 
-    /// Apply a successful fetch result. Resets backoff to base interval
-    /// and clears the offline flag.
     pub fn apply_success(&mut self, value: T, now: Instant) {
         self.value = Some(value);
         self.fetched_at = Some(now);
@@ -114,9 +80,6 @@ impl<T> Cached<T> {
         self.consecutive_failures = 0;
     }
 
-    /// Apply a failed fetch. Bumps the failure counter; backoff doubles
-    /// at the next `current_interval` call. Keeps the previous value
-    /// visible so widgets show stale data instead of blanks.
     pub fn apply_failure(&mut self, error: String, now: Instant) {
         self.fetched_at = Some(now);
         self.in_flight = false;
@@ -125,9 +88,6 @@ impl<T> Cached<T> {
     }
 }
 
-/// One row in the Top Apps table. The aw-server query returns a
-/// `Vec<serde_json::Value>` of events; we parse each into this struct
-/// at fetch time so the render path is allocation-free.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TopAppRow {
     pub name: String,
@@ -150,11 +110,7 @@ impl TopAppRow {
     }
 }
 
-/// One row in the Top Domains table. Same shape as TopAppRow but pulls
-/// from `data.$domain` (set by aw-watcher-web). When no web watcher is
-/// installed the underlying query returns `Ok(vec![])` so an empty cache
-/// value is the "no web watcher" signal — distinct from the loading /
-/// error states.
+/// Empty Vec = no aw-watcher-web bucket present.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TopDomainRow {
     pub domain: String,
@@ -177,22 +133,15 @@ impl TopDomainRow {
     }
 }
 
-/// One day in the calendar-week view (Mon–Sun). Aggregates a day's
-/// categorized events into per-root active seconds. `is_future` flags the
-/// days that haven't elapsed yet so the renderer paints the axis label
-/// without a bar.
 #[derive(Debug, Clone, PartialEq)]
 pub struct WeekDayBuckets {
     pub date: NaiveDate,
     pub weekday: Weekday,
     pub is_future: bool,
-    /// `(category_root, active_seconds)` sorted by ROOT_ORDER then alpha
-    /// for stable stacking. Empty when no events.
     pub roots: Vec<(String, f64)>,
     pub total_active_secs: f64,
 }
 
-/// Stable display order for category roots. Unlisted roots sort after, alphabetically.
 pub const WEEK_ROOT_ORDER: &[&str] = &[
     "Work",
     "Comms",
@@ -202,95 +151,41 @@ pub const WEEK_ROOT_ORDER: &[&str] = &[
     "Uncategorized",
 ];
 
-/// Result message sent back to the App after a fetch resolves. The App
-/// matches on the variant to find which `Cached<T>` to update.
 #[derive(Debug)]
 pub enum FetchResult {
     TopApps(Result<Vec<TopAppRow>, String>),
     Hourly(Result<Vec<HourBucket>, String>),
     TopCategories(Result<Vec<CategorySummary>, String>),
     Kpi(Result<KpiSummary, String>),
-    /// Today's categorized events for the 24h timeline widget. Same
-    /// data shape `top_categories` is aggregated from, but kept raw so
-    /// the bucketize96 step can place each event into 15-min slots.
     TimelineEvents(Result<Vec<CategorizedEvent>, String>),
-    /// Top web domains. Empty `Ok(vec![])` is the "no web watcher"
-    /// signal — the Rust query short-circuits when no aw-watcher-web-*
-    /// bucket is registered.
     TopDomains(Result<Vec<TopDomainRow>, String>),
-    /// Calendar-week (Mon → Sun) categorized totals. Always 7 entries.
-    /// Future days carry `is_future = true` and empty `roots`.
     Week(Result<Vec<WeekDayBuckets>, String>),
-    /// Top apps over the trailing 7 days for the Week tab's lower
-    /// desktop-parity rollup row. Scope-fixed; not driven by RangeChip.
     WeekTopApps(Result<Vec<TopAppRow>, String>),
-    /// Top categories over the trailing 7 days for the Week tab.
     WeekTopCategories(Result<Vec<CategorySummary>, String>),
-    /// Top web domains over the trailing 7 days for the Week tab.
     WeekTopDomains(Result<Vec<TopDomainRow>, String>),
-    /// Trailing 365 days of active seconds for the Month tab heatmap.
-    /// Index `i` is days_ago = i + 1 (today's value composes from
-    /// `kpi.active_secs`). Vec, not [_; 365], because aw-server may
-    /// have less than a year of history on fresh installs.
     MonthTrailingYear(Result<Vec<f64>, String>),
-    /// Top apps over the trailing 30 days. Independent of the active
-    /// `RangeChip`; the Month tab's view is scope-fixed.
     MonthTopApps(Result<Vec<TopAppRow>, String>),
-    /// Top categories over the trailing 30 days.
     MonthTopCategories(Result<Vec<CategorySummary>, String>),
-    /// Top web domains over the trailing 30 days. Empty `Ok(vec![])`
-    /// is again the "no web watcher" signal — same as `TopDomains`.
     MonthTopDomains(Result<Vec<TopDomainRow>, String>),
-    /// Shared trailing-7-day payload. Apply derives `week` (paired
-    /// with `timeline_events`) from this single fetch. Failure
-    /// propagates to dependent slots so the UI shows consistent error
-    /// state instead of one panel updating and the others freezing.
     Trailing7(Result<Vec<TrailingDayPayload>, String>),
 }
 
-/// In-memory caches keyed per logical query.
 #[derive(Debug)]
 pub struct DataCache {
     pub top_apps: Cached<Vec<TopAppRow>>,
     pub hourly: Cached<Vec<HourBucket>>,
     pub top_categories: Cached<Vec<CategorySummary>>,
-    /// Live KPI summary. One roundtrip bundles today + trailing-7 baselines.
     pub kpi: Cached<KpiSummary>,
-    /// Raw categorized events for today; consumed by the 24h timeline.
     pub timeline_events: Cached<Vec<CategorizedEvent>>,
-    /// Top web domains for today. Empty value with `last_error == None`
-    /// means "no web watcher installed" — render the install hint.
     pub top_domains: Cached<Vec<TopDomainRow>>,
-    /// Calendar-week (Mon → Sun) per-day, per-root active seconds for the
-    /// Week tab's stacked-bar chart. Past-days cadence; today's column
-    /// catches up via the same 5min refresh.
     pub week: Cached<Vec<WeekDayBuckets>>,
-    /// Trailing-7-day Top apps for the Week tab's rollup row.
-    /// Scope-fixed; not driven by the `RangeChip`.
     pub week_top_apps: Cached<Vec<TopAppRow>>,
-    /// Trailing-7-day Top categories for the Week tab.
     pub week_top_categories: Cached<Vec<CategorySummary>>,
-    /// Trailing-7-day Top web domains for the Week tab.
     pub week_top_domains: Cached<Vec<TopDomainRow>>,
-    /// Trailing-365-day active-seconds-per-day window driving the Month
-    /// tab's year heatmap. Heavy first paint (365 fetches) — the
-    /// dispatcher gates this slot on `tab == Tab::Month` so Today's
-    /// cold-start budget is unaffected.
     pub month_trailing_year: Cached<Vec<f64>>,
-    /// Trailing-30-day Top apps for the Month tab's rollup row.
-    /// Scope-fixed; not driven by the `RangeChip`.
     pub month_top_apps: Cached<Vec<TopAppRow>>,
-    /// Trailing-30-day Top categories for the Month tab.
     pub month_top_categories: Cached<Vec<CategorySummary>>,
-    /// Trailing-30-day Top web domains for the Month tab. Empty-Ok
-    /// means "no web watcher", same convention as `top_domains`.
     pub month_top_domains: Cached<Vec<TopDomainRow>>,
-    /// Shared source of truth for the trailing-7-day window. SQLite
-    /// reads themselves are sub-second now, but the *aggregation* step
-    /// (flood + filter_period_intersect + categorize over ~70k events
-    /// per week) is still heavy enough that recomputing it for every
-    /// kpi tick + week-chart consumer is wasteful. The dedup is now
-    /// load-bearing for aggregation, not for the fetch.
     pub trailing_7: Cached<Vec<TrailingDayPayload>>,
 }
 
@@ -315,20 +210,8 @@ impl DataCache {
         }
     }
 
-    /// True if any tracked LIVE cache has crossed the offline threshold.
-    /// Drives the footer's "○ tracker offline" indicator.
-    ///
-    /// Post-SQLite, "offline" most commonly means the aw-server-rust
-    /// `sqlite.db` file is missing or unreadable — not an HTTP timeout.
-    /// The most likely root causes are (1) aw-server-rust hasn't been
-    /// installed yet (user dismissed the wizard) or (2) a different
-    /// aw-server is running on `:5600` (wizard surfaces a warning for
-    /// this; see `wizard::render_wrong_server`).
-    ///
-    /// The trailing past-days slot is excluded — its 5min cadence
-    /// would create false positives during transient blips. `top_domains`
-    /// is also excluded because an empty-result is its normal state on
-    /// machines without a web watcher.
+    /// True if any LIVE slot crossed OFFLINE_THRESHOLD. Past-days slots
+    /// excluded (5min cadence creates false positives on blips).
     pub fn any_offline(&self) -> bool {
         self.top_apps.is_offline()
             || self.hourly.is_offline()
@@ -337,7 +220,6 @@ impl DataCache {
             || self.timeline_events.is_offline()
     }
 
-    /// Apply an incoming fetch result to the matching cache entry.
     pub fn apply(&mut self, msg: FetchResult, now: Instant) {
         match msg {
             FetchResult::TopApps(Ok(v)) => self.top_apps.apply_success(v, now),
@@ -384,19 +266,12 @@ impl DataCache {
                 self.try_rebuild_week(now);
             }
             FetchResult::Trailing7(Err(e)) => {
-                // Propagate the failure to every dependent slot so the
-                // UI shows consistent error state. `Cached::apply_failure`
-                // preserves the previous value (the week chart freezes
-                // at last good values, not blank).
                 self.trailing_7.apply_failure(e.clone(), now);
                 self.week.apply_failure(e, now);
             }
         }
     }
 
-    /// Rebuild the calendar-week chart when both inputs are available.
-    /// Early-return if either is missing; the next `apply` for the
-    /// missing piece will retry.
     fn try_rebuild_week(&mut self, now: Instant) {
         let (Some(past), Some(today_events)) =
             (self.trailing_7.value(), self.timeline_events.value())
@@ -415,8 +290,6 @@ impl Default for DataCache {
     }
 }
 
-/// Spawn fetches for any stale, not-in-flight cache. Each fetch resolves
-/// into a FetchResult sent back over `tx`.
 pub fn dispatch_refetches(
     cache: &mut DataCache,
     range: TimeRange,
@@ -464,7 +337,6 @@ pub fn dispatch_refetches(
         });
     }
 
-    // Shared trailing-7 cache; 5-min cadence avoids re-aggregating ~70k events every tick.
     if cache.trailing_7.should_refetch(now) {
         cache.trailing_7.mark_in_flight();
         let tx = tx.clone();
@@ -476,10 +348,6 @@ pub fn dispatch_refetches(
         });
     }
 
-    // kpi waits on the shared trailing_7 cache to be primed. Until then,
-    // baselines and pattern-shift can't be computed. Once primed, each
-    // kpi tick fetches only today's slice (events + AFK) and synthesizes
-    // locally via kpi_from_parts — no trailing re-fetch on the 5s cadence.
     if cache.kpi.should_refetch(now) {
         if let Some(trailing) = cache.trailing_7.value() {
             cache.kpi.mark_in_flight();
@@ -548,11 +416,6 @@ pub fn dispatch_refetches(
         });
     }
 
-    // Week rollups mirror the desktop page's fixed Last 7 Days panels.
-    // They do not follow the active range chip. The main `week` slot
-    // (calendar-week stacked bars) is no longer dispatched here — it's
-    // derived in `DataCache::apply` from the shared `trailing_7` cache
-    // paired with today's `timeline_events`, which fire on every tab.
     if tab == Tab::Week {
         if cache.week_top_apps.should_refetch(now) {
             cache.week_top_apps.mark_in_flight();
@@ -596,7 +459,6 @@ pub fn dispatch_refetches(
         }
     }
 
-    // Gate Month fetches to its active tab so the 365-day fan-out doesn't tax cold start; cached values survive tab bounces.
     if tab != Tab::Month {
         return;
     }
@@ -605,8 +467,6 @@ pub fn dispatch_refetches(
         cache.month_trailing_year.mark_in_flight();
         let tx = tx.clone();
         tokio::spawn(async move {
-            // 365 concurrent per-day fetches under the hood. First paint
-            // is the dominant cost; staleness is 5min thereafter.
             let result = crate::data::queries::trailing_days_past(365)
                 .await
                 .map(|days| {
@@ -665,15 +525,11 @@ pub fn dispatch_refetches(
     }
 }
 
-/// ISO Monday of the calendar week containing `today`.
 pub fn iso_monday(today: NaiveDate) -> NaiveDate {
     let days_from_monday = today.weekday().num_days_from_monday() as i64;
     today - chrono::Duration::days(days_from_monday)
 }
 
-/// Build the 7-day Mon → Sun calendar week from a today-slice and the
-/// trailing-7 past-day payloads. Days strictly after `today` carry
-/// `is_future = true` and empty roots.
 pub fn build_week_buckets(
     today: NaiveDate,
     today_events: &[CategorizedEvent],
@@ -713,11 +569,6 @@ pub fn build_week_buckets(
         .collect()
 }
 
-/// Group categorized events by their root category (`category[0]`,
-/// defaulting to "Uncategorized" — the parser already enforces this) and
-/// sum durations. Output is sorted by `WEEK_ROOT_ORDER` first, then any
-/// other roots alphabetically. Sort key is stable across days so segment
-/// stacks line up visually.
 fn bucketize_roots(events: &[CategorizedEvent]) -> Vec<(String, f64)> {
     let mut totals: std::collections::BTreeMap<String, f64> = std::collections::BTreeMap::new();
     for ev in events {
@@ -752,10 +603,6 @@ mod tests {
         Instant::now()
     }
 
-    /// `should_refetch` returns true for an untouched slot. After
-    /// `dispatch_refetches` it's false either because the task is in
-    /// flight or has already resolved — both mean "dispatched". So we
-    /// use `!should_refetch(now)` as a synchronous "was dispatched" probe.
     fn was_dispatched<T>(c: &Cached<T>, now: Instant) -> bool {
         !c.should_refetch(now)
     }
@@ -767,26 +614,18 @@ mod tests {
         let now = Instant::now();
         dispatch_refetches(&mut cache, TimeRange::Today, Tab::Today, &tx, now);
 
-        // Live Today slots fire.
         assert!(was_dispatched(&cache.top_apps, now));
         assert!(was_dispatched(&cache.timeline_events, now));
 
-        // The shared trailing-7 slot fires on Today too — the kpi
-        // baselines need it. This is the *deduplication* win: one
-        // fetch instead of two.
         assert!(
             was_dispatched(&cache.trailing_7, now),
             "trailing_7 is the single source of truth for kpi/week and must fire on Today"
         );
 
-        // The week chart itself (`cache.week`) is no longer dispatched —
-        // it's derived in apply() from trailing_7 + timeline_events.
-        // The Week-tab rollup tables stay tab-gated.
         assert!(!was_dispatched(&cache.week_top_apps, now));
         assert!(!was_dispatched(&cache.week_top_categories, now));
         assert!(!was_dispatched(&cache.week_top_domains, now));
 
-        // Month already gated; pin it for symmetry.
         assert!(!was_dispatched(&cache.month_trailing_year, now));
         assert!(!was_dispatched(&cache.month_top_apps, now));
     }
@@ -798,15 +637,12 @@ mod tests {
         let now = Instant::now();
         dispatch_refetches(&mut cache, TimeRange::Today, Tab::Week, &tx, now);
 
-        // Week rollups fire only on Week.
         assert!(was_dispatched(&cache.week_top_apps, now));
         assert!(was_dispatched(&cache.week_top_categories, now));
         assert!(was_dispatched(&cache.week_top_domains, now));
 
-        // Shared trailing_7 fires here too — same single-source path.
         assert!(was_dispatched(&cache.trailing_7, now));
 
-        // Month still gated even from Week.
         assert!(!was_dispatched(&cache.month_trailing_year, now));
     }
 
@@ -870,16 +706,12 @@ mod tests {
     fn cached_t_backoff_doubles_on_failure() {
         let mut c: Cached<u32> = Cached::new(Duration::from_secs(5));
         let now = t0();
-        // 0 failures → 5s
         assert_eq!(c.current_interval(), Duration::from_secs(5));
         c.apply_failure("boom".into(), now);
-        // 1 failure → 10s
         assert_eq!(c.current_interval(), Duration::from_secs(10));
         c.apply_failure("boom".into(), now);
-        // 2 failures → 20s
         assert_eq!(c.current_interval(), Duration::from_secs(20));
         c.apply_failure("boom".into(), now);
-        // 3 failures → 40s
         assert_eq!(c.current_interval(), Duration::from_secs(40));
     }
 
@@ -908,7 +740,6 @@ mod tests {
     fn cached_t_max_backoff_capped() {
         let mut c: Cached<u32> = Cached::new(Duration::from_secs(5));
         let now = t0();
-        // 5s base × 2^4 = 80s, but capped at MAX_BACKOFF (60s).
         for _ in 0..10 {
             c.apply_failure("repeated failure".into(), now);
         }
@@ -934,8 +765,6 @@ mod tests {
 
     #[test]
     fn cached_t_keeps_stale_value_through_failures() {
-        // Widgets should render previous values during transient
-        // network blips instead of blanking out.
         let mut c: Cached<&'static str> = Cached::new(Duration::from_secs(5));
         let now = t0();
         c.apply_success("initial", now);
@@ -989,18 +818,14 @@ mod tests {
 
     #[test]
     fn trailing_7_failure_propagates_to_dependents() {
-        // Trailing7 failure surfaces on every consumer. Stale values
-        // stay visible per Cached's contract; only last_error flips.
         let mut dc = DataCache::new();
         let now = Instant::now();
-        // Seed prior successful values.
         dc.trailing_7
             .apply_success(fake_trailing(7), now);
         dc.week.apply_success(Vec::new(), now);
 
         dc.apply(FetchResult::Trailing7(Err("aw down".into())), now);
 
-        // Values stay (stale-during-blip contract); errors flip on.
         assert!(dc.trailing_7.value().is_some());
         assert_eq!(dc.trailing_7.last_error(), Some("aw down"));
         assert_eq!(dc.week.last_error(), Some("aw down"));
@@ -1008,20 +833,15 @@ mod tests {
 
     #[test]
     fn try_rebuild_week_needs_both_inputs() {
-        // T5 — week derivation only fires once trailing_7 AND
-        // timeline_events have both landed. Either alone leaves week
-        // unset.
         let mut dc = DataCache::new();
         let now = Instant::now();
 
-        // Only trailing_7: week stays unset.
         dc.apply(FetchResult::Trailing7(Ok(fake_trailing(7))), now);
         assert!(
             dc.week.value().is_none(),
             "week must wait for timeline_events; trailing_7 alone is insufficient"
         );
 
-        // Adding timeline_events triggers the rebuild.
         let today_events = vec![ev(&["Work"], 1800.0)];
         dc.apply(FetchResult::TimelineEvents(Ok(today_events)), now);
         let week = dc.week.value().expect("week derived once both inputs present");
@@ -1030,9 +850,6 @@ mod tests {
 
     #[tokio::test]
     async fn dispatch_refetches_does_not_redispatch_trailing_7_when_fresh() {
-        // T7 — Cached's interval gate must keep trailing_7 from
-        // re-firing on every tick. Without this the 5min cadence
-        // collapses to per-tick.
         let mut cache = DataCache::new();
         let now = Instant::now();
         cache
@@ -1042,7 +859,6 @@ mod tests {
         let (tx, _rx) = mpsc::unbounded_channel();
         dispatch_refetches(&mut cache, TimeRange::Today, Tab::Today, &tx, now);
 
-        // trailing_7's fetched_at == now; interval is 5min; should_refetch == false.
         assert!(
             !cache.trailing_7.should_refetch(now),
             "fresh trailing_7 must not redispatch within its interval"
@@ -1051,8 +867,6 @@ mod tests {
 
     #[test]
     fn trailing_7_offline_does_not_flip_aggregate_flag() {
-        // Same precedent as `week`: 5min cadence slots blipping
-        // shouldn't flicker the footer indicator.
         let mut dc = DataCache::new();
         let now = Instant::now();
         for _ in 0..(OFFLINE_THRESHOLD + 2) {
@@ -1114,8 +928,6 @@ mod tests {
 
     #[test]
     fn data_cache_week_offline_does_not_flip_aggregate_flag() {
-        // Week runs at 5min cadence. Surfacing offline on its blips would
-        // create false positives — same precedent as `trailing_7`.
         let mut dc = DataCache::new();
         let now = Instant::now();
         for _ in 0..(OFFLINE_THRESHOLD + 2) {
@@ -1144,14 +956,11 @@ mod tests {
 
     #[test]
     fn iso_monday_for_known_dates() {
-        // Wednesday May 6, 2026 → Monday May 4, 2026.
         let wed = NaiveDate::from_ymd_opt(2026, 5, 6).unwrap();
         let mon = NaiveDate::from_ymd_opt(2026, 5, 4).unwrap();
         assert_eq!(iso_monday(wed), mon);
-        // Sunday lands back on the previous Monday (ISO week starts on Mon).
         let sun = NaiveDate::from_ymd_opt(2026, 5, 10).unwrap();
         assert_eq!(iso_monday(sun), mon);
-        // Monday is a fixed point.
         assert_eq!(iso_monday(mon), mon);
     }
 
@@ -1166,7 +975,6 @@ mod tests {
 
     #[test]
     fn build_week_marks_future_days() {
-        // "Today" is Wed May 6; Mon-Tue are past, Wed is today, Thu-Sun are future.
         let today = NaiveDate::from_ymd_opt(2026, 5, 6).unwrap();
         let past = vec![
             crate::data::queries::TrailingDayPayload {
@@ -1210,7 +1018,6 @@ mod tests {
     #[test]
     fn build_week_orders_roots_by_week_root_order() {
         let today = NaiveDate::from_ymd_opt(2026, 5, 8).unwrap();
-        // Today has Browsing, Work, ZZUnknown — expect ROOT_ORDER then alpha.
         let today_events = vec![
             ev(&["Browsing"], 1000.0),
             ev(&["Work", "Programming"], 2000.0),

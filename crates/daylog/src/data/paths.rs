@@ -1,5 +1,3 @@
-//! Shared filesystem paths.
-
 use std::path::PathBuf;
 
 const APP_IDENTIFIER: &str = "com.manas-kenge.daylog";
@@ -10,7 +8,6 @@ pub enum PathError {
     NoConfigDir,
 }
 
-/// `~/.config/com.manas-kenge.daylog/` on Linux.
 pub fn config_dir() -> Result<PathBuf, PathError> {
     dirs::config_dir()
         .map(|p| p.join(APP_IDENTIFIER))

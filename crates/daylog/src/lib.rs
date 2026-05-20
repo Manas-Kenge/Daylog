@@ -1,7 +1,3 @@
-//! Daylog — terminal screen time tracker for Linux. Ratatui surface
-//! over a pure-Rust data layer (`data::`); first launch downloads the
-//! upstream tracker (see `tracking/`).
-
 use std::io;
 
 mod app;
@@ -16,16 +12,10 @@ pub use app::Tab;
 
 enum Command {
     Dashboard,
-    /// Force the wizard regardless of marker (`--setup`).
     Setup,
-    /// Tear down systemd units / autostart entries / extracted binaries
-    /// (`--uninstall-tracking`).
     UninstallTracking,
     Help,
     Version,
-    /// Emit today's KPIs to stdout as JSON (`--json today`). For status
-    /// bars (Quickshell, waybar, i3blocks) that poll on a short
-    /// interval; must never touch the wizard or open a TTY.
     JsonToday,
 }
 
@@ -67,7 +57,6 @@ Usage:
   daylog --version             Print version and exit.
 ";
 
-/// CLI entry point. Returns process exit code.
 pub fn run(args: &[String]) -> i32 {
     let command = match parse_args(args) {
         Ok(c) => c,
@@ -111,7 +100,6 @@ pub fn run(args: &[String]) -> i32 {
     match exit {
         Ok(()) => 0,
         Err(e) => {
-            // Terminal already restored by restore_terminal / panic handler.
             eprintln!("daylog: {e}");
             1
         }
@@ -195,8 +183,6 @@ async fn run_async(force_wizard: bool) -> io::Result<()> {
     result
 }
 
-/// Restore the terminal on panic so users don't end up with a stuck raw
-/// mode + alt screen + no echo.
 fn install_panic_handler() {
     let default_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {

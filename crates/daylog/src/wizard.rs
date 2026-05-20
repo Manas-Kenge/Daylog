@@ -1,11 +1,3 @@
-//! First-launch tracker installer.
-//!
-//! Probes aw-server on `:5600`. If it's already running, daylog drops
-//! straight into the dashboard. Otherwise the user gets a one-screen
-//! ratatui prompt asking whether to install the embedded tracker.
-//! Choice is persisted at `~/.config/daylog/.wizard-complete` so we
-//! don't re-prompt on every launch.
-
 use std::io;
 use std::path::PathBuf;
 
@@ -28,18 +20,11 @@ use crate::ui::Backend;
 
 pub const WIZARD_MARKER: &str = ".wizard-complete";
 
-/// What the wizard decided after a single launch.
 #[derive(Debug)]
 pub enum WizardOutcome {
-    /// Either the marker was already present, or aw-server was already
-    /// up — nothing to do, drop into the dashboard.
     Skipped,
-    /// User confirmed install + tracker is now live. Marker written.
     Installed,
-    /// User declined the install. Marker written so we don't re-prompt.
     Declined,
-    /// User pressed Q before answering. Caller should exit cleanly without
-    /// rendering the dashboard.
     Quit,
 }
 
@@ -53,8 +38,6 @@ pub enum WizardError {
     Lifecycle(#[from] LifecycleError),
 }
 
-/// Run the wizard against `terminal`. The terminal stays in raw-mode + alt-screen
-/// for the whole flow; the dashboard takes over after `Skipped` / `Installed`.
 pub async fn run_if_needed(
     terminal: &mut Terminal<Backend>,
     theme: &Theme,
@@ -62,22 +45,13 @@ pub async fn run_if_needed(
     let server_up = probe_aw_server().await;
     let db_present = datastore::db_path().map(|p| p.exists()).unwrap_or(false);
 
-    // Surface the "non-aw-server-rust process is bound to :5600" case
-    // before dropping into the dashboard. Most likely culprit is the
-    // older aw-server (Python) from a pre-Rust ActivityWatch install.
-    // Daylog no longer reads peewee SQLite, so the TUI would show
-    // "tracker offline" without explanation. The screen waits for any
-    // key, then falls through — the user still sees the dashboard,
-    // they just know what's happening.
+    // Older Python aw-server uses a different SQLite schema we can't read.
     if server_up && !db_present {
         render_wrong_server(terminal, theme)?;
         wait_for_any_key().await?;
     }
 
     if marker_exists() || server_up {
-        // marker = user already chose; server_up without marker = some
-        // other aw-server is already running. Either way, don't reprompt.
-        // (The wrong-server warning above already covered the latter.)
         return Ok(WizardOutcome::Skipped);
     }
 
@@ -97,8 +71,6 @@ pub async fn run_if_needed(
     }
 }
 
-/// Force the wizard regardless of marker / probe state. Wired to
-/// `daylog --setup`. Always renders the prompt; user can still decline.
 pub async fn run_forced(
     terminal: &mut Terminal<Backend>,
     theme: &Theme,
@@ -135,9 +107,6 @@ async fn install_tracker(
     render_progress(terminal, theme, "Waiting for the tracker to come up…")?;
     tracking::wait_until_live(15).await?;
 
-    // GNOME-Wayland needs a shell extension for window titles; install if
-    // applicable. Best-effort — failure here doesn't abort the install,
-    // since the rest of the tracker still works (you just lose titles).
     if tracking::gnome::is_gnome_wayland() {
         render_progress(terminal, theme, "Installing GNOME shell extension…")?;
         let _ = tracking::gnome::setup().await;
@@ -183,7 +152,6 @@ async fn wait_for_choice() -> Result<Choice, WizardError> {
             }
         }
     }
-    // EventStream ended before we got a choice — treat as quit.
     Ok(Choice::Quit)
 }
 
@@ -209,10 +177,10 @@ fn render_prompt(
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(2), // headline
-                Constraint::Length(3), // body
-                Constraint::Length(1), // spacer
-                Constraint::Length(1), // keys
+                Constraint::Length(2),
+                Constraint::Length(3),
+                Constraint::Length(1),
+                Constraint::Length(1),
             ])
             .split(inner);
 
@@ -264,10 +232,10 @@ fn render_wrong_server(
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(2), // headline
-                Constraint::Length(6), // body
-                Constraint::Length(1), // spacer
-                Constraint::Length(1), // keys
+                Constraint::Length(2),
+                Constraint::Length(6),
+                Constraint::Length(1),
+                Constraint::Length(1),
             ])
             .split(inner);
 

@@ -1,10 +1,3 @@
-//! Download + sha256-verify + zip-extract for the upstream binaries.
-//!
-//! Cache layout: `~/.cache/daylog/binaries/<sha-prefix>-<name>.zip`. Stale
-//! entries (those whose archive no longer matches the pinned sha256) are
-//! re-downloaded silently. We do not garbage-collect old caches — disk is
-//! cheap, network is the slow path.
-
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -15,8 +8,6 @@ use sha2::{Digest, Sha256};
 use crate::tracking::install::InstallError;
 use crate::tracking::pins::BinaryPin;
 
-/// Resolve the archive cache dir. Best-effort — falls back to `/tmp` if
-/// neither `XDG_CACHE_HOME` nor `HOME` is set.
 pub(crate) fn cache_dir() -> Result<PathBuf, InstallError> {
     let dir = dirs::cache_dir()
         .ok_or_else(|| InstallError::Io("could not resolve $XDG_CACHE_HOME or $HOME".into()))?
@@ -26,17 +17,14 @@ pub(crate) fn cache_dir() -> Result<PathBuf, InstallError> {
     Ok(dir)
 }
 
-/// Ensure the pinned archive is on disk + verified. Returns the cache
-/// path. Re-downloads if the cached file is missing or fails sha256.
+/// Returns the cache path; re-downloads on stale or missing sha.
 pub(crate) async fn fetch_archive(pin: &BinaryPin) -> Result<PathBuf, InstallError> {
     let cache = cache_dir()?;
-    // Cache filename keys on the sha so old versions don't shadow new ones.
     let cached = cache.join(format!("{}-{}.zip", &pin.archive_sha256[..16], pin.name));
 
     if cached.exists() {
         match verify_sha256(&cached, pin.archive_sha256) {
             Ok(true) => return Ok(cached),
-            // Stale or corrupt — fall through and re-download.
             _ => {
                 let _ = fs::remove_file(&cached);
             }
@@ -54,8 +42,6 @@ pub(crate) async fn fetch_archive(pin: &BinaryPin) -> Result<PathBuf, InstallErr
     Ok(cached)
 }
 
-/// Stream the URL into a file. Uses reqwest with byte streaming so we
-/// don't hold the whole archive in memory (aw-server-rust is ~30 MB).
 pub(crate) async fn download(url: &str, dest: &Path) -> Result<(), InstallError> {
     let tmp = dest.with_extension(format!("tmp.{}", std::process::id()));
     let resp = reqwest::get(url)
@@ -79,7 +65,6 @@ pub(crate) async fn download(url: &str, dest: &Path) -> Result<(), InstallError>
     Ok(())
 }
 
-/// Verify a file's sha256 against an expected hex string (lowercase).
 pub(crate) fn verify_sha256(path: &Path, expected: &str) -> Result<bool, InstallError> {
     let mut file = fs::File::open(path)?;
     let mut hasher = Sha256::new();
@@ -103,7 +88,6 @@ fn hex_lower(bytes: &[u8]) -> String {
     s
 }
 
-/// Extract one named entry from a zip archive into `dest`.
 pub(crate) fn extract_one_from_zip(
     archive: &Path,
     member: &str,

@@ -1,24 +1,12 @@
-//! KPI strip math. Discovery-shaped (PLAN.md §1.0). All bucketing uses local time.
-
 use chrono::{DateTime, Local, Timelike, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::data::aggregate::CategorizedEvent;
 
-/// Below this, a contiguous run on a single root isn't "focus."
 pub const FOCUS_FLOOR_SECS: f64 = 120.0;
-
-/// Days below this overall-active threshold are excluded from the
-/// trailing baseline so vacation/paused days don't drag the median to zero.
 pub const QUIET_DAY_FLOOR_SECS: f64 = 30.0 * 60.0;
-
-/// Suppress "vs typical" deltas tinier than this. "+47 seconds" is noise.
 pub const PATTERN_SHIFT_NOISE_FLOOR_SECS: f64 = 15.0 * 60.0;
-
-/// 3-hour focus window.
 pub const WINDOW_HOURS: usize = 3;
-
-/// Fallback root when an event's category path is empty.
 pub const UNCATEGORIZED_ROOT: &str = "Uncategorized";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -46,7 +34,6 @@ pub struct BaselineStats {
     pub effective_days: u32,
     pub median: f64,
     pub mean: f64,
-    /// Sample stdev. 0 with fewer than 2 effective days.
     pub stdev: f64,
 }
 
@@ -54,28 +41,20 @@ pub struct BaselineStats {
 pub struct KpiSummary {
     pub active_secs: f64,
     pub afk_secs: f64,
-    /// `active_secs / (active_secs + afk_secs)`, clamped to 0 when both are zero.
     pub active_ratio: f64,
     pub longest_stretch: Option<LongestStretch>,
     pub best_window: Option<BestWindow>,
-    /// Dominant-root delta vs the trailing-7 median for that root.
     pub pattern_shift: Option<PatternShift>,
     pub focus_by_hour: [f64; 24],
-    /// Trailing-7 baseline of total active seconds.
     pub active_baseline: BaselineStats,
-    /// Trailing-7 baseline of `longest_stretch.seconds` per past day.
     pub longest_baseline: BaselineStats,
-    /// Trailing-7 baseline of `best_window.seconds` per past day.
     pub best_window_baseline: BaselineStats,
 }
 
-/// First segment of the category path; "Uncategorized" when empty.
 pub fn category_root(path: &[String]) -> &str {
     path.first().map(String::as_str).unwrap_or(UNCATEGORIZED_ROOT)
 }
 
-/// Longest contiguous run sharing a category root. Runs below `floor_secs`
-/// don't qualify as focus.
 pub fn longest_focus(events: &[CategorizedEvent], floor_secs: f64) -> Option<LongestStretch> {
     if events.is_empty() {
         return None;
@@ -115,9 +94,6 @@ pub fn longest_focus(events: &[CategorizedEvent], floor_secs: f64) -> Option<Lon
     })
 }
 
-/// 24 buckets of focused-time per hour. Only counts duration that lies
-/// inside a run ≥ `floor_secs` on a single root. Hour is the event's
-/// start hour in local time.
 pub fn focus_by_hour(events: &[CategorizedEvent], floor_secs: f64) -> [f64; 24] {
     let mut out = [0.0_f64; 24];
     if events.is_empty() {
@@ -126,8 +102,6 @@ pub fn focus_by_hour(events: &[CategorizedEvent], floor_secs: f64) -> [f64; 24] 
     let mut sorted: Vec<&CategorizedEvent> = events.iter().collect();
     sorted.sort_by_key(|e| e.timestamp);
 
-    // Walk runs of equal root; flush each qualifying run by attributing
-    // each member event's duration to its own start-hour bucket.
     let n = sorted.len();
     let mut run_start = 0_usize;
     let mut run_root: Option<String> = Some(category_root(&sorted[0].category).to_string());
@@ -167,9 +141,6 @@ fn flush_run(
     }
 }
 
-/// Densest contiguous `WINDOW_HOURS`-hour slice in the per-hour focus
-/// spark. Ties break to the earliest start. Returns `None` when nothing
-/// qualifies.
 pub fn best_window(focus_by_hour: &[f64; 24]) -> Option<BestWindow> {
     let mut best_start = 0_usize;
     let mut best_sum = 0.0_f64;
@@ -190,9 +161,7 @@ pub fn best_window(focus_by_hour: &[f64; 24]) -> Option<BestWindow> {
     })
 }
 
-/// Median/mean/stdev over the per-day metric, with quiet days filtered
-/// by the parallel daily-active array. Caller picks which metric they
-/// want a baseline for; we just need the active totals to gate.
+/// Quiet days (active < QUIET_DAY_FLOOR_SECS) excluded from samples.
 pub fn trailing_stats(daily_totals: &[f64], daily_active_totals: &[f64]) -> BaselineStats {
     let len = daily_totals.len().min(daily_active_totals.len());
     let mut samples: Vec<f64> = Vec::with_capacity(len);
@@ -232,7 +201,6 @@ pub fn trailing_stats(daily_totals: &[f64], daily_active_totals: &[f64]) -> Base
     }
 }
 
-/// Per-root totals for one day, keyed by category root.
 fn root_totals(events: &[CategorizedEvent]) -> std::collections::HashMap<String, f64> {
     let mut out: std::collections::HashMap<String, f64> = std::collections::HashMap::new();
     for ev in events {
@@ -255,23 +223,17 @@ fn median_of(mut xs: Vec<f64>) -> f64 {
     }
 }
 
-/// Largest absolute delta between today's per-root totals and the
-/// trailing-7 median for that root. Suppressed below the noise floor.
-/// Weekday label is descriptive (today's name); the baseline is not
-/// same-weekday-filtered.
 pub fn pattern_shift(
     today: &[CategorizedEvent],
     past_days: &[Vec<CategorizedEvent>],
     today_weekday_label: &str,
 ) -> Option<PatternShift> {
-    // No baseline → no signal (don't compare against implicit zero).
     if past_days.is_empty() {
         return None;
     }
 
     let today_totals = root_totals(today);
 
-    // Roots to consider = anything seen today or in the past window.
     let mut roots: std::collections::BTreeSet<String> = today_totals.keys().cloned().collect();
     for day in past_days {
         for ev in day {
@@ -304,17 +266,12 @@ pub fn pattern_shift(
     })
 }
 
-/// "Mon"/"Tue"/… for a UTC instant, evaluated in local time.
 pub fn weekday_label(at: DateTime<Utc>) -> String {
     at.with_timezone(&Local)
         .format("%a")
         .to_string()
 }
 
-/// Compose the whole strip in one call. `active_secs` / `afk_secs` /
-/// `past_active_secs` come from `summarize_afk` so AFK accounting has
-/// one source of truth. `past_active_secs` is parallel to `past_days`:
-/// index `i` is the active seconds for day `past_days[i]`.
 pub fn summarize(
     today: &[CategorizedEvent],
     past_days: &[Vec<CategorizedEvent>],
@@ -361,9 +318,6 @@ mod tests {
     use serde_json::Value;
 
     fn ev(hour_local: u32, dur: f64, category: &[&str]) -> CategorizedEvent {
-        // Build the timestamp in local time, then convert to UTC, so
-        // focus_by_hour buckets land on `hour_local` regardless of the
-        // host's timezone.
         let local = Local
             .with_ymd_and_hms(2026, 5, 8, hour_local, 0, 0)
             .single()
@@ -390,7 +344,6 @@ mod tests {
 
     #[test]
     fn longest_focus_skips_below_floor() {
-        // Single 60s event is below the 120s floor.
         let events = vec![ev(14, 60.0, &["Work"])];
         assert_eq!(longest_focus(&events, FOCUS_FLOOR_SECS), None);
     }
@@ -398,11 +351,8 @@ mod tests {
     #[test]
     fn longest_focus_picks_largest_run() {
         let events = vec![
-            // 10:00 Work, 600s — qualifies on its own.
             ev(10, 600.0, &["Work"]),
-            // 11:00 Browsing, breaks the Work run.
             ev(11, 300.0, &["Browsing"]),
-            // 12:00 + 13:00 Work — contiguous 1800s run.
             ev(12, 900.0, &["Work"]),
             ev(13, 900.0, &["Work"]),
         ];
@@ -437,8 +387,6 @@ mod tests {
 
     #[test]
     fn focus_by_hour_handles_midnight_spanning_events() {
-        // Two events at 23 and 00 the next day, on the same root, contiguous.
-        // Each event's duration counts in its own start hour.
         let late = Local
             .with_ymd_and_hms(2026, 5, 8, 23, 0, 0)
             .single()
@@ -492,7 +440,6 @@ mod tests {
             ev(9, 1200.0, &["Work"]),
             ev(10, 1200.0, &["Work"]),
             ev(11, 1200.0, &["Work"]),
-            // Equal-magnitude run later in the day.
             ev(20, 1200.0, &["Work"]),
             ev(21, 1200.0, &["Work"]),
             ev(22, 1200.0, &["Work"]),
@@ -513,7 +460,6 @@ mod tests {
 
     #[test]
     fn trailing_stats_excludes_quiet_days() {
-        // Three days, last one quiet (active < 30m).
         let totals = [3600.0, 7200.0, 100.0];
         let active = [4.0 * 3600.0, 5.0 * 3600.0, 60.0];
         let s = trailing_stats(&totals, &active);
@@ -536,8 +482,6 @@ mod tests {
 
     #[test]
     fn pattern_shift_suppresses_below_noise_floor() {
-        // Today: 10 minutes Work. Past: 5 minutes Work. Delta = 300s,
-        // well under the 900s noise floor.
         let today = vec![ev(10, 600.0, &["Work"])];
         let past = vec![vec![ev(10, 300.0, &["Work"])]];
         assert_eq!(pattern_shift(&today, &past, "Tue"), None);
@@ -545,9 +489,6 @@ mod tests {
 
     #[test]
     fn pattern_shift_picks_dominant_root_delta() {
-        // Today: 2h Browsing, 0 Work. Past 3 days: ~0 Browsing,
-        // ~1h Work each. Browsing delta (+7200s) beats Work delta (-3600s)
-        // in magnitude, so Browsing wins.
         let today = vec![ev(10, 7200.0, &["Browsing"])];
         let past = vec![
             vec![ev(10, 3600.0, &["Work"])],
@@ -573,20 +514,15 @@ mod tests {
         let s = summarize(&today, &past, &past_active, 6000.0, 1200.0, "Fri");
         assert_eq!(s.active_secs, 6000.0);
         assert_eq!(s.afk_secs, 1200.0);
-        // 6000 / (6000 + 1200) ≈ 0.833.
         assert!((s.active_ratio - 6000.0 / 7200.0).abs() < 1e-6);
         let stretch = s.longest_stretch.expect("some");
-        // Matches desktop's longestFocus: same-root events sum regardless of
-        // time gaps between them, so all four Work events fold into one run.
         assert_eq!(stretch.seconds, 6000.0);
         assert_eq!(stretch.category_root, "Work");
         let win = s.best_window.expect("some");
         assert_eq!(win.start_hour, 14);
         assert_eq!(win.end_hour, 17);
-        // No past days → no pattern shift signal worth surfacing.
         assert_eq!(s.pattern_shift, None);
         assert_eq!(s.focus_by_hour[14], 1800.0);
-        // No past days → empty baselines (effective_days==0).
         assert_eq!(s.active_baseline.effective_days, 0);
         assert_eq!(s.longest_baseline.effective_days, 0);
         assert_eq!(s.best_window_baseline.effective_days, 0);

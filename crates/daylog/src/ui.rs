@@ -1,5 +1,3 @@
-//! Terminal lifecycle + top-level frame rendering.
-
 use std::io::{self, Stdout};
 
 use crossterm::{
@@ -45,8 +43,7 @@ pub fn restore_terminal(terminal: &mut Terminal<Backend>) -> io::Result<()> {
     Ok(())
 }
 
-/// Best-effort terminal restore from inside a panic hook. Stdout may be in
-/// an unknown state; we ignore errors and try every undo step independently.
+/// Best-effort restore; ignores errors. Panic-safe.
 pub fn restore_terminal_raw() -> io::Result<()> {
     let _ = disable_raw_mode();
     let _ = execute!(io::stdout(), LeaveAlternateScreen, DisableMouseCapture);
@@ -57,9 +54,9 @@ pub fn render(f: &mut Frame, app: &App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(1), // tab strip
-            Constraint::Length(1), // top divider rule (also the visual margin)
-            Constraint::Min(0),    // body — claims everything else
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Min(0),
         ])
         .split(f.area());
 
@@ -68,14 +65,12 @@ pub fn render(f: &mut Frame, app: &App) {
     render_body(f, chunks[2], app);
     render_offline_indicator(f, chunks[0], app);
 
-    // Scope effects to body so the tab strip doesn't flicker mid-transition.
     if let Some(effect) = app.effect.borrow_mut().as_mut() {
         let last_tick = *app.last_tick.borrow();
         f.render_effect(effect, chunks[2], last_tick);
     }
 }
 
-/// Overlay on the right of the tab strip after 3+ consecutive fetch failures.
 fn render_offline_indicator(f: &mut Frame, area: Rect, app: &App) {
     if !app.data.any_offline() {
         return;
@@ -97,7 +92,6 @@ fn render_offline_indicator(f: &mut Frame, area: Rect, app: &App) {
     f.render_widget(p, inset);
 }
 
-/// Tab strip. Active tab gets the ember pill; inactive tabs are dim.
 fn render_tabs(f: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
     let inset = Rect {
@@ -132,8 +126,6 @@ fn render_body(f: &mut Frame, area: Rect, app: &App) {
 }
 
 
-/// Skeleton body: animated throbber if `fetching`, static `…` otherwise.
-/// Centred vertically in the panel inner area.
 pub fn render_skeleton_body(
     f: &mut Frame,
     area: Rect,
@@ -164,9 +156,6 @@ pub fn render_skeleton_body(
     f.render_widget(p, row);
 }
 
-/// BOLD UPPERCASE section header. `↻` suffix when the data feeding this section
-/// is in-flight. Caller controls placement; renders on a single row at the top
-/// of `area`.
 pub fn render_section_header(
     f: &mut Frame,
     area: Rect,
@@ -192,8 +181,6 @@ pub fn render_section_header(
     f.render_widget(Paragraph::new(Line::from(spans)), row);
 }
 
-/// Dim horizontal rule across the row. Replaces panel borders as the section
-/// separator. Drawn at `area`'s top row.
 pub fn render_divider(f: &mut Frame, area: Rect, theme: &Theme) {
     if area.width == 0 || area.height == 0 {
         return;
@@ -211,7 +198,6 @@ pub fn render_divider(f: &mut Frame, area: Rect, theme: &Theme) {
     );
 }
 
-/// "2h 14m" / "47m 12s" / "3s".
 pub fn format_duration(secs: f64) -> String {
     let total = secs.max(0.0) as u64;
     let h = total / 3600;
@@ -275,7 +261,6 @@ mod tests {
             "snapshot must not overwrite tabs: {tabs_row}"
         );
 
-        // Active tab now wears the brand ember pill instead of REVERSED.
         let today_x = tabs_row.find("Today").expect("Today tab present") as u16;
         assert_eq!(
             buf[(today_x, 0)].style().bg,

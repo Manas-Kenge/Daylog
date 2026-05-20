@@ -1,5 +1,3 @@
-//! Month tab — GitHub-style 53-week heatmap + 30d rollups.
-
 use chrono::{Datelike, Duration as ChronoDuration, Local, NaiveDate};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
@@ -20,17 +18,15 @@ use crate::ui::{
     render_divider, render_skeleton_body,
 };
 
-/// Heatmap left gutter: "M  ", "W  ", "F  ", or "   ". Three cols so
-/// cells line up below the month abbreviations.
 const HEATMAP_LABEL_GUTTER: usize = 3;
 
 pub fn render(f: &mut Frame, area: Rect, app: &App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(11), // year heatmap + this-month card (now borderless)
-            Constraint::Length(1),  // divider
-            Constraint::Min(8),     // 30-day rollup row
+            Constraint::Length(11),
+            Constraint::Length(1),
+            Constraint::Min(8),
         ])
         .split(area);
 
@@ -112,8 +108,6 @@ fn render_heatmap(f: &mut Frame, area: Rect, app: &App) {
     f.render_widget(p, inner);
 }
 
-/// Use today's live KPI only when chip == Today; otherwise 0 (don't
-/// splice another chip's value).
 fn today_active_secs(app: &App) -> f64 {
     if app.range_chip == RangeChip::Today {
         app.data.kpi.value().map(|k| k.active_secs).unwrap_or(0.0)
@@ -131,8 +125,6 @@ struct HeatmapCell {
 #[derive(Debug, Clone)]
 struct HeatmapColumn {
     month_label: Option<&'static str>,
-    /// Index 0 = Sunday … 6 = Saturday. `None` is a cell outside the
-    /// 365-day window.
     cells: [Option<HeatmapCell>; 7],
 }
 
@@ -166,8 +158,6 @@ fn build_columns(today: NaiveDate, today_active_secs: f64, trailing: &[f64]) -> 
                 is_today: date == today,
             });
         }
-        // Label this column if any cell falls inside the visible window
-        // AND its month differs from the previous labeled column.
         let first_in_window = (0..7).find_map(|r| {
             let d = col_start + ChronoDuration::days(r);
             (d >= start && d <= today).then_some(d)
@@ -222,7 +212,6 @@ fn render_heatmap_lines(
 ) -> Vec<Line<'static>> {
     let mut lines: Vec<Line<'static>> = Vec::with_capacity(8);
 
-    // Push labels right when the natural slot would collide with the previous label; keeps every month visible.
     let mut label_chars = vec![' '; width.max(HEATMAP_LABEL_GUTTER)];
     let mut last_end = 0usize;
     for (c, col) in columns.iter().enumerate() {
@@ -247,7 +236,6 @@ fn render_heatmap_lines(
         Style::default().fg(theme.dim),
     )));
 
-    // M/W/F-only labels (GitHub-heatmap convention).
     for weekday in 0..7 {
         let mut spans: Vec<Span<'static>> = Vec::with_capacity(columns.len() + 1);
         let gutter = match weekday {
@@ -271,8 +259,6 @@ fn render_heatmap_lines(
     lines
 }
 
-/// 4-tier ember density. Empty-but-tracked day = `·` (border_dim);
-/// today = REVERSED+BOLD overlay.
 fn density_span(theme: &Theme, secs: f64, max_secs: f64, is_today: bool) -> Span<'static> {
     let mut style = Style::default();
     let ch: char = if secs <= 0.0 || max_secs <= 0.0 {
@@ -344,8 +330,6 @@ fn render_this_month(f: &mut Frame, area: Rect, app: &App) {
         .as_ref()
         .map(|b| format_day_hint(today - ChronoDuration::days(b.days_ago as i64)));
 
-    // Blank lines between stats match Week's `This week` card so the two
-    // side-cards have identical vertical rhythm across tabs.
     let lines = vec![
         row("Total active", format_duration(stats.total_secs), None),
         Line::from(""),
@@ -372,10 +356,8 @@ struct BestDay {
     active_secs: f64,
 }
 
-/// Headline stats for the trailing 30 days. Index 0 is `today_active`;
-/// `trailing[i]` is days_ago = i + 1 (so `trailing[0]` = yesterday).
-/// Average is over **active** days only — a pile of zero-activity
-/// weekend days shouldn't drag down the headline metric.
+/// Index 0 = today_active; trailing[i] = days_ago i+1. Average is over
+/// active days only.
 fn month_stats(today_active: f64, trailing: &[f64]) -> MonthStats {
     let mut days: Vec<f64> = Vec::with_capacity(30);
     days.push(today_active);
@@ -399,7 +381,6 @@ fn month_stats(today_active: f64, trailing: &[f64]) -> MonthStats {
             active_secs: *secs,
         });
 
-    // Strict: a zero-event morning starts the streak at 0.
     let mut streak = 0_u32;
     for v in &days {
         if *v > 0.0 {
@@ -459,9 +440,7 @@ mod tests {
         let expected_cols = (((end - week_start).num_days() + 1) + 6) / 7;
         assert_eq!(cols.len(), expected_cols as usize);
 
-        // Today's cell must be flagged somewhere in the visible grid.
-        // It is not necessarily in the final column because the desktop
-        // layout reserves future cells through the end of this month.
+        // Future cells reserved through month-end, so today may not be in the final column.
         let today_dow = today.weekday().num_days_from_sunday() as usize;
         assert!(
             cols.iter()
@@ -491,7 +470,6 @@ mod tests {
         let trailing = vec![0.0; 365];
         let cols = build_columns(today, 0.0, &trailing);
         let labels: Vec<&'static str> = cols.iter().filter_map(|c| c.month_label).collect();
-        // 365 days always crosses 12+ month boundaries.
         assert!(
             labels.len() >= 12,
             "expected ≥12 month labels, got {:?}",
@@ -501,12 +479,10 @@ mod tests {
 
     #[test]
     fn month_stats_averages_only_over_active_days() {
-        // today=2h, yesterday=4h, rest=0.
         let mut trailing = vec![0.0; 29];
         trailing[0] = 4.0 * 3600.0;
         let stats = month_stats(2.0 * 3600.0, &trailing);
         assert_eq!(stats.total_secs, 6.0 * 3600.0);
-        // Average over 2 active days = 3h.
         assert_eq!(stats.avg_secs, 3.0 * 3600.0);
         assert_eq!(stats.active_days, 2);
         assert_eq!(
@@ -544,7 +520,6 @@ mod tests {
         assert_eq!(span.content.as_ref(), "\u{2588}");
     }
 
-    /// Smoke test — title/fixture-point assertions, not byte-exact.
     #[test]
     fn month_renders_full_layout() {
         use crate::app::{App, Tab};
@@ -559,8 +534,6 @@ mod tests {
         app.tab = Tab::Month;
         let now = Instant::now();
 
-        // Trailing year: small ramp so the heatmap has visible variance
-        // without needing 365 distinct values.
         let year: Vec<f64> = (0..365).map(|i| (i % 7) as f64 * 600.0).collect();
         app.data.month_trailing_year.apply_success(year, now);
         app.data.month_top_apps.apply_success(

@@ -1,14 +1,3 @@
-//! High-level read API. Composes `datastore::events_in_range` +
-//! `transforms::*` + `aggregate::*` to produce the typed rows the TUI
-//! consumes. The pipelines mirror the AQL bodies daylog used to send
-//! over /api/0/query/ but execute entirely in-process: SQLite SELECT +
-//! Rust transforms, no HTTP round-trip, no server-side serialization.
-//!
-//! Each function is `async fn` so call sites in the dispatcher
-//! (`crates/daylog/src/data.rs`) don't have to change shape. The bodies
-//! are synchronous internally — datastore reads are millisecond-scale,
-//! cheap enough to run on the runtime thread without `spawn_blocking`.
-
 use chrono::Duration as ChronoDuration;
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -24,8 +13,6 @@ use crate::data::kpi::{self, KpiSummary};
 use crate::data::time::TimeRange;
 use crate::data::transforms;
 
-/// `pulsetime` for `flood()`. Heartbeats land every 5s in the upstream
-/// defaults, so 5s closes the gaps without bridging legitimate pauses.
 const PULSE_SECS: i64 = 5;
 
 const BUCKET_WINDOW: &str = "aw-watcher-window_";
@@ -56,8 +43,6 @@ impl serde::Serialize for QueryError {
     }
 }
 
-/// One day's categorized events + AFK summary. `days_ago = 1` is
-/// yesterday. Today isn't bundled here — it refreshes on a different cadence.
 #[derive(Debug, Clone, Serialize)]
 pub struct TrailingDayPayload {
     pub days_ago: u32,
@@ -69,12 +54,7 @@ fn range_bounds(range: &TimeRange) -> (chrono::DateTime<chrono::Utc>, chrono::Da
     range.resolve()
 }
 
-// -- top apps / top categories / top domains --
-
-/// Today's-or-Nday's top apps. Output is `Vec<Value>` shaped exactly like
-/// the AQL response, so the existing `TopAppRow::parse_many` in the TUI
-/// still works without churn. Future cleanup can swap this for the typed
-/// vec once call sites are migrated.
+/// Returns the raw JSON shape `TopAppRow::parse_many` consumes.
 pub async fn top_apps(_client: &AwClient, range: TimeRange) -> Result<Vec<Value>, QueryError> {
     let (start, end) = range_bounds(&range);
     let window = datastore::events_in_range(BUCKET_WINDOW, start, end)?;
@@ -180,8 +160,6 @@ pub async fn top_urls(_client: &AwClient, range: TimeRange) -> Result<Vec<Value>
     Ok(sorted.into_iter().map(event_to_value).collect())
 }
 
-// -- trailing windows --
-
 pub async fn trailing_days_past(days: u32) -> Result<Vec<TrailingDayPayload>, QueryError> {
     if days == 0 {
         return Ok(Vec::new());
@@ -190,11 +168,6 @@ pub async fn trailing_days_past(days: u32) -> Result<Vec<TrailingDayPayload>, Qu
     let cfg = categories::load(&client).await?;
     let rules = transforms::compile_rules(&cfg)?;
 
-    // Sequential is fine: each day's compose is <10ms against an
-    // indexed SQLite read, so a 7-day cold start completes in <100ms
-    // total. Previously this needed a Semaphore(2) HTTP fan-out because
-    // /api/0/query/ serialized on Mutex<Datastore>; that constraint is
-    // gone now.
     let mut out = Vec::with_capacity(days as usize);
     for n in 1..=days {
         let range = TimeRange::DaysAgo { days: n };
@@ -220,11 +193,6 @@ pub async fn trailing_days_past(days: u32) -> Result<Vec<TrailingDayPayload>, Qu
     Ok(out)
 }
 
-// -- kpi orchestrator --
-
-/// Pure-compute KPI synthesis. Takes today's payload + the trailing
-/// window directly so the caller can fetch them how it likes (the TUI
-/// derives them from shared cache slots).
 pub fn kpi_from_parts(
     today_events: &[CategorizedEvent],
     today_afk: &AfkSummary,
@@ -243,9 +211,6 @@ pub fn kpi_from_parts(
     )
 }
 
-/// One-shot KPI payload: today + trailing-7. Thin orchestrator around
-/// `kpi_from_parts` for non-TUI callers (CLI tools, future external
-/// consumers).
 pub async fn kpi(client: &AwClient, range: TimeRange) -> Result<KpiSummary, QueryError> {
     let today_events = categorized_events(client, range.clone()).await?;
     let today_afk = afk_summary(client, range, false).await?;
@@ -253,10 +218,6 @@ pub async fn kpi(client: &AwClient, range: TimeRange) -> Result<KpiSummary, Quer
     Ok(kpi_from_parts(&today_events, &today_afk, &past))
 }
 
-// -- helpers --
-
-/// Re-emit an `Event` in the JSON shape downstream parsers expect
-/// (`{timestamp, duration, data, id}`).
 fn event_to_value(e: Event) -> Value {
     let mut m = serde_json::Map::with_capacity(4);
     m.insert("timestamp".to_string(), Value::String(e.timestamp.to_rfc3339()));

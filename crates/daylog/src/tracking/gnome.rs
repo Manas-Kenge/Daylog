@@ -8,16 +8,10 @@ const EXT_UUID: &str = "focused-window-dbus@flexagoon.com";
 
 #[derive(Debug, Clone)]
 pub struct ExtensionStatus {
-    /// True iff this is a GNOME-Wayland session (the only case that needs the
-    /// extension). aw-awatcher handles X11, KDE-Wayland, and wlroots-Wayland
-    /// natively without it.
     pub applicable: bool,
-    /// True iff `gnome-extensions` is on `$PATH`.
     pub available: bool,
     pub installed: bool,
     pub enabled: bool,
-    /// Set to true after a successful install/enable on GNOME-Wayland — the
-    /// caller should prompt for a logout/login since Wayland can't live-reload.
     pub needs_relogin: bool,
 }
 
@@ -33,14 +27,12 @@ impl ExtensionStatus {
     }
 }
 
-/// True iff this is a GNOME session running on Wayland.
 pub fn is_gnome_wayland() -> bool {
     let desktop = std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_default();
     let session = std::env::var("XDG_SESSION_TYPE").unwrap_or_default();
     desktop.to_uppercase().contains("GNOME") && session.eq_ignore_ascii_case("wayland")
 }
 
-/// Probe state without making changes. Safe on any DE.
 pub async fn status() -> ExtensionStatus {
     if !is_gnome_wayland() {
         return ExtensionStatus::not_applicable();
@@ -66,8 +58,6 @@ pub async fn status() -> ExtensionStatus {
     }
 }
 
-/// Install + enable the extension if we're on GNOME-Wayland and the host has
-/// `gnome-extensions`. No-op (returns `applicable: false`) on every other DE.
 pub async fn setup() -> Result<ExtensionStatus, LifecycleError> {
     if !is_gnome_wayland() {
         return Ok(ExtensionStatus::not_applicable());
@@ -82,14 +72,10 @@ pub async fn setup() -> Result<ExtensionStatus, LifecycleError> {
         });
     }
 
-    // Download the extension zip + sha256-verify; cache hits make this a no-op.
     let zip_path = fetch_archive(&GNOME_EXTENSION)
         .await
         .map_err(|e| LifecycleError::Io(format!("fetch GNOME extension: {e}")))?;
 
-    // `gnome-extensions install --force <pack>` is the official path: handles
-    // versioning, places under ~/.local/share/gnome-shell/extensions/, and
-    // overwrites cleanly on upgrade.
     let out = Command::new("gnome-extensions")
         .arg("install")
         .arg("--force")
@@ -104,7 +90,6 @@ pub async fn setup() -> Result<ExtensionStatus, LifecycleError> {
         )));
     }
 
-    // Enable. Already-enabled is a no-op.
     let out = Command::new("gnome-extensions")
         .arg("enable")
         .arg(EXT_UUID)

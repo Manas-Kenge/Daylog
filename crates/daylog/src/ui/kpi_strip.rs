@@ -1,5 +1,3 @@
-//! Compact 1-line KPI strip. Width-driven: Wide/Narrow/Stacked drop slots progressively.
-
 use crate::data::kpi::KpiSummary;
 use ratatui::{
     layout::{Alignment, Rect},
@@ -12,7 +10,6 @@ use ratatui::{
 use crate::theme::{LayoutMode, Theme};
 use crate::ui::format_duration;
 
-/// `_last_error` is reserved for a future panel-local indicator; keep the slot on the signature.
 pub fn render(
     f: &mut Frame,
     area: Rect,
@@ -49,7 +46,6 @@ fn build_line(theme: &Theme, layout: LayoutMode, k: &KpiSummary) -> Line<'static
         spans.push(Span::styled(format_duration(longest.seconds), value));
     }
 
-    // Wide-only: crowds Narrow.
     if layout == LayoutMode::Wide {
         if let Some(best) = &k.best_window {
             spans.push(Span::raw(separator));
@@ -87,7 +83,6 @@ fn build_line(theme: &Theme, layout: LayoutMode, k: &KpiSummary) -> Line<'static
     Line::from(spans)
 }
 
-/// Shape-stable skeleton — values don't shift horizontally when data lands.
 fn build_skeleton(theme: &Theme, layout: LayoutMode) -> Line<'static> {
     let separator = match layout {
         LayoutMode::Wide => "   ",

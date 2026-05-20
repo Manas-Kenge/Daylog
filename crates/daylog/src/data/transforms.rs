@@ -1,13 +1,4 @@
-//! In-process ports of the AQL primitives daylog relied on
-//! server-side. Direct translations of the implementations in
-//! `aw-transform/src/{flood,classify,filter_period,merge,split_url,
-//! sort,filter_keyvals}.rs`, adapted to daylog's `Event` shape
-//! (`duration: f64` seconds, `data: serde_json::Value` instead of
-//! `chrono::Duration` and `Map<String, Value>`).
-//!
-//! Each function takes `Vec<Event>` and returns `Vec<Event>` so the
-//! query pipelines in `queries.rs` can chain them in the same shape
-//! as the AQL bodies they used to send.
+//! In-process ports of aw-transform/* AQL primitives.
 
 use chrono::Duration as ChronoDuration;
 use fancy_regex::Regex as FancyRegex;
@@ -25,8 +16,6 @@ fn duration_secs(d: ChronoDuration) -> f64 {
     nanos as f64 / 1_000_000_000.0
 }
 
-// --- sort ---
-
 pub fn sort_by_timestamp(mut events: Vec<Event>) -> Vec<Event> {
     events.sort_by_key(|e| e.timestamp);
     events
@@ -37,8 +26,6 @@ pub fn sort_by_duration(mut events: Vec<Event>) -> Vec<Event> {
     events
 }
 
-// --- filter_keyvals: keep events whose data[key] is in `values` ---
-
 pub fn filter_keyvals(events: Vec<Event>, key: &str, values: &[Value]) -> Vec<Event> {
     events
         .into_iter()
@@ -48,8 +35,6 @@ pub fn filter_keyvals(events: Vec<Event>, key: &str, values: &[Value]) -> Vec<Ev
         })
         .collect()
 }
-
-// --- merge_events_by_keys: group + sum duration ---
 
 pub fn merge_events_by_keys(events: Vec<Event>, keys: &[&str]) -> Vec<Event> {
     use std::collections::HashMap;
@@ -92,30 +77,13 @@ pub fn merge_events_by_keys(events: Vec<Event>, keys: &[&str]) -> Vec<Event> {
     map.into_values().collect()
 }
 
-// --- filter_period_intersect: keep portions of events overlapping filter ---
-
 pub fn filter_period_intersect(events: Vec<Event>, filter_events: Vec<Event>) -> Vec<Event> {
-    // Translation of aw-transform/src/filter_period.rs, but operating on
-    // f64-second durations and using a forward-moving cursor over the
-    // filter list so the total work is O(N + M) instead of O(N*M).
-    //
-    // Both lists are time-sorted. For each event we:
-    //   * advance `cursor` past filter events that end <= ev.timestamp
-    //     (those can never overlap any later event either)
-    //   * emit slices for every filter starting at cursor, stopping as
-    //     soon as a filter's timestamp >= ev_end.
-    // A 30-day burst of 70k window events vs 2k afk events used to do
-    // ~140M comparisons + clones; the cursor cuts that to ~70k + 2k.
     let events_sorted = sort_by_timestamp(events);
     let filter_sorted = sort_by_timestamp(filter_events);
     let mut out: Vec<Event> = Vec::new();
     let mut cursor = 0usize;
     for ev in &events_sorted {
         let ev_end = endtime(ev);
-        // Advance cursor past filters that ended before ev started.
-        // Safe: subsequent events can only start later than this one
-        // (the outer loop walks ascending), so any filter that ends
-        // before this ev's start can never overlap a later ev either.
         while cursor < filter_sorted.len() && endtime(&filter_sorted[cursor]) <= ev.timestamp {
             cursor += 1;
         }
@@ -141,8 +109,6 @@ pub fn filter_period_intersect(events: Vec<Event>, filter_events: Vec<Event>) ->
     }
     out
 }
-
-// --- split_url_events ---
 
 pub fn split_url_events(events: Vec<Event>) -> Vec<Event> {
     events.into_iter().map(split_one_url).collect()
@@ -171,16 +137,11 @@ fn split_one_url(mut ev: Event) -> Event {
     ev
 }
 
-// --- categorize ---
-
 pub struct CompiledRule {
     pub category: Vec<String>,
     pub regex: Option<FancyRegex>,
 }
 
-/// Compile category rules to a form `categorize` can apply. `None` rule
-/// types (decoration-only parents like "Uncategorized") compile to a
-/// `CompiledRule` with `regex: None`, which never matches.
 pub fn compile_rules(
     cfg: &crate::data::categories::CategoryConfig,
 ) -> Result<Vec<CompiledRule>, fancy_regex::Error> {
@@ -248,10 +209,7 @@ fn categorize_one(mut ev: Event, rules: &[CompiledRule]) -> Event {
     ev
 }
 
-// --- flood ---
-
-/// Direct port of `aw-transform/src/flood.rs`. Extends events to fill
-/// small gaps (<pulsetime) and merges adjacent same-data events.
+/// Port of `aw-transform/src/flood.rs`.
 pub fn flood(events: Vec<Event>, pulsetime: ChronoDuration) -> Vec<Event> {
     let mut new_events: Vec<Event> = Vec::new();
     let events_sorted = sort_by_timestamp(events);
@@ -287,9 +245,8 @@ pub fn flood(events: Vec<Event>, pulsetime: ChronoDuration) -> Vec<Event> {
         let gap = e2.timestamp - endtime(&e1);
 
         if gap < ChronoDuration::seconds(0) {
-            // Negative gap: events overlap.
             if e1.data == e2.data {
-                // Safe merge.
+                // Same data + overlap: safe to merge.
                 let start = std::cmp::min(e1.timestamp, e2.timestamp);
                 let end = std::cmp::max(endtime(&e1), endtime(&e2));
                 e1.timestamp = start;
@@ -298,12 +255,8 @@ pub fn flood(events: Vec<Event>, pulsetime: ChronoDuration) -> Vec<Event> {
                 retry_e = Some(e1);
                 continue;
             } else if gap < -negative_gap_trim {
-                // Differing data + significant overlap: cannot merge
-                // safely. Match upstream: emit a warning once and pass
-                // through unmodified. (Daylog has no logger here; just
-                // pass through.)
+                // Differing data + significant overlap: upstream warns and passes through.
             }
-            // small or matched-data negative gap with different data: fall through.
         } else if gap < pulsetime {
             if e1.data == e2.data {
                 let start = std::cmp::min(e1.timestamp, e2.timestamp);
@@ -314,12 +267,10 @@ pub fn flood(events: Vec<Event>, pulsetime: ChronoDuration) -> Vec<Event> {
                 retry_e = Some(e1);
                 continue;
             } else {
-                // Extend e1 to mid-gap; next iteration will extend e2 by the other half.
                 e1.duration += duration_secs(gap / 2);
                 gap_prev = Some(gap);
             }
         }
-        // else: gap >= pulsetime — nothing to do.
 
         new_events.push(e1);
     }
@@ -345,7 +296,6 @@ mod tests {
         Utc.timestamp_opt(s, 0).single().unwrap()
     }
 
-    // ---------- sort ----------
 
     #[test]
     fn sort_by_duration_descending() {
@@ -357,7 +307,6 @@ mod tests {
         assert_eq!(durs, vec![5.0, 3.0, 1.0]);
     }
 
-    // ---------- filter_keyvals ----------
 
     #[test]
     fn filter_keyvals_keeps_only_matching_status() {
@@ -380,7 +329,6 @@ mod tests {
         assert_eq!(got.len(), 1);
     }
 
-    // ---------- merge_events_by_keys ----------
 
     #[test]
     fn merge_by_app_sums_durations() {
@@ -409,11 +357,9 @@ mod tests {
         assert!((got[0].duration - 10.0).abs() < 1e-6);
     }
 
-    // ---------- filter_period_intersect ----------
 
     #[test]
     fn intersect_clips_to_filter_window() {
-        // Event runs 0..100; filter runs 30..70. Result is 30..70, duration 40.
         let evs = vec![event(t(0), 100.0, json!({"app":"x"}))];
         let filters = vec![event(t(30), 40.0, json!({"status":"not-afk"}))];
         let got = filter_period_intersect(evs, filters);
@@ -424,7 +370,6 @@ mod tests {
 
     #[test]
     fn intersect_emits_one_slice_per_overlapping_filter() {
-        // Event 0..100, two filters 10..30 and 60..80 → two slices.
         let evs = vec![event(t(0), 100.0, json!({"app":"x"}))];
         let filters = vec![
             event(t(10), 20.0, json!({})),
@@ -438,7 +383,6 @@ mod tests {
         assert!((got[1].duration - 20.0).abs() < 1e-6);
     }
 
-    // ---------- split_url_events ----------
 
     #[test]
     fn split_url_extracts_domain_path_protocol() {
@@ -464,7 +408,6 @@ mod tests {
         assert!(got[0].data.get("$domain").is_none());
     }
 
-    // ---------- categorize ----------
 
     #[test]
     fn categorize_picks_deepest_match() {
@@ -522,7 +465,6 @@ mod tests {
         assert_eq!(got[0].data.get("$category").unwrap(), &json!(vec!["Uncategorized"]));
     }
 
-    // ---------- flood ----------
 
     #[test]
     fn flood_merges_same_data_within_pulsetime() {
@@ -540,7 +482,6 @@ mod tests {
         let e2 = event(t(3), 1.0, json!({"app":"b"}));
         let got = flood(vec![e1, e2], ChronoDuration::seconds(5));
         assert_eq!(got.len(), 2);
-        // e1 extends to mid-gap (1 + 1 = 2s); e2 starts at t(2), duration 2s
         assert!((got[0].duration - 2.0).abs() < 1e-3);
         assert_eq!(got[1].timestamp, t(2));
         assert!((got[1].duration - 2.0).abs() < 1e-3);

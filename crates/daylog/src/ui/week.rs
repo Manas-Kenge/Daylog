@@ -1,5 +1,3 @@
-//! Week tab — Mon→Sun stacked bars with a "highest Work day" callout.
-
 use chrono::{Datelike, NaiveDate, Weekday};
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -32,9 +30,9 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(14), // chart + stats card
-            Constraint::Length(1),  // divider
-            Constraint::Min(8),     // 7-day rollups
+            Constraint::Length(14),
+            Constraint::Length(1),
+            Constraint::Min(8),
         ])
         .split(area);
 
@@ -185,9 +183,9 @@ fn render_activity_card(
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(1), // inline category legend
-            Constraint::Length(8), // chart: 7 weekday rows + 1 spacer
-            Constraint::Min(2),    // callout (absorbs any leftover slack)
+            Constraint::Length(1),
+            Constraint::Length(8),
+            Constraint::Min(2),
         ])
         .split(inner);
 
@@ -253,8 +251,6 @@ fn present_roots(days: &[WeekDayBuckets]) -> Vec<String> {
 
 fn render_callout(f: &mut Frame, area: Rect, theme: &Theme, week: Option<&[WeekDayBuckets]>) {
     let Some(days) = week else {
-        // Loading — keep the slot blank so the callout doesn't flicker
-        // a transient "no Work yet" message before the first frame.
         return;
     };
     let total: f64 = days.iter().map(|d| d.total_active_secs).sum();
@@ -288,8 +284,6 @@ fn render_callout(f: &mut Frame, area: Rect, theme: &Theme, week: Option<&[WeekD
     f.render_widget(p, area);
 }
 
-/// Spectrum colour for a category root. `Comms` routes through
-/// `chart_2_style()` for the ANSI-16 BOLD lift.
 pub fn category_root_style(theme: &Theme, root: &str) -> Style {
     match root {
         "Work" | "Programming" => Style::default().fg(theme.chart_1),
@@ -437,8 +431,8 @@ mod tests {
                 &[("Work", 3600.0 * 6.0), ("Browsing", 3600.0)],
             ),
             day((2026, 5, 6), false, &[("Work", 3600.0 * 5.0)]),
-            day((2026, 5, 7), false, &[]), // empty past day
-            day((2026, 5, 8), true, &[]),  // future
+            day((2026, 5, 7), false, &[]),
+            day((2026, 5, 8), true, &[]),
             day((2026, 5, 9), true, &[]),
             day((2026, 5, 10), true, &[]),
         ]
@@ -470,7 +464,6 @@ mod tests {
     fn week_stats_skips_future_days_in_average() {
         let week = fixture_week();
         let stats = week_stats(&week);
-        // Elapsed = 4 (Mon, Tue, Wed, Thu); active = 3 (Mon-Wed).
         assert_eq!(stats.days_elapsed, 4);
         let total = 4.5 * 3600.0 + 7.0 * 3600.0 + 5.0 * 3600.0;
         assert!((stats.total_secs - total).abs() < 1e-6);

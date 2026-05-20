@@ -1,9 +1,3 @@
-//! Pure-compute aggregations over `Event` lists fetched from the
-//! datastore. The previous HTTP-era versions of this module accepted
-//! `Vec<serde_json::Value>` returned by aw-server's /query/ endpoint;
-//! everything now takes `&[Event]` so callers can drive the pipeline
-//! with `datastore::events_in_range` + `transforms::*`.
-
 use chrono::{DateTime, Local, Timelike, Utc};
 use serde::Serialize;
 use serde_json::Value;
@@ -37,7 +31,6 @@ fn split_event_into_hours(start_utc: DateTime<Utc>, duration: f64, totals: &mut 
     }
     let mut remaining = duration;
     let mut cursor = start_utc;
-    // Cap iterations defensively (a 30-day event would be 720 hours; allow up to that).
     for _ in 0..(24 * 31) {
         if remaining <= 0.0 {
             break;
@@ -121,8 +114,6 @@ pub struct CategorySummary {
     pub duration: f64,
 }
 
-/// Pull `data.$category` off each event. Events without the field default
-/// to `["Uncategorized"]` (matches what `transforms::categorize` writes).
 pub fn parse_categorized_events(events: &[Event]) -> Vec<CategorizedEvent> {
     events
         .iter()
@@ -147,9 +138,6 @@ pub fn parse_categorized_events(events: &[Event]) -> Vec<CategorizedEvent> {
         .collect()
 }
 
-/// Convert merged-by-category events into `{name, duration}` pairs sorted
-/// by duration descending. Inputs are expected to be the output of
-/// `transforms::merge_events_by_keys(_, ["$category"])`.
 pub fn parse_category_summaries(events: &[Event]) -> Vec<CategorySummary> {
     let mut out: Vec<CategorySummary> = events
         .iter()

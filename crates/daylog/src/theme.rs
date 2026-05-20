@@ -1,27 +1,10 @@
-//! Single source for every color and style modifier in the TUI; no widget
-//! reaches into `ratatui::style::Color::*` directly. RGB values are
-//! precomputed offline from OKLCH; do not recompute at runtime. 256-color
-//! indices were picked by visual inspection.
-//!
-//! See `crates/daylog/DESIGN.md` for the spec these tables are copied from.
-
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::{BorderType, Padding};
 
-/// Rounded borders for every panel.
 pub const PANEL_BORDER: BorderType = BorderType::Rounded;
-
-/// 1-col horizontal padding for tables/stat cards.
 pub const PANEL_PADDING: Padding = Padding::horizontal(1);
-
-/// Padding for widgets whose internal coordinate system already assumes
-/// edge-to-edge use of the inner area — the hourly `Chart`, the custom
-/// `StackedBars` painter, and the year heatmap. Reserves horizontal room
-/// without clipping the bottom row.
 pub const PANEL_PADDING_TIGHT: Padding = Padding::new(1, 1, 0, 0);
 
-/// Detected terminal colour capability. Latched at startup; the result
-/// rides on `Theme` so widgets never re-probe `$COLORTERM`/`$TERM`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tier {
     Truecolor,
@@ -29,7 +12,6 @@ pub enum Tier {
     Ansi16,
 }
 
-/// Width-driven layout mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LayoutMode {
     Wide,
@@ -37,8 +19,6 @@ pub enum LayoutMode {
     Stacked,
 }
 
-/// Resolved palette + capability tier. One value lives on `App` and is
-/// passed by reference to every render fn.
 #[derive(Debug, Clone, Copy)]
 pub struct Theme {
     pub tier: Tier,
@@ -46,10 +26,7 @@ pub struct Theme {
     pub fg: Color,
     pub dim: Color,
     pub border_dim: Color,
-    /// Accent border slot. Reserved for the currently focused panel; no
-    /// renderer reaches for it today (focus tracking isn't wired up), but
-    /// the slot exists so a future "active panel" patch doesn't require
-    /// re-touching the theme.
+    /// Reserved for focused-panel borders (not wired yet).
     pub border_active: Color,
     pub ember: Color,
     pub error: Color,
@@ -58,23 +35,16 @@ pub struct Theme {
     pub chart_3: Color,
     pub chart_4: Color,
     pub chart_5: Color,
-    // ANSI-16 collapses chart_1, chart_2, and ember onto Yellow. The spec
-    // resolves the chart_2 collision by adding BOLD on top. Tracked on the
-    // theme so helpers compose the right modifier without leaking the tier.
     chart_2_extra: Modifier,
 }
 
 impl Theme {
-    /// Read `$COLORTERM` and `$TERM` once at startup. Pure logic lives in
-    /// `from_env_pair`; this is a thin wrapper for tests + main.
     pub fn detect() -> Self {
         let colorterm = std::env::var("COLORTERM").ok();
         let term = std::env::var("TERM").ok();
         Self::from_env_pair(colorterm.as_deref(), term.as_deref())
     }
 
-    /// Pure detection: truecolor first (so a truecolor `COLORTERM` still
-    /// wins on a `xterm` `TERM`), then 256-color, then ANSI-16 floor.
     pub fn from_env_pair(colorterm: Option<&str>, term: Option<&str>) -> Self {
         let tier = match colorterm {
             Some("truecolor") | Some("24bit") => Tier::Truecolor,
@@ -129,9 +99,6 @@ impl Theme {
     }
 
     fn ansi16() -> Self {
-        // Three Yellows collide here (ember, chart_1, chart_2). The spec
-        // separates chart_2 with a BOLD modifier; widgets pick it up via
-        // `chart_2_style()` rather than reading the tier.
         Self {
             tier: Tier::Ansi16,
             bg: Color::Black,
@@ -150,7 +117,6 @@ impl Theme {
         }
     }
 
-    /// Width-based layout mode. Boundaries from DESIGN.md §Narrow-width fallback.
     pub fn layout_mode(width: u16) -> LayoutMode {
         if width >= 100 {
             LayoutMode::Wide
@@ -161,8 +127,6 @@ impl Theme {
         }
     }
 
-    /// Spectrum band for hour-of-day. Five fixed bands; never interpolate
-    /// — the fallback chain only works if every band has a defined entry.
     pub fn spectrum_color(&self, hour: u8) -> Color {
         match hour {
             0..=4 => self.chart_1,
@@ -192,9 +156,6 @@ impl Theme {
             .add_modifier(Modifier::DIM)
     }
 
-    /// Active tab is the brand ember + bold, painted as a coloured pill.
-    /// ANSI-16 falls through to `Color::Yellow` for the bg, which still
-    /// reads clearly against `Color::Black` on every supported terminal.
     pub fn active_tab_style(&self) -> Style {
         Style::default()
             .fg(self.bg)
@@ -215,7 +176,7 @@ impl Theme {
     }
 
     pub fn kpi_label_style(&self) -> Style {
-        // fg only — DIM on top of a dim colour drops to invisible on some terminals.
+        // DIM-on-dim disappears on linux console.
         Style::default().fg(self.dim)
     }
 
@@ -223,14 +184,10 @@ impl Theme {
         Style::default().fg(self.fg).add_modifier(Modifier::BOLD)
     }
 
-    /// Style for the chart_2 spectrum band. Widgets that paint a single
-    /// band call this rather than `Style::default().fg(theme.chart_2)`
-    /// directly so the ANSI-16 BOLD-collision lift comes along for free.
     pub fn chart_2_style(&self) -> Style {
         Style::default().fg(self.chart_2).add_modifier(self.chart_2_extra)
     }
 
-    /// Map a category root (`name[0]`) to a chart colour. Unknown → `dim` (= Uncategorized).
     pub fn category_color(&self, root: &str) -> Color {
         match root {
             "Work" | "Programming" => self.chart_1,
@@ -276,7 +233,6 @@ mod tests {
 
     #[test]
     fn detect_truecolor_takes_precedence_over_term() {
-        // TERM doesn't say "256color" but COLORTERM=truecolor still wins.
         let t = Theme::from_env_pair(Some("truecolor"), Some("xterm"));
         assert_eq!(t.tier, Tier::Truecolor);
     }
@@ -284,13 +240,11 @@ mod tests {
     #[test]
     fn spectrum_band_assignments() {
         let t = Theme::from_env_pair(Some("truecolor"), None);
-        // One sample per band.
         assert_eq!(t.spectrum_color(0), t.chart_1);
         assert_eq!(t.spectrum_color(7), t.chart_2);
         assert_eq!(t.spectrum_color(12), t.chart_3);
         assert_eq!(t.spectrum_color(17), t.chart_4);
         assert_eq!(t.spectrum_color(22), t.chart_5);
-        // Band edges — both sides of every transition.
         assert_eq!(t.spectrum_color(4), t.chart_1);
         assert_eq!(t.spectrum_color(5), t.chart_2);
         assert_eq!(t.spectrum_color(9), t.chart_2);
@@ -315,11 +269,9 @@ mod tests {
     fn style_helpers_compose_correctly() {
         let t = Theme::from_env_pair(Some("truecolor"), None);
         assert!(t.kpi_value_style().add_modifier.contains(Modifier::BOLD));
-        // No DIM modifier — "double dim" drops out on linux console.
         assert!(!t.kpi_label_style().add_modifier.contains(Modifier::DIM));
         assert_eq!(t.kpi_label_style().fg, Some(t.dim));
         let active = t.active_tab_style();
-        // Active tab is a coloured pill: ember bg, bg-coloured fg, bold.
         assert_eq!(active.bg, Some(t.ember));
         assert_eq!(active.fg, Some(t.bg));
         assert!(active.add_modifier.contains(Modifier::BOLD));

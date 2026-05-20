@@ -1,36 +1,3 @@
-//! Read-only SQLite accessor for aw-server-rust's event store.
-//!
-//! Background: aw-server-rust persists every event to a SQLite file
-//! at `dirs::data_dir()/activitywatch/aw-server-rust/sqlite.db`
-//! (Linux: `~/.local/share/...`). Its HTTP `/api/0/query/` AQL endpoint
-//! serializes evaluation on a server-side `Mutex<Datastore>` — that's
-//! what capped daylog's cold-start at 30-50s on multi-day windows. We
-//! bypass HTTP and read the file directly.
-//!
-//! **Rust-only.** Per the ActivityWatch docs[1], aw-server-rust is the
-//! planned future default and is "almost at feature parity" with the
-//! older aw-server (Python). The upstream docs flag transform-drift as
-//! a real concern when crossing implementations — and since our
-//! `transforms.rs` is a direct port of aw-server-rust's `aw-transform/`
-//! crate, reading the Rust DB is the only path that guarantees
-//! bit-identical results to what aw-server-rust would have produced
-//! via HTTP. Daylog's wizard installs aw-server-rust on first launch,
-//! so this is the only supported backend.
-//!
-//! [1]: https://docs.activitywatch.net/en/latest/server-compare.html
-//!
-//! Locking: aw-server-rust runs in default `journal_mode=DELETE` (no
-//! WAL) with IMMEDIATE-mode transactions batched every 15s. Our handle
-//! sets `busy_timeout=5s` so commit windows block us briefly instead
-//! of failing immediately. `query_only=ON` is belt-and-suspenders next
-//! to `SQLITE_OPEN_READ_ONLY`.
-//!
-//! Schema (`user_version=4`): `events(id, bucketrow, starttime INTEGER,
-//! endtime INTEGER, data TEXT)` indexed by starttime/endtime/bucketrow.
-//! `buckets(id, name, type, client, hostname, created, data TEXT)`.
-//! Both `starttime` and `endtime` are nanosecond Unix timestamps as
-//! i64. `data` is a JSON string with the per-event payload.
-
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration as StdDuration;
@@ -51,8 +18,6 @@ pub enum DatastoreError {
     Parse(String),
 }
 
-/// Default location of aw-server-rust's SQLite file. `None` if the
-/// platform's data dir can't be resolved.
 pub fn db_path() -> Option<PathBuf> {
     Some(
         dirs::data_dir()?
@@ -77,8 +42,7 @@ fn open_conn() -> Result<Connection, DatastoreError> {
     Ok(conn)
 }
 
-/// Process-wide shared connection. First caller opens; failures are not
-/// memoized so a still-installing aw-server-rust eventually succeeds.
+/// Shared lazy-init connection; init failures not memoized.
 fn with_conn<F, T>(f: F) -> Result<T, DatastoreError>
 where
     F: FnOnce(&Connection) -> Result<T, DatastoreError>,
@@ -97,12 +61,8 @@ where
     f(&guard)
 }
 
-/// All events whose `[starttime, endtime)` overlaps `[start, end]`,
-/// across every bucket whose `name` starts with `bucket_prefix`. Times
-/// are clipped to the query window — matches aw-server-rust's
-/// `get_events` semantics so callers can sum `duration` without
-/// overcounting at the edges. Returned events are sorted ascending by
-/// timestamp.
+/// Cross-bucket events overlapping [start, end], clipped to the window,
+/// sorted ASC by timestamp.
 pub fn events_in_range(
     bucket_prefix: &str,
     start: DateTime<Utc>,
@@ -172,15 +132,11 @@ pub fn events_in_range(
                 });
             }
         }
-        // Cross-bucket merge needs a final sort; per-bucket SELECTs were
-        // already ascending.
         events.sort_by_key(|e| e.timestamp);
         Ok(events)
     })
 }
 
-/// True if at least one bucket name starts with `prefix`. Replaces the
-/// HTTP-based `bucket_prefix_present` check.
 pub fn bucket_exists_for_prefix(prefix: &str) -> Result<bool, DatastoreError> {
     with_conn(|conn| {
         let like = format!("{prefix}%");
@@ -200,8 +156,6 @@ mod tests {
 
     fn fixture_conn() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
-        // Mirror aw-server-rust's v4 schema. No migrations needed since
-        // the tests never exercise upgrade paths.
         conn.execute_batch(
             "
             CREATE TABLE buckets (
@@ -245,9 +199,6 @@ mod tests {
         .unwrap();
     }
 
-    /// Standalone version of `events_in_range` that takes an explicit
-    /// Connection so tests can exercise an in-memory fixture without
-    /// touching the process-wide singleton.
     fn read_events(
         conn: &Connection,
         prefix: &str,
@@ -380,8 +331,6 @@ mod tests {
             day(2026, 5, 2),
         );
         assert_eq!(got.len(), 2);
-        // Firefox event has earlier starttime; cross-bucket merge must
-        // produce monotonic timestamps.
         assert!(got[0].timestamp < got[1].timestamp);
     }
 

@@ -1,8 +1,3 @@
-//! 24h timeline barcode. N = inner panel width; each cell is `▌` so
-//! right halves render as gaps. Borderless — the section header lives in
-//! the parent (overview::render_timeline_section). This module just paints
-//! the barcode stripe + hour-axis row into the area it's given.
-
 use std::collections::HashMap;
 
 use chrono::{Local, Timelike};
@@ -22,8 +17,6 @@ use crate::ui::render_skeleton_body;
 
 const SECS_PER_DAY: f64 = 24.0 * 60.0 * 60.0;
 
-/// One time slot in today's timeline. `category` is the dominant
-/// (longest-contributing) root in this window, or None for empty slots.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TimelineSlot {
     pub index: usize,
@@ -31,8 +24,6 @@ pub struct TimelineSlot {
     pub duration_secs: f64,
 }
 
-/// Place each event into the `n` slots it touches; dominant root wins
-/// per slot. Slot index uses local time-of-day.
 pub fn bucketize_n(events: &[CategorizedEvent], n: usize) -> Vec<TimelineSlot> {
     if n == 0 {
         return Vec::new();
@@ -50,7 +41,6 @@ pub fn bucketize_n(events: &[CategorizedEvent], n: usize) -> Vec<TimelineSlot> {
     let mut tallies: Vec<HashMap<String, f64>> = (0..n).map(|_| HashMap::new()).collect();
 
     for ev in events {
-        // Local time-of-day, in seconds since midnight.
         let local = ev.timestamp.with_timezone(&Local);
         let from_day_start =
             (local.hour() as f64) * 3600.0 + (local.minute() as f64) * 60.0 + local.second() as f64;
@@ -61,7 +51,6 @@ pub fn bucketize_n(events: &[CategorizedEvent], n: usize) -> Vec<TimelineSlot> {
 
         let mut remaining = ev.duration;
         let mut cursor = from_day_start;
-        // Safety cap: malformed event mustn't loop forever.
         let cap = (n * 2).max(200);
         for _ in 0..cap {
             if remaining <= 0.0 {
@@ -108,7 +97,6 @@ fn category_root(name: &[String]) -> String {
         .unwrap_or_else(|| "Uncategorized".to_string())
 }
 
-/// Barcode + hour-axis row. Caller renders the section header above this area.
 pub fn render(
     f: &mut Frame,
     area: Rect,
@@ -133,7 +121,6 @@ pub fn render(
     };
 
     let Some(events) = events else {
-        // Render axis even in skeleton — panel shape stays stable.
         render_skeleton_body(f, stripes_area, theme, throbber, in_flight);
         if let Some(axis) = axis_area {
             f.render_widget(axis_paragraph(theme, stripes_area.width), axis);
@@ -168,7 +155,6 @@ pub fn render(
     }
 }
 
-/// Hour-tick row positioned by hour-fraction of stripe width.
 fn axis_paragraph(theme: &Theme, width: u16) -> Paragraph<'static> {
     let width = (width as usize).max(1);
     let labels = [(0_usize, "00"), (6, "06"), (12, "12"), (18, "18"), (23, "23")];
@@ -201,9 +187,6 @@ mod tests {
     use serde_json::Value;
 
     fn ev(hour: u32, minute: u32, dur_secs: f64, category: &[&str]) -> CategorizedEvent {
-        // Build at UTC; bucketize will read with Local. For deterministic
-        // tests we ground at UTC noon-ish so DST adjustments don't push
-        // us past a slot boundary on most machines.
         let ts = Utc
             .with_ymd_and_hms(2026, 5, 8, hour, minute, 0)
             .single()
@@ -226,7 +209,6 @@ mod tests {
 
     #[test]
     fn bucketize_n_dominant_category_wins_per_slot() {
-        // Longer-duration event wins. UTC ts → local hour keeps it tz-invariant.
         let events = vec![
             ev(12, 5, 600.0, &["Browsing"]), // 10 min Browsing
             ev(12, 5, 60.0, &["Programming"]), // 1 min Programming
@@ -261,8 +243,6 @@ mod tests {
 
     #[test]
     fn bucketize_n_handles_arbitrary_widths() {
-        // Width-adaptive: the slot count must match `n`, including the
-        // edge case n == 0 (returns empty so callers can early-return).
         assert_eq!(bucketize_n(&[], 50).len(), 50);
         assert_eq!(bucketize_n(&[], 200).len(), 200);
         assert!(bucketize_n(&[], 0).is_empty());
