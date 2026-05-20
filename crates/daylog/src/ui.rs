@@ -1,4 +1,5 @@
 use std::io::{self, Stdout};
+use std::time::{Duration, Instant};
 
 use crossterm::{
     event::DisableMouseCapture,
@@ -18,6 +19,9 @@ use tachyonfx::EffectRenderer;
 
 use crate::app::{App, Tab};
 use crate::theme::Theme;
+
+/// How long the update banner stays visible before the next tick drops it.
+const UPDATE_BANNER_VISIBLE_FOR: Duration = Duration::from_secs(6);
 
 pub(crate) mod kpi_strip;
 mod month;
@@ -51,24 +55,71 @@ pub fn restore_terminal_raw() -> io::Result<()> {
 }
 
 pub fn render(f: &mut Frame, app: &App) {
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
+    let show_banner = should_show_update_banner(app);
+    let constraints: &[Constraint] = if show_banner {
+        &[
             Constraint::Length(1),
             Constraint::Length(1),
             Constraint::Min(0),
-        ])
+            Constraint::Length(1),
+        ]
+    } else {
+        &[
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Min(0),
+        ]
+    };
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints(constraints)
         .split(f.area());
 
     render_tabs(f, chunks[0], app);
     render_divider(f, chunks[1], &app.theme);
     render_body(f, chunks[2], app);
     render_offline_indicator(f, chunks[0], app);
+    if show_banner {
+        render_update_banner(f, chunks[3], app);
+    }
 
     if let Some(effect) = app.effect.borrow_mut().as_mut() {
         let last_tick = *app.last_tick.borrow();
         f.render_effect(effect, chunks[2], last_tick);
     }
+}
+
+fn should_show_update_banner(app: &App) -> bool {
+    if app.tab != Tab::Today {
+        return false;
+    }
+    if app.data.update_info.is_none() {
+        return false;
+    }
+    let mut shown = app.update_banner_shown_at.borrow_mut();
+    let now = Instant::now();
+    let started = *shown.get_or_insert(now);
+    now.duration_since(started) < UPDATE_BANNER_VISIBLE_FOR
+}
+
+fn render_update_banner(f: &mut Frame, area: Rect, app: &App) {
+    let Some(info) = &app.data.update_info else {
+        return;
+    };
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+    let theme = &app.theme;
+    let line = Line::from(vec![
+        Span::styled("\u{2191} ", theme.ember_style()),
+        Span::styled(
+            format!("daylog v{} available", info.latest),
+            Style::default().fg(theme.fg).add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("  "),
+        Span::styled(info.release_url.clone(), Style::default().fg(theme.dim)),
+    ]);
+    f.render_widget(Paragraph::new(line).alignment(Alignment::Center), area);
 }
 
 fn render_offline_indicator(f: &mut Frame, area: Rect, app: &App) {

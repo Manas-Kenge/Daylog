@@ -6,6 +6,7 @@ pub mod data;
 pub mod theme;
 pub mod tracking;
 mod ui;
+mod update_check;
 pub mod wizard;
 
 pub use app::Tab;

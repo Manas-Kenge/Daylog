@@ -8,6 +8,7 @@ use crate::data::time::TimeRange;
 use serde_json::Value;
 
 use crate::app::Tab;
+use crate::update_check::UpdateInfo;
 
 pub const REFRESH_LIVE: Duration = Duration::from_secs(5);
 pub const REFRESH_PAST_DAYS: Duration = Duration::from_secs(5 * 60);
@@ -168,6 +169,7 @@ pub enum FetchResult {
     MonthTopCategories(Result<Vec<CategorySummary>, String>),
     MonthTopDomains(Result<Vec<TopDomainRow>, String>),
     Trailing7(Result<Vec<TrailingDayPayload>, String>),
+    UpdateAvailable(UpdateInfo),
 }
 
 #[derive(Debug)]
@@ -187,6 +189,7 @@ pub struct DataCache {
     pub month_top_categories: Cached<Vec<CategorySummary>>,
     pub month_top_domains: Cached<Vec<TopDomainRow>>,
     pub trailing_7: Cached<Vec<TrailingDayPayload>>,
+    pub update_info: Option<UpdateInfo>,
 }
 
 impl DataCache {
@@ -207,6 +210,7 @@ impl DataCache {
             month_top_categories: Cached::new(REFRESH_PAST_DAYS),
             month_top_domains: Cached::new(REFRESH_PAST_DAYS),
             trailing_7: Cached::new(REFRESH_PAST_DAYS),
+            update_info: None,
         }
     }
 
@@ -269,6 +273,7 @@ impl DataCache {
                 self.trailing_7.apply_failure(e.clone(), now);
                 self.week.apply_failure(e, now);
             }
+            FetchResult::UpdateAvailable(info) => self.update_info = Some(info),
         }
     }
 

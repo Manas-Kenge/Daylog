@@ -99,6 +99,10 @@ pub struct App {
     /// RefCell because render(&App) is immutable but Effect::process needs &mut.
     pub effect: RefCell<Option<Effect>>,
     pub last_tick: RefCell<tachyonfx::Duration>,
+    /// Lazily set on the first render that draws the update banner; render
+    /// reads it through a RefCell so the banner can self-expire without a
+    /// dedicated timer.
+    pub update_banner_shown_at: RefCell<Option<Instant>>,
 }
 
 impl App {
@@ -117,6 +121,7 @@ impl App {
             throbber: ThrobberState::default(),
             effect: RefCell::new(None),
             last_tick: RefCell::new(tachyonfx::Duration::from_millis(0)),
+            update_banner_shown_at: RefCell::new(None),
         }
     }
 
@@ -183,6 +188,15 @@ pub async fn event_loop(terminal: &mut Terminal<Backend>, app: &mut App) -> io::
 
     let range = app.range();
     dispatch_refetches(&mut app.data, range, app.tab, &result_tx, Instant::now());
+
+    {
+        let tx = result_tx.clone();
+        tokio::spawn(async move {
+            if let Some(info) = crate::update_check::check(env!("CARGO_PKG_VERSION")).await {
+                let _ = tx.send(FetchResult::UpdateAvailable(info));
+            }
+        });
+    }
 
     app.queue_fade_in();
 
