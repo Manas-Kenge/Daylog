@@ -1,7 +1,7 @@
 # Maintainer: Manas Kenge <Manas-Kenge@users.noreply.github.com>
 pkgname=daylog-bin
 _pkgname=daylog
-pkgver=0.2.0
+pkgver=0.2.1
 pkgrel=1
 pkgdesc="Terminal screen-time tracker for Linux"
 arch=('x86_64')
