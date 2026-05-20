@@ -34,5 +34,5 @@ sha2 = "0.10"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 futures-util = "0.3"
 rusqlite = { version = "0.31", features = ["bundled"] }
-fancy-regex = "0.13"
+fancy-regex = "0.18"
 url = "2"
