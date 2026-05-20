@@ -12,7 +12,7 @@ Three things carry the brand:
 
 1. **Ember/orange signature accent.** Reserved for the *active range chip* and as the focus indicator on the eventually-shipping panel-focus signal. Used *less* than in the previous spec — when you see ember, it means "this is selected." `oklch(0.70 0.16 45)`.
 2. **Activity Spectrum** — a 5-band warm-to-cool gradient mapping morning → night across the hourly chart. Orange at dawn, violet at midnight. Daylog's single most distinctive visual moment, kept exactly as before.
-3. **Category color tokens** — Work/Comms/Media/Browsing/Documents/Other. These now do double duty: they paint the today-timeline barcode (Today tab), the stacked weekday bars (Week tab), and the categories column's bar fills (every tab). The colors *are* the legend; the always-on legend row is gone.
+3. **Category color tokens** — Work/Comms/Media/Browsing/Documents/Other. These now do double duty: they paint the today-timeline barcode (Today tab), the horizontal weekday bars (Week tab), and the categories column's bar fills (every tab). The colors *are* the legend; the always-on legend row is gone.
 
 The TUI translation:
 
@@ -44,7 +44,7 @@ Every tab body lays out vertically as:
 ├─ Snapshot band ───────────────────────────────────────────────────────────┤
 │ 4 label-on-top / value-below pairs in a row, comma-separated style        │
 ├─ Hero band ───────────────────────────────────────────────────────────────┤
-│ Per-tab visualization. Today → timeline barcode. Week → stacked weekday    │
+│ Per-tab visualization. Today → timeline barcode. Week → horizontal weekday │
 │ bars. Month → year heatmap.                                                │
 ├─ Rollups band ────────────────────────────────────────────────────────────┤
 │ 3 columns separated by single │ rules: apps │ categories │ domains         │
@@ -161,7 +161,7 @@ Other recurring glyphs:
 | Glyph | Code | Use |
 |---|---|---|
 | `▌` | `U+258C` | Today-timeline barcode cell (half-block gives 2× horizontal resolution) |
-| `█` | `U+2588` | Stacked weekday bar cell |
+| `▆` | `U+2586` | Weekday bar cell (horizontal, on the Week tab hero) — lower 3/4 block leaves a 1/4-cell gap above each row |
 | `░ ▒ ▓ █` | `U+2591` `U+2592` `U+2593` `U+2588` | Year heatmap intensity ladder |
 | `─` | `U+2500` | Section divider rule |
 | `│` | `U+2502` | Column separator |
@@ -204,11 +204,11 @@ The hero band always takes full width — it's the focal element on every tab an
 | Divider | 1 | `─` rule |
 | Rollups | 7 | 3 columns: top apps │ top categories │ top domains, header row + 5 data rows + 1 padding |
 | Divider | 1 | `─` rule |
-| Hourly | 3 | `ACTIVE MINUTES PER HOUR` header (1 row) + spectrum sparkline (1 row) + hour ruler (1 row) |
+| Hourly | 10 | `ACTIVE MINUTES PER HOUR` header (1 row) + 1-row drop + spectrum chart (~7 rows incl. y-axis) + hour ruler (1 row) |
 | Divider | 1 | `─` rule |
 | Footer | 1 | `Tab: cycle  │  r: range  │  ?: help  │  q: quit` |
 
-Total: 22 rows. Fits a 24-row terminal with one row to spare.
+Total: 29 rows. The bottom flex band absorbs slack on taller terminals; on the 24-row floor the hourly chart still fits because the flex slot collapses to zero.
 
 ### Week tab
 
@@ -218,7 +218,7 @@ Total: 22 rows. Fits a 24-row terminal with one row to spare.
 | Divider | 1 | `─` rule |
 | Snapshot | 2 | `TOTAL ACTIVE / DAILY AVG / HIGHEST DAY / TOP CATEGORY` |
 | Blank | 1 | breathing room |
-| Hero | 9 | `THIS WEEK · Mon → Sun` header + inline category legend (1 row) + 7 stacked weekday bars (7 rows + 1 padding) |
+| Hero | 9 | `THIS WEEK · Mon → Sun` header + inline category legend (1 row) + 7 horizontal weekday rows (one row per day: short weekday label, total duration, category-stacked horizontal bar, optional `← peak` annotation) + 1 padding |
 | Divider | 1 | `─` rule |
 | Rollups | 7 | same 3-column shape, `· 7d` suffix on each header |
 | Divider | 1 | `─` rule |
@@ -226,7 +226,7 @@ Total: 22 rows. Fits a 24-row terminal with one row to spare.
 
 Total: 23 rows.
 
-The weekday bar peaks include an inline `← peak` annotation in `dim` next to the highest-value day. The day-of-week column on the left uses `dim` for "today" or future days the user hasn't reached yet.
+The weekday rows lay out left-to-right as `Day(4 cols) │ Duration(7 cols) │ gap(2) │ bar(remaining) │ peak annotation(8 cols)`. Bar cells are filled left-to-right with `█` glyphs coloured by category root via `category_root_style`, in the same `WEEK_ROOT_ORDER` used by the legend. Past days with zero activity get a single `·` glyph at the bar's left edge. Future days the user hasn't reached yet render the day label dim and skip duration + bar. The peak day (highest `total_active_secs`) gets an inline `← peak` annotation in `dim` in the reserved 8-col slot at the right; non-peak rows leave that slot blank so every bar shares the same maximum width.
 
 ### Month tab
 
@@ -319,7 +319,7 @@ The `1`/`2`/`3` direct-jump is intentionally redundant with the numbered tab pre
 - Theme tokens: `crates/daylog/src/theme.rs`.
 - Render entry: `crates/daylog/src/ui.rs`.
 - Per-tab renderers: `crates/daylog/src/ui/{overview, week, month}.rs`.
-- Hero widgets: `crates/daylog/src/ui/{timeline, stacked_bars}.rs` + `month::render_heatmap`.
+- Hero widgets: `crates/daylog/src/ui/{timeline, stacked_bars}.rs` (the latter now hosts the horizontal `HorizontalBars` widget) + `month::render_heatmap`.
 - KPI compute: `crates/daylog/src/data/kpi.rs`.
 - Shared aggregations: `crates/daylog/src/data/aggregate.rs`.
 
@@ -328,4 +328,5 @@ The `1`/`2`/`3` direct-jump is intentionally redundant with the numbered tab pre
 | Date | Decision | Rationale |
 |---|---|---|
 | 2026-05-08 | Initial spec (D1–D6) translating desktop CSS variables onto a terminal. | At the time, the goal was parity with the desktop app. |
+| 2026-05-20 | Bumped Today tab's hourly chart from 6 rows to 10 (chart body grows from ~3 plotting rows to ~7) so the 5-band spectrum reads as distinct colour bands instead of a thin smear. Slack is absorbed by the bottom flex slot. Switched Week tab's `7-DAY ACTIVITY BREAKDOWN` from 7 vertical stacked columns to 7 horizontal rows; bar height became row height (1 per day), bar width became proportional to total activity. Reuses `allocate_segments` for the per-row category split so colours and rounding behaviour are identical to the previous vertical bars. | Vertical bars at 70%-wide card width gave each column only ~5 cells, which made small-category segments visually invisible. Rows give each day a full-width bar instead, fix the cramped column problem, and read more like the Top-N rollups (label + duration + bar) the user already scans elsewhere in the app. |
 | 2026-05-15 | **Redesign locked.** Deleted panel borders globally. Adopted 4-band rhythm shared across all three tabs. Numbered tab prefix replaces pill-style active tab. Always-on category legend row deleted; legend lives inline on Week's hero where the colors carry the most signal. Eighth-block bar ladder replaces fixed 8-cell `█`/`░` bars. Ember scope reduced to future focus indicator only. Top-app bars use `chart_3` (green); top-domain bars `chart_4` (cyan); category bars per-category. **Range chips remain unrendered.** The chips exist in `app.rs` state and cycle via `r` / `Shift-R`, but there's no on-screen affordance — the active range is implicit in the data labels (`· 7d`, `· 30d` rollup suffixes). | Desktop is archived; previous spec's "translate the desktop" framing was obsolete. The reference set for modern TUI design (lazygit, k9s, btop, atuin) uses borderless typography-driven hierarchy and that's where polished TUIs land in 2026. Range-chip UI was considered and rejected as adding noise to a tracker the user opens once a day. |

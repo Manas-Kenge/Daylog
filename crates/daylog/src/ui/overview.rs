@@ -58,8 +58,8 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
             Constraint::Length(1),  // divider
             Constraint::Length(9),  // bordered rollups: 5 rows + header + borders
             Constraint::Length(1),  // divider
-            Constraint::Length(6),  // hourly: header + margin + chart + axis
-            Constraint::Min(0),     // flex blank
+            Constraint::Length(10), // hourly: header + margin + chart + axis (taller so the 5-band spectrum reads as distinct colour bands instead of a thin smear)
+            Constraint::Min(0),     // flex blank — absorbs slack on tall terminals, collapses to 0 on the 24-row floor
         ])
         .split(area);
 

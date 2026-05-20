@@ -12,7 +12,7 @@ use ratatui::{
 use crate::app::App;
 use crate::cache::{WeekDayBuckets, WEEK_ROOT_ORDER};
 use crate::theme::Theme;
-use crate::ui::stacked_bars::StackedBars;
+use crate::ui::stacked_bars::HorizontalBars;
 use crate::ui::{
     format_duration,
     overview::{
@@ -186,17 +186,19 @@ fn render_activity_card(
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(1), // inline category legend
-            Constraint::Min(5),    // chart
-            Constraint::Length(2), // callout
+            Constraint::Length(8), // chart: 7 weekday rows + 1 spacer
+            Constraint::Min(2),    // callout (absorbs any leftover slack)
         ])
         .split(inner);
 
     render_legend(f, chunks[0], theme, week);
+    let peak_date = week.and_then(|w| week_stats(w).best.map(|b| b.date));
     f.render_widget(
-        StackedBars {
+        HorizontalBars {
             theme,
             days: week,
             in_flight,
+            peak_date,
         },
         chunks[1],
     );
@@ -369,7 +371,7 @@ pub(crate) fn highest_work_day(week: &[WeekDayBuckets]) -> Option<DayHours> {
         })
 }
 
-fn short_weekday(w: Weekday) -> &'static str {
+pub(crate) fn short_weekday(w: Weekday) -> &'static str {
     match w {
         Weekday::Mon => "Mon",
         Weekday::Tue => "Tue",
