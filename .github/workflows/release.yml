@@ -112,3 +112,73 @@ jobs:
             dist/checksums.txt
           fail_on_unmatched_files: true
           generate_release_notes: true
+
+  # AUR (`daylog-bin`) lives at aur.archlinux.org/daylog-bin.git, a separate
+  # git host. Push happens after the GitHub Release exists so the PKGBUILD's
+  # source URLs resolve when AUR users build.
+  aur-publish:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-22.04
+    needs: [build, release]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: release-artifacts
+          path: dist/
+
+      - name: Resolve version + tarball sha256
+        id: meta
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          TARBALL="daylog-${VERSION}-x86_64-unknown-linux-gnu.tar.gz"
+          SHA256=$(awk -v t="$TARBALL" '$2 == t { print $1 }' dist/checksums.txt)
+          if [ -z "$SHA256" ]; then
+            echo "Could not find sha256 for $TARBALL in checksums.txt" >&2
+            cat dist/checksums.txt >&2
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "sha256=$SHA256" >> "$GITHUB_OUTPUT"
+
+      - name: Configure SSH for AUR
+        run: |
+          set -euo pipefail
+          install -d -m 700 ~/.ssh
+          install -m 600 /dev/stdin ~/.ssh/aur <<<"${{ secrets.AUR_SSH_PRIVATE_KEY }}"
+          ssh-keyscan -t ed25519,rsa,ecdsa aur.archlinux.org >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Update PKGBUILD + regenerate .SRCINFO + push to AUR
+        env:
+          GIT_SSH_COMMAND: 'ssh -i ~/.ssh/aur -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes'
+          VERSION: ${{ steps.meta.outputs.version }}
+          SHA256: ${{ steps.meta.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+          git clone ssh://aur@aur.archlinux.org/daylog-bin.git aur-repo
+          cp packaging/aur/PKGBUILD aur-repo/PKGBUILD
+          sed -i "s/^pkgver=.*/pkgver=${VERSION}/" aur-repo/PKGBUILD
+          # Replace only the first hex sha256 entry; the other two are 'SKIP'.
+          sed -i "0,/^    '[a-f0-9]\{64\}'/{s//    '${SHA256}'/}" aur-repo/PKGBUILD
+          # makepkg refuses to run as root, so create a builder user inside the
+          # Arch container. --printsrcinfo only reads PKGBUILD; no network.
+          # UID 1001 matches the GitHub runner user so .SRCINFO ownership lines
+          # up on the host — no post-docker chown dance.
+          docker run --rm -v "$PWD/aur-repo:/pkg" -w /pkg archlinux:base-devel bash -c '
+            useradd -m -u 1001 builder &&
+            chown -R builder /pkg &&
+            su builder -c "makepkg --printsrcinfo > .SRCINFO"
+          '
+          cd aur-repo
+          git config user.name "Manas Kenge"
+          git config user.email "Manas-Kenge@users.noreply.github.com"
+          if git diff --quiet PKGBUILD .SRCINFO; then
+            echo "AUR repo already at v${VERSION} — nothing to push"
+            exit 0
+          fi
+          git add PKGBUILD .SRCINFO
+          git commit -m "Update to ${VERSION}"
+          git push
